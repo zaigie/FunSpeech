@@ -19,6 +19,7 @@ $:
           script: docker login -u ${CNB_TOKEN_USER_NAME} -p "${CNB_TOKEN}" ${CNB_DOCKER_REGISTRY}
         - name: 构建镜像
           script: docker build -t ${IMAGE_NAME}:${REPO_LATEST_TAG} .
+          timeout: 30m
         - name: 标签latest镜像
           script: docker tag ${IMAGE_NAME}:${REPO_LATEST_TAG} ${IMAGE_NAME}:latest
         - name: 推送镜像
