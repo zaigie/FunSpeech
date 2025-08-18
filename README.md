@@ -87,10 +87,9 @@ FunSpeech/
 ### Docker 部署（推荐）
 
 ```bash
-# 使用 Docker Compose
-git clone <repository-url>
-cd FunSpeech
-git submodule update --init --recursive
+# 下载 Docker Compose 配置
+curl -sSL https://cnb.cool/nexa/FunSpeech/-/git/raw/main/docker-compose.yml -o docker-compose.yml
+# 启动服务
 docker-compose up -d
 ```
 

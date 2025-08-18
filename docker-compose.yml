@@ -1,9 +1,8 @@
 services:
-  funspeech-api:
-    build: .
-    # 或者使用预构建的镜像：
-    # image: ghcr.io/funspeech/funspeech:latest
-    container_name: funspeech-api
+  funspeech:
+    # build: .
+    image: docker.cnb.cool/nexa/funspeech:latest
+    container_name: funspeech
     ports:
       - "8000:8000"
     volumes:
