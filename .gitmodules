@@ -1,0 +1,3 @@
+[submodule "app/services/tts/third_party/CosyVoice"]
+	path = app/services/tts/third_party/CosyVoice
+	url = https://github.com/FunAudioLLM/CosyVoice.git

@@ -1,0 +1,35 @@
+services:
+  funspeech-api:
+    build: .
+    # 或者使用预构建的镜像：
+    # image: ghcr.io/funspeech/funspeech:latest
+    container_name: funspeech-api
+    ports:
+      - "8000:8000"
+    volumes:
+      # 模型缓存目录（ModelScope默认缓存路径）
+      - ~/.cache/modelscope:/root/.cache/modelscope
+      # 临时文件目录（ASR和TTS共用）
+      - ./data:/app/temp
+      # 日志目录
+      - ./logs:/app/logs
+      # 音色克隆文件目录（用户数据）
+      - ./voices:/app/voices
+    environment:
+      # 服务器配置
+      - DEBUG=false
+      - LOG_LEVEL=INFO
+      - DEVICE=auto
+      - TTS_DEVICE=auto
+      # 鉴权配置（可选，不设置则鉴权为可选）
+      # - XLS_TOKEN=your_secret_token
+    restart: unless-stopped
+    
+    # GPU支持（如果需要，取消注释以下配置）
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
