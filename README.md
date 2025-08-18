@@ -1,6 +1,6 @@
 # FunSpeech API Server
 
-基于 FunASR 和 CosyVoice 的语音识别与语音合成 API 服务，支持 ASR 和 TTS 功能。
+基于 FunASR 和 CosyVoice 的语音识别与语音合成 API 服务，支持 ASR 和 TTS 功能，接口与阿里云的语音识别和语音合成兼容。
 
 ## 项目特点
 
