@@ -35,10 +35,17 @@ class VoiceType(str, Enum):
 
 # ============= 请求模型 =============
 
+class TTSRequest(BaseModel):
+    """预设音色TTS请求模型"""
 
-class BaseTTSRequest(BaseModel):
-    """TTS基础请求模型"""
-
+    appkey: Optional[str] = Field(
+        None,
+        description="应用Appkey，用于API调用认证。如果设置了APPKEY环境变量，则此参数为必需；否则为可选",
+        example="your_app_key_here",
+        min_length=1,
+        max_length=64,
+    )
+    
     text: str = Field(
         ...,
         description="待合成的文本内容",
@@ -47,6 +54,13 @@ class BaseTTSRequest(BaseModel):
         max_length=1000,
     )
 
+    voice: str = Field(
+        "中文女",
+        description="音色名称",
+        example="中文女",
+        max_length=32,
+    )
+    
     speech_rate: float = Field(
         0,
         description="语速倍率，范围-500~500，0为正常语速，负值为减速，正值为加速",
@@ -61,36 +75,6 @@ class BaseTTSRequest(BaseModel):
         example=50,
         ge=0,
         le=100,
-    )
-
-    @field_validator("text")
-    @classmethod
-    def validate_text(cls, v: str) -> str:
-        if not v or not v.strip():
-            raise ValueError("文本内容不能为空")
-        if len(v) > settings.MAX_TEXT_LENGTH:
-            raise ValueError(
-                f"文本长度超过限制，最大支持{settings.MAX_TEXT_LENGTH}个字符"
-            )
-        return v.strip()
-
-
-class PresetVoiceTTSRequest(BaseTTSRequest):
-    """预设音色TTS请求模型"""
-
-    appkey: Optional[str] = Field(
-        None,
-        description="应用Appkey，用于API调用认证。如果设置了APPKEY环境变量，则此参数为必需；否则为可选",
-        example="your_app_key_here",
-        min_length=1,
-        max_length=64,
-    )
-
-    voice: str = Field(
-        "中文女",
-        description="音色名称",
-        example="中文女",
-        max_length=32,
     )
 
     format: Optional[AudioFormat] = Field(
@@ -111,6 +95,17 @@ class PresetVoiceTTSRequest(BaseTTSRequest):
         example="说话温柔一些，语气轻松",
         max_length=500,
     )
+    
+    @field_validator("text")
+    @classmethod
+    def validate_text(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("文本内容不能为空")
+        if len(v) > settings.MAX_TEXT_LENGTH:
+            raise ValueError(
+                f"文本长度超过限制，最大支持{settings.MAX_TEXT_LENGTH}个字符"
+            )
+        return v.strip()
 
     @field_validator("voice")
     @classmethod
@@ -122,14 +117,6 @@ class PresetVoiceTTSRequest(BaseTTSRequest):
 
 class OpenAITTSRequest(BaseModel):
     """OpenAI兼容TTS请求模型"""
-
-    appkey: Optional[str] = Field(
-        None,
-        description="应用Appkey，用于API调用认证。如果设置了APPKEY环境变量，则此参数为必需；否则为可选",
-        example="your_app_key_here",
-        min_length=1,
-        max_length=64,
-    )
 
     model: TTSModelType = Field(
         TTSModelType.TTS_1,
@@ -181,40 +168,19 @@ class OpenAITTSRequest(BaseModel):
 class TTSSuccessResponse(BaseResponse):
     """TTS成功响应模型"""
 
-    audio_url: str = Field(
+    result: str = Field(
         ...,
-        description="生成音频文件的下载链接",
-        example="/tmp/tts_cf7b0c5339244ee29cd4e43fb97f1234.wav",
-    )
-
-    duration: Optional[float] = Field(
-        None,
-        description="音频时长（秒）",
-        example=3.5,
-    )
-
-    audio_format: Optional[str] = Field(
-        "wav",
-        description="音频格式",
-        example="wav",
-    )
-
-    sample_rate: Optional[int] = Field(
-        22050,
-        description="音频采样率",
-        example=22050,
+        description="服务结果",
+        example="语音合成成功",
     )
 
     class Config:
         json_schema_extra = {
             "example": {
                 "task_id": "tts_cf7b0c5339244ee29cd4e43fb97f1234",
+                "result": "语音合成成功",
                 "status": 20000000,
                 "message": "SUCCESS",
-                "audio_url": "/tmp/tts_cf7b0c5339244ee29cd4e43fb97f1234.wav",
-                "duration": 3.5,
-                "audio_format": "wav",
-                "sample_rate": 22050,
             }
         }
 
@@ -222,17 +188,13 @@ class TTSSuccessResponse(BaseResponse):
 class TTSErrorResponse(ErrorResponse):
     """TTS错误响应模型"""
 
-    audio_url: str = Field("", description="音频链接（错误时为空）")
-
     class Config:
         json_schema_extra = {
             "example": {
                 "task_id": "tts_8bae3613dfc54ebfa811a17d8a7a1234",
+                "result": "",
                 "status": 40000004,
                 "message": "INVALID_VOICE",
-                "audio_url": "",
-                "error_code": "INVALID_VOICE",
-                "error_details": "The specified voice 'invalid_voice' is not available",
             }
         }
 

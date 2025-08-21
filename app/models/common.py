@@ -56,5 +56,3 @@ class ErrorResponse(BaseResponse):
     """错误响应模型"""
 
     result: str = Field("", description="结果内容")
-    error_code: Optional[str] = Field(None, description="错误代码")
-    error_details: Optional[str] = Field(None, description="错误详情")

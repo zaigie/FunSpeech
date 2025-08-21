@@ -430,7 +430,7 @@ curl -X POST "http://localhost:8000/openai/v1/audio/speech" \
 ```json
 {
   "task_id": "tts_1640995200000_12345678",
-  "audio_url": "/tmp/preset_voice_1640995200_1234.wav",
+  "result": "语音合成成功",
   "status": 20000000,
   "message": "SUCCESS"
 }

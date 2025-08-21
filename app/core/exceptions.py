@@ -144,12 +144,7 @@ async def api_exception_handler(request: Request, exc: APIException) -> JSONResp
         "result": "",
         "status": exc.status_code,
         "message": exc.message,
-        "error_code": exc.error_code,
     }
-
-    # 为TTS接口添加额外字段
-    if isinstance(exc, TTSException):
-        response_data.update({"audio_url": "", "error_details": exc.message})
 
     return JSONResponse(
         content=response_data,
@@ -167,7 +162,6 @@ async def general_exception_handler(request: Request, exc: Exception) -> JSONRes
         "result": "",
         "status": 50000000,
         "message": f"内部服务错误: {str(exc)}",
-        "error_code": "INTERNAL_SERVER_ERROR",
     }
 
     return JSONResponse(content=response_data, status_code=500)

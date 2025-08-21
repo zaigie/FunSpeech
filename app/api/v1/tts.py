@@ -33,7 +33,7 @@ from ...models.tts import (
     VoiceRefreshResponse,
     TTSSuccessResponse,
     TTSErrorResponse,
-    PresetVoiceTTSRequest,
+    TTSRequest,
 )
 from ...utils.common import (
     generate_task_id,
@@ -84,24 +84,21 @@ def format_tts_response(
     audio_path: str,
     success: bool = True,
     message: str = "SUCCESS",
-    audio_format: str = "wav",
 ) -> dict:
     """格式化TTS响应数据"""
     if success:
         return {
             "task_id": task_id,
-            "audio_url": f"/tmp/{os.path.basename(audio_path)}" if audio_path else "",
+            "result": "语音合成成功",
             "status": 20000000,
             "message": message,
-            "audio_format": audio_format,
         }
     else:
         return {
             "task_id": task_id,
-            "audio_url": "",
+            "result": "",
             "status": 50000000,
             "message": message,
-            "audio_format": audio_format,
         }
 
 
@@ -196,7 +193,7 @@ def format_tts_response(
 )
 async def synthesize_speech(
     request: Request,
-    tts_request: PresetVoiceTTSRequest = Body(...),
+    tts_request: TTSRequest = Body(...),
 ) -> JSONResponse:
     """语音合成接口，自动识别预设音色和克隆音色"""
     task_id = generate_task_id("tts")
@@ -265,7 +262,7 @@ async def synthesize_speech(
 
         # 返回成功响应
         response_data = format_tts_response(
-            task_id, output_path, True, "SUCCESS", tts_request.format
+            task_id, output_path, True, "SUCCESS"
         )
         return JSONResponse(content=response_data, headers={"task_id": task_id})
 
@@ -273,14 +270,14 @@ async def synthesize_speech(
         e.task_id = task_id
         logger.error(f"[{task_id}] TTS异常: {e.message}")
         response_data = format_tts_response(
-            task_id, "", False, e.message, tts_request.format
+            task_id, "", False, e.message
         )
         return JSONResponse(content=response_data, headers={"task_id": task_id})
 
     except Exception as e:
         logger.error(f"[{task_id}] 未知异常: {str(e)}")
         response_data = format_tts_response(
-            task_id, "", False, f"内部服务错误: {str(e)}", tts_request.format
+            task_id, "", False, f"内部服务错误: {str(e)}"
         )
         return JSONResponse(content=response_data, headers={"task_id": task_id})
 

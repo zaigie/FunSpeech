@@ -158,7 +158,6 @@ class ASRErrorResponse(ErrorResponse):
                 "result": "",
                 "status": 40000001,
                 "message": "Gateway:ACCESS_DENIED:The token 'invalid_token' is invalid!",
-                "error_code": "AUTHENTICATION_FAILED",
             }
         }
 

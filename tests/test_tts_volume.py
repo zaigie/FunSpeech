@@ -64,7 +64,7 @@ def example_volume_with_other_params():
 
     print("完整参数示例:")
     print(f"  任务ID: {result.get('task_id')}")
-    print(f"  音频URL: {result.get('audio_url')}")
+    print(f"  结果: {result.get('result')}")
     print(f"  状态: {result.get('message')}")
 
 
