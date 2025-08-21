@@ -351,10 +351,19 @@ curl -X POST "http://localhost:8000/openai/v1/audio/speech" \
 克隆音色需要通过音色管理工具添加，步骤如下：
 
 1. **准备音频和文本文件**：将参考音频文件（`.wav`）和对应的文本文件（`.txt`）放在 `app/services/tts/clone/` 目录下
-2. **运行音色管理工具**：`python -m app.services.tts.clone.voice_manager --add <音色名称>`
+2. **运行音色管理工具**：`python -m app.services.tts.clone.voice_manager --add`
 3. **验证音色可用性**：`GET /stream/v1/tts/voices` 查看音色列表
 
 **注意**：音色名称不能与预训练音色重名，音频文件建议长度为 3-15 秒，音质清晰无噪音。
+
+**音色管理工具其他命令**：
+
+- `--list`: 列出所有可用音色
+- `--list-clone`: 列出克隆音色
+- `--remove <音色名称>`: 移除指定音色
+- `--info <音色名称>`: 显示指定音色信息
+- `--refresh`: 刷新音色列表
+- `--registry-info`: 显示注册表信息
 
 ### Prompt/Instructions 参数说明
 

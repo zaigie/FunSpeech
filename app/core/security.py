@@ -99,7 +99,7 @@ def validate_xls_token(request: Request, task_id: str = "") -> (bool, str):
 
     # 如果没有配置XLS_TOKEN环境变量，则鉴权是可选的
     if settings.XLS_TOKEN is None:
-        return token or "optional"
+        return True, token or "optional"
 
     # 如果配置了XLS_TOKEN，则必须提供token
     if not token:
@@ -119,7 +119,7 @@ def validate_bearer_token(request: Request, task_id: str = "") -> (bool, str):
 
     # 如果没有配置XLS_TOKEN环境变量，则鉴权是可选的
     if settings.XLS_TOKEN is None:
-        return auth_header or "optional"
+        return True, auth_header or "optional"
 
     # 如果配置了XLS_TOKEN，则必须提供Authorization头
     if not auth_header:
@@ -143,7 +143,7 @@ def validate_request_appkey(appkey: str, task_id: str = "") -> (bool, str):
     """验证请求中的appkey参数"""
     # 如果没有配置APPKEY环境变量，则appkey是可选的
     if settings.APPKEY is None:
-        return appkey or "optional"
+        return True, appkey or "optional"
 
     # 如果配置了APPKEY，则必须提供appkey
     if not appkey:

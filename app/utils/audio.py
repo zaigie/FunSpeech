@@ -165,7 +165,9 @@ def get_audio_duration(audio_path: str) -> float:
         AudioProcessingException: 获取时长失败
     """
     try:
-        duration = librosa.get_duration(path=audio_path)
+        # Load audio and get duration
+        y, sr = librosa.load(audio_path, sr=None)
+        duration = librosa.get_duration(y=y, sr=sr)
         return duration
     except Exception as e:
         raise DefaultServerErrorException(f"获取音频时长失败: {str(e)}")
