@@ -243,13 +243,10 @@ python -m app.services.tts.clone.voice_manager --refresh        # 刷新音色�
 
 **FunASR 系列：**
 - **Paraformer Large** - 高精度中文识别（默认）
-- **SenseVoice Small** - 中英文混合识别
-- **UniASR 2Pass** - 支持方言识别
+- **SenseVoice Small** - 高精度多语言混合识别、情感辨识和音频事件检测
 
 **Dolphin 系列：**
-- **Dolphin Small** - 轻量级，适合资源受限环境
-- **Dolphin Medium** - 平衡性能与资源消耗  
-- **Dolphin Large** - 最高精度
+- **Dolphin Small** - 多语言、多方言识别模型
 
 ### TTS 模型
 
