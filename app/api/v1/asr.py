@@ -20,6 +20,7 @@ import logging
 
 from ...core.config import settings
 from ...core.exceptions import (
+    AuthenticationException,
     InvalidParameterException,
     InvalidMessageException,
     UnsupportedSampleRateException,
@@ -250,18 +251,14 @@ async def asr_transcribe(
 
     try:
         # 验证请求头部（鉴权）
-        token = validate_xls_token(request, task_id)
-        logger.info(
-            f"[{task_id}] 请求验证通过, token: {mask_sensitive_data(token) if token != 'optional' else 'optional'}"
-        )
+        result, content = validate_xls_token(request, task_id)
+        if not result:
+            raise AuthenticationException(content, task_id)
 
         # 验证appkey参数
-        appkey = validate_request_appkey(params.appkey, task_id)
-        logger.info(
-            f"[{task_id}] appkey验证通过, appkey: {mask_sensitive_data(appkey) if appkey != 'optional' else 'optional'}"
-        )
-
-        logger.info(f"[{task_id}] 请求参数: {params}")
+        result, content = validate_request_appkey(params.appkey, task_id)
+        if not result:
+            raise AuthenticationException(content, task_id)
 
         # 验证format参数（如果指定了的话）
         if params.format and not validate_audio_format(params.format):
@@ -396,11 +393,10 @@ async def asr_transcribe(
 async def health_check(request: Request):
     """ASR服务健康检查端点"""
     try:
-        # 验证请求头部（鉴权）
-        token = validate_xls_token(request)
-        logger.info(
-            f"健康检查请求验证通过, token: {mask_sensitive_data(token) if token != 'optional' else 'optional'}"
-        )
+        # 鉴权
+        result, content = validate_xls_token(request)
+        if not result:
+            raise AuthenticationException(content, "health_check")
 
         model_manager = get_model_manager()
 
@@ -448,10 +444,9 @@ async def list_models(request: Request):
     """获取可用模型列表端点"""
     try:
         # 验证请求头部（鉴权）
-        token = validate_xls_token(request)
-        logger.info(
-            f"模型列表请求验证通过, token: {mask_sensitive_data(token) if token != 'optional' else 'optional'}"
-        )
+        result, content = validate_xls_token(request)
+        if not result:
+            raise AuthenticationException(content, "list_models")
 
         model_manager = get_model_manager()
         models = model_manager.list_models()

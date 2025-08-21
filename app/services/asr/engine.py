@@ -12,10 +12,7 @@ from typing import Optional, Dict, Any
 from abc import ABC, abstractmethod
 
 from ...core.config import settings
-from ...core.exceptions import (
-    DefaultServerErrorException,
-    UnsupportedSampleRateException,
-)
+from ...core.exceptions import DefaultServerErrorException
 from ...utils.audio import cleanup_temp_file
 from ...utils.number_converter import apply_itn_to_text
 

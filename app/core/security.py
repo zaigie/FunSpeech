@@ -7,7 +7,6 @@
 from typing import Optional
 from fastapi import Request
 from .config import settings
-from .exceptions import AuthenticationException
 
 
 def mask_sensitive_data(
@@ -93,7 +92,7 @@ def validate_appkey(appkey: str, expected_appkey: Optional[str] = None) -> bool:
     return True
 
 
-def validate_xls_token(request: Request, task_id: str = "") -> str:
+def validate_xls_token(request: Request, task_id: str = "") -> (bool, str):
     """验证X-NLS-Token头部"""
     # 获取认证token
     token = request.headers.get("X-NLS-Token")
@@ -104,18 +103,16 @@ def validate_xls_token(request: Request, task_id: str = "") -> str:
 
     # 如果配置了XLS_TOKEN，则必须提供token
     if not token:
-        raise AuthenticationException("缺少访问令牌", task_id)
+        return False, "缺少X-NLS-Token头部"
 
     if not validate_token(token, settings.XLS_TOKEN):
         masked_token = mask_sensitive_data(token)
-        raise AuthenticationException(
-            f"Gateway:ACCESS_DENIED:The token '{masked_token}' is invalid!", task_id
-        )
+        return False, f"Gateway:ACCESS_DENIED:The token '{masked_token}' is invalid!"
 
-    return token
+    return True, token
 
 
-def validate_bearer_token(request: Request, task_id: str = "") -> str:
+def validate_bearer_token(request: Request, task_id: str = "") -> (bool, str):
     """验证Bearer Token鉴权（OpenAI兼容接口）"""
     # 获取Authorization头
     auth_header = request.headers.get("Authorization")
@@ -126,27 +123,23 @@ def validate_bearer_token(request: Request, task_id: str = "") -> str:
 
     # 如果配置了XLS_TOKEN，则必须提供Authorization头
     if not auth_header:
-        raise AuthenticationException("缺少Authorization头", task_id)
+        return False, "缺少Authorization头"
 
     # 检查Bearer格式
     if not auth_header.startswith("Bearer "):
-        raise AuthenticationException(
-            "Authorization头格式错误，应为'Bearer <token>'", task_id
-        )
+        return False, "Authorization头格式错误，应为'Bearer <token>'"
 
     # 提取token
     token = auth_header[7:]  # 去掉"Bearer "前缀
 
     if not validate_token(token, settings.XLS_TOKEN):
         masked_token = mask_sensitive_data(token)
-        raise AuthenticationException(
-            f"Gateway:ACCESS_DENIED:The token '{masked_token}' is invalid!", task_id
-        )
+        return False, f"Gateway:ACCESS_DENIED:The token '{masked_token}' is invalid!"
 
-    return token
+    return True, token
 
 
-def validate_request_appkey(appkey: str, task_id: str = "") -> str:
+def validate_request_appkey(appkey: str, task_id: str = "") -> (bool, str):
     """验证请求中的appkey参数"""
     # 如果没有配置APPKEY环境变量，则appkey是可选的
     if settings.APPKEY is None:
@@ -154,12 +147,10 @@ def validate_request_appkey(appkey: str, task_id: str = "") -> str:
 
     # 如果配置了APPKEY，则必须提供appkey
     if not appkey:
-        raise AuthenticationException("缺少appkey参数", task_id)
+        return False, "缺少appkey参数"
 
     if not validate_appkey(appkey, settings.APPKEY):
         masked_appkey = mask_sensitive_data(appkey)
-        raise AuthenticationException(
-            f"Gateway:ACCESS_DENIED:The appkey '{masked_appkey}' is invalid!", task_id
-        )
+        return False, f"Gateway:ACCESS_DENIED:The appkey '{masked_appkey}' is invalid!"
 
-    return appkey
+    return True, appkey
