@@ -9,7 +9,7 @@ from typing import List, Dict, Any
 from pathlib import Path
 
 from ...core.config import settings
-from ...core.exceptions import TTSException, TTSModelException
+from ...core.exceptions import DefaultServerErrorException
 from ...utils.audio import save_audio_array, generate_temp_audio_path
 
 logger = logging.getLogger(__name__)
@@ -103,7 +103,7 @@ class CosyVoiceTTSEngine:
                 self._clone_model_loaded = False
 
             if not self._sft_model_loaded and not self._clone_model_loaded:
-                raise TTSModelException("所有模型都加载失败")
+                raise DefaultServerErrorException("所有模型都加载失败")
 
             # 初始化音色管理器（只有克隆模型加载成功时才初始化）
             if self._clone_model_loaded:
@@ -113,7 +113,7 @@ class CosyVoiceTTSEngine:
 
         except Exception as e:
             logger.error(f"TTS模型加载失败: {str(e)}")
-            raise TTSModelException(f"TTS模型加载失败: {str(e)}")
+            raise DefaultServerErrorException(f"TTS模型加载失败: {str(e)}")
 
     def _load_voice_manager(self):
         """初始化音色管理器"""
@@ -159,7 +159,7 @@ class CosyVoiceTTSEngine:
             )
 
         except Exception as e:
-            raise TTSException(50000002, f"语音合成失败: {str(e)}")
+            raise DefaultServerErrorException(f"语音合成失败: {str(e)}")
 
     def synthesize_with_preset_voice(
         self,
@@ -173,7 +173,7 @@ class CosyVoiceTTSEngine:
         """使用预设音色合成语音"""
         # 检查SFT模型是否可用
         if not self.cosyvoice_sft:
-            raise TTSModelException("SFT模型未加载")
+            raise DefaultServerErrorException("SFT模型未加载")
 
         # 使用CosyVoice SFT模型进行预设音色合成
         logger.info(
@@ -206,7 +206,7 @@ class CosyVoiceTTSEngine:
     ) -> str:
         """使用保存的音色合成语音（基于官方API）"""
         if not self.cosyvoice_clone:
-            raise TTSModelException("克隆模型未加载")
+            raise DefaultServerErrorException("克隆模型未加载")
 
         try:
             # 使用官方API进行音色合成 - 直接通过zero_shot_spk_id引用保存的音色
@@ -235,7 +235,7 @@ class CosyVoiceTTSEngine:
             return output_path
 
         except Exception as e:
-            raise TTSException(50000002, f"保存音色合成失败: {str(e)}")
+            raise DefaultServerErrorException(f"保存音色合成失败: {str(e)}")
 
     def get_voices(self) -> List[str]:
         """获取音色列表（包含克隆音色）"""

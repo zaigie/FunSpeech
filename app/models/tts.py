@@ -35,6 +35,7 @@ class VoiceType(str, Enum):
 
 # ============= 请求模型 =============
 
+
 class TTSRequest(BaseModel):
     """预设音色TTS请求模型"""
 
@@ -45,7 +46,7 @@ class TTSRequest(BaseModel):
         min_length=1,
         max_length=64,
     )
-    
+
     text: str = Field(
         ...,
         description="待合成的文本内容",
@@ -60,7 +61,7 @@ class TTSRequest(BaseModel):
         example="中文女",
         max_length=32,
     )
-    
+
     speech_rate: float = Field(
         0,
         description="语速倍率，范围-500~500，0为正常语速，负值为减速，正值为加速",
@@ -95,7 +96,7 @@ class TTSRequest(BaseModel):
         example="说话温柔一些，语气轻松",
         max_length=500,
     )
-    
+
     @field_validator("text")
     @classmethod
     def validate_text(cls, v: str) -> str:
@@ -170,15 +171,15 @@ class TTSSuccessResponse(BaseResponse):
 
     result: str = Field(
         ...,
-        description="服务结果",
-        example="语音合成成功",
+        description="生成音频文件的下载链接",
+        example="/tmp/tts_cf7b0c5339244ee29cd4e43fb97f1234.wav",
     )
 
     class Config:
         json_schema_extra = {
             "example": {
                 "task_id": "tts_cf7b0c5339244ee29cd4e43fb97f1234",
-                "result": "语音合成成功",
+                "result": "/tmp/tts_cf7b0c5339244ee29cd4e43fb97f1234.wav",
                 "status": 20000000,
                 "message": "SUCCESS",
             }

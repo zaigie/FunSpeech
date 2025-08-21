@@ -33,25 +33,6 @@ def generate_task_id(prefix: str = "") -> str:
     return task_id
 
 
-def validate_appkey(appkey: str) -> bool:
-    """验证应用Appkey
-
-    Args:
-        appkey: 应用密钥
-
-    Returns:
-        验证结果
-    """
-    if not appkey:
-        return False
-
-    # 简单的appkey格式验证 - 降低验证要求，允许"test"这样的简单appkey
-    if len(appkey) < 3:
-        return False
-
-    return True
-
-
 def validate_text_input(text: str) -> Tuple[bool, str]:
     """验证输入文本
 

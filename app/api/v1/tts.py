@@ -12,13 +12,9 @@ import logging
 
 from ...core.config import settings
 from ...core.exceptions import (
-    TTSException,
-    TTSModelException,
-    InvalidVoiceException,
-    InvalidSpeedException,
-    InvalidSpeechRateException,
-    ReferenceAudioException,
     InvalidParameterException,
+    DefaultServerErrorException,
+    UnsupportedSampleRateException,
 )
 from ...core.security import (
     validate_xls_token,
@@ -31,8 +27,6 @@ from ...models.tts import (
     VoiceListResponse,
     VoiceDetailResponse,
     VoiceRefreshResponse,
-    TTSSuccessResponse,
-    TTSErrorResponse,
     TTSRequest,
 )
 from ...utils.common import (
@@ -76,7 +70,7 @@ def save_base64_audio(base64_data: str, task_id: str) -> str:
         return temp_path
 
     except Exception as e:
-        raise ReferenceAudioException(f"base64音频数据处理失败: {str(e)}")
+        raise InvalidParameterException(f"base64音频数据处理失败: {str(e)}")
 
 
 def format_tts_response(
@@ -89,7 +83,7 @@ def format_tts_response(
     if success:
         return {
             "task_id": task_id,
-            "result": "语音合成成功",
+            "result": f"/tmp/{os.path.basename(audio_path)}" if audio_path else "",
             "status": 20000000,
             "message": message,
         }
@@ -227,7 +221,7 @@ async def synthesize_speech(
         if tts_request.sample_rate and not validate_sample_rate(
             tts_request.sample_rate
         ):
-            raise InvalidParameterException(
+            raise UnsupportedSampleRateException(
                 f"不支持的采样率: {tts_request.sample_rate}。支持的采样率: {', '.join(map(str, settings.SUPPORTED_SAMPLE_RATES))}",
                 task_id,
             )
@@ -235,7 +229,7 @@ async def synthesize_speech(
         # 验证speech_rate参数
         is_valid, message = validate_speech_rate_parameter(tts_request.speech_rate)
         if not is_valid:
-            raise InvalidSpeechRateException(message, task_id)
+            raise InvalidParameterException(message, task_id)
 
         # 将speech_rate转换为内部speed参数
         speed = convert_speech_rate_to_speed(tts_request.speech_rate)
@@ -261,17 +255,13 @@ async def synthesize_speech(
         logger.info(f"[{task_id}] 语音合成完成: {output_path}")
 
         # 返回成功响应
-        response_data = format_tts_response(
-            task_id, output_path, True, "SUCCESS"
-        )
+        response_data = format_tts_response(task_id, output_path, True, "SUCCESS")
         return JSONResponse(content=response_data, headers={"task_id": task_id})
 
-    except TTSException as e:
+    except (InvalidParameterException, DefaultServerErrorException) as e:
         e.task_id = task_id
         logger.error(f"[{task_id}] TTS异常: {e.message}")
-        response_data = format_tts_response(
-            task_id, "", False, e.message
-        )
+        response_data = format_tts_response(task_id, "", False, e.message)
         return JSONResponse(content=response_data, headers={"task_id": task_id})
 
     except Exception as e:

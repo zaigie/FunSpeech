@@ -20,11 +20,10 @@ import logging
 
 from ...core.config import settings
 from ...core.exceptions import (
-    ASRException,
-    AuthenticationException,
     InvalidParameterException,
     InvalidMessageException,
     UnsupportedSampleRateException,
+    DefaultServerErrorException,
 )
 from ...core.security import (
     validate_xls_token,
@@ -40,10 +39,7 @@ from ...models.asr import (
     ASRQueryParams,
     ASRHeaders,
 )
-from ...utils.common import (
-    generate_task_id,
-    validate_appkey,
-)
+from ...utils.common import generate_task_id
 from ...utils.audio import (
     validate_audio_format,
     validate_sample_rate,
@@ -353,7 +349,12 @@ async def asr_transcribe(
 
         return JSONResponse(content=response_data, headers={"task_id": task_id})
 
-    except ASRException as e:
+    except (
+        InvalidParameterException,
+        InvalidMessageException,
+        UnsupportedSampleRateException,
+        DefaultServerErrorException,
+    ) as e:
         e.task_id = task_id
         logger.error(f"[{task_id}] ASR异常: {e.message}")
         response_data = {

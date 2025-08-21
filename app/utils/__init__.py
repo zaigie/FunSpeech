@@ -17,7 +17,6 @@ from .number_converter import (
 __all__ = [
     # 通用工具函数
     "generate_task_id",
-    "validate_appkey",
     "validate_text_input",
     "validate_speed_parameter",
     "validate_speech_rate_parameter",

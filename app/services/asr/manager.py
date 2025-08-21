@@ -10,7 +10,7 @@ from typing import Dict, Any, Optional, List
 from pathlib import Path
 
 from ...core.config import settings
-from ...core.exceptions import ASRException, InvalidParameterException
+from ...core.exceptions import DefaultServerErrorException, InvalidParameterException
 from .engine import ASREngine, FunASREngine, DolphinEngine
 
 
@@ -44,7 +44,7 @@ class ModelManager:
             # 如果新路径不存在，尝试旧路径
             models_file = Path("models.json")
             if not models_file.exists():
-                raise ASRException(50000001, "models.json 配置文件不存在")
+                raise DefaultServerErrorException("models.json 配置文件不存在")
 
         try:
             with open(models_file, "r", encoding="utf-8") as f:
@@ -60,7 +60,7 @@ class ModelManager:
                 self._default_model_id = list(self._models_config.keys())[0]
 
         except (json.JSONDecodeError, KeyError) as e:
-            raise ASRException(50000001, f"模型配置文件格式错误: {str(e)}")
+            raise DefaultServerErrorException(f"模型配置文件格式错误: {str(e)}")
 
     def get_model_config(self, model_id: Optional[str] = None) -> ModelConfig:
         """获取模型配置"""

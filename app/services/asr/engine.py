@@ -12,7 +12,10 @@ from typing import Optional, Dict, Any
 from abc import ABC, abstractmethod
 
 from ...core.config import settings
-from ...core.exceptions import ASRException, UnsupportedSampleRateException
+from ...core.exceptions import (
+    DefaultServerErrorException,
+    UnsupportedSampleRateException,
+)
 from ...utils.audio import cleanup_temp_file
 from ...utils.number_converter import apply_itn_to_text
 
@@ -119,7 +122,7 @@ class FunASREngine(ASREngine):
             self.model = AutoModel(**model_kwargs)
 
         except Exception as e:
-            raise ASRException(50000001, f"FunASR模型加载失败: {str(e)}")
+            raise DefaultServerErrorException(f"FunASR模型加载失败: {str(e)}")
 
     def transcribe_file(
         self,
@@ -134,7 +137,7 @@ class FunASREngine(ASREngine):
     ) -> str:
         """使用FunASR转录音频文件"""
         if not self.model:
-            raise ASRException(50000001, "模型未加载")
+            raise DefaultServerErrorException("模型未加载")
 
         try:
             # FunASR的generate方法可以直接接受文件路径
@@ -160,7 +163,7 @@ class FunASREngine(ASREngine):
                 return ""
 
         except Exception as e:
-            raise ASRException(50000002, f"语音识别失败: {str(e)}")
+            raise DefaultServerErrorException(f"语音识别失败: {str(e)}")
 
     def is_model_loaded(self) -> bool:
         """检查模型是否已加载"""
@@ -216,7 +219,7 @@ class DolphinEngine(ASREngine):
             logger.info("Dolphin模型加载成功")
 
         except Exception as e:
-            raise ASRException(50000001, f"Dolphin模型加载失败: {str(e)}")
+            raise DefaultServerErrorException(f"Dolphin模型加载失败: {str(e)}")
 
     def _clean_dolphin_text(self, text: str) -> str:
         """清理dolphin输出的特殊标记和时间戳"""
@@ -275,13 +278,13 @@ class DolphinEngine(ASREngine):
     ) -> str:
         """使用Dolphin转录音频文件"""
         if not self.model:
-            raise ASRException(50000001, "模型未加载")
+            raise DefaultServerErrorException("模型未加载")
 
         try:
             import dolphin
 
             if self.model is None:
-                raise ASRException(50000001, "模型未加载")
+                raise DefaultServerErrorException("模型未加载")
 
             logger.info(f"开始Dolphin语音识别，文件: {audio_path}")
             logger.debug(
@@ -327,7 +330,7 @@ class DolphinEngine(ASREngine):
             return final_text
 
         except Exception as e:
-            raise ASRException(50000002, f"语音识别失败: {str(e)}")
+            raise DefaultServerErrorException(f"语音识别失败: {str(e)}")
 
     def is_model_loaded(self) -> bool:
         """检查模型是否已加载"""

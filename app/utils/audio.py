@@ -22,7 +22,7 @@ from ..core.config import settings
 from ..core.exceptions import (
     InvalidParameterException,
     InvalidMessageException,
-    AudioProcessingException,
+    DefaultServerErrorException,
 )
 
 logger = logging.getLogger(__name__)
@@ -114,7 +114,7 @@ def save_audio_to_temp_file(audio_data: bytes, suffix: str = ".wav") -> str:
             temp_file.write(audio_data)
             return temp_file.name
     except Exception as e:
-        raise AudioProcessingException(f"保存音频文件失败: {str(e)}")
+        raise DefaultServerErrorException(f"保存音频文件失败: {str(e)}")
 
 
 def cleanup_temp_file(file_path: str) -> None:
@@ -149,7 +149,7 @@ def load_audio_file(audio_path: str, target_sr: int = 16000) -> Tuple[np.ndarray
         audio_data, sr = librosa.load(audio_path, sr=target_sr)
         return audio_data, sr
     except Exception as e:
-        raise AudioProcessingException(f"加载音频文件失败: {str(e)}")
+        raise DefaultServerErrorException(f"加载音频文件失败: {str(e)}")
 
 
 def get_audio_duration(audio_path: str) -> float:
@@ -168,7 +168,7 @@ def get_audio_duration(audio_path: str) -> float:
         duration = librosa.get_duration(path=audio_path)
         return duration
     except Exception as e:
-        raise AudioProcessingException(f"获取音频时长失败: {str(e)}")
+        raise DefaultServerErrorException(f"获取音频时长失败: {str(e)}")
 
 
 def validate_reference_audio(audio_path: str) -> Tuple[bool, str]:
@@ -351,7 +351,7 @@ def save_audio_array(
         return output_path
 
     except Exception as e:
-        raise AudioProcessingException(f"保存音频文件失败: {str(e)}")
+        raise DefaultServerErrorException(f"保存音频文件失败: {str(e)}")
 
 
 def convert_audio_to_wav(
@@ -401,7 +401,7 @@ def convert_audio_to_wav(
             )
             return output_path
         except (subprocess.CalledProcessError, FileNotFoundError):
-            raise AudioProcessingException(f"音频格式转换失败: {str(e)}")
+            raise DefaultServerErrorException(f"音频格式转换失败: {str(e)}")
 
 
 def normalize_audio_for_asr(audio_path: str, target_sr: int = 16000) -> str:
@@ -434,7 +434,7 @@ def normalize_audio_for_asr(audio_path: str, target_sr: int = 16000) -> str:
         return normalized_path
 
     except Exception as e:
-        raise AudioProcessingException(f"音频标准化失败: {str(e)}")
+        raise DefaultServerErrorException(f"音频标准化失败: {str(e)}")
 
 
 def generate_temp_audio_path(prefix: str = "audio", suffix: str = ".wav") -> str:

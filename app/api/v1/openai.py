@@ -9,7 +9,7 @@ from fastapi.responses import FileResponse
 import logging
 
 from ...core.config import settings
-from ...core.exceptions import TTSException, InvalidParameterException
+from ...core.exceptions import InvalidParameterException, DefaultServerErrorException
 from ...core.security import validate_bearer_token, mask_sensitive_data
 from ...models.tts import OpenAITTSRequest
 from ...utils.common import generate_task_id, clean_text_for_tts
@@ -83,7 +83,7 @@ async def openai_compatible_tts(
             headers={"task_id": task_id},
         )
 
-    except TTSException as e:
+    except (InvalidParameterException, DefaultServerErrorException) as e:
         e.task_id = task_id
         logger.error(f"[{task_id}] TTS异常: {e.message}")
         raise HTTPException(status_code=400, detail=e.message)
