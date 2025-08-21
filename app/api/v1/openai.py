@@ -4,16 +4,16 @@ OpenAI兼容API路由
 提供与OpenAI TTS API兼容的接口
 """
 
-import os
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import FileResponse
 import logging
 
 from ...core.config import settings
-from ...core.exceptions import TTSException, InvalidVoiceException
+from ...core.exceptions import TTSException, InvalidParameterException
 from ...core.security import validate_bearer_token, mask_sensitive_data
 from ...models.tts import OpenAITTSRequest
 from ...utils.common import generate_task_id, clean_text_for_tts
+from ...utils.audio import validate_audio_format
 from ...services.tts.engine import get_tts_engine
 
 # 配置日志
@@ -39,13 +39,22 @@ async def openai_compatible_tts(
     try:
         # 验证Bearer Token鉴权
         token = validate_bearer_token(request, task_id)
-        logger.info(
+        logger.debug(
             f"[{task_id}] Bearer Token验证通过, token: {mask_sensitive_data(token) if token != 'optional' else 'optional'}"
         )
 
         logger.info(
             f"[{task_id}] OpenAI兼容接口: 文本='{request_body.input}', 音色={request_body.voice}, 语速={request_body.speed}"
         )
+
+        # 验证format参数
+        if request_body.response_format and not validate_audio_format(
+            request_body.response_format
+        ):
+            raise InvalidParameterException(
+                f"不支持的音频格式: {request_body.response_format}。支持的格式: {', '.join(settings.SUPPORTED_AUDIO_FORMATS)}",
+                task_id,
+            )
 
         # 清理文本
         clean_text = clean_text_for_tts(request_body.input)
@@ -55,7 +64,11 @@ async def openai_compatible_tts(
 
         # 统一语音合成（Engine层自动判断音色类型）
         output_path = tts_engine.synthesize_speech(
-            clean_text, request_body.voice, request_body.speed
+            clean_text,
+            request_body.voice,
+            request_body.speed,
+            request_body.response_format,
+            22050,  # 默认采样率
         )
 
         logger.info(f"[{task_id}] OpenAI兼容接口合成完成: {output_path}")
