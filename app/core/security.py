@@ -92,7 +92,7 @@ def validate_appkey(appkey: str, expected_appkey: Optional[str] = None) -> bool:
     return True
 
 
-def validate_token(request: Request, task_id: str = "") -> (bool, str):
+def validate_token(request: Request, task_id: str = "") -> tuple[bool, str]:
     """验证X-NLS-Token头部"""
     # 获取认证token
     token = request.headers.get("X-NLS-Token")
@@ -112,7 +112,7 @@ def validate_token(request: Request, task_id: str = "") -> (bool, str):
     return True, token
 
 
-def validate_bearer_token(request: Request, task_id: str = "") -> (bool, str):
+def validate_bearer_token(request: Request, task_id: str = "") -> tuple[bool, str]:
     """验证Bearer Token鉴权（OpenAI兼容接口）"""
     # 获取Authorization头
     auth_header = request.headers.get("Authorization")
@@ -139,7 +139,7 @@ def validate_bearer_token(request: Request, task_id: str = "") -> (bool, str):
     return True, token
 
 
-def validate_request_appkey(appkey: str, task_id: str = "") -> (bool, str):
+def validate_request_appkey(appkey: str, task_id: str = "") -> tuple[bool, str]:
     """验证请求中的appkey参数"""
     # 如果没有配置APPKEY环境变量，则appkey是可选的
     if settings.APPKEY is None:
