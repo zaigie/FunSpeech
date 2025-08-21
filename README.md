@@ -159,7 +159,7 @@ curl -X POST "http://localhost:8000/stream/v1/tts" \
     "volume": 50
   }'
 
-# 完整参数示例（包含音量控制）
+# 完整参数示例
 curl -X POST "http://localhost:8000/stream/v1/tts" \
   -H "Content-Type: application/json" \
   -d '{
@@ -168,7 +168,8 @@ curl -X POST "http://localhost:8000/stream/v1/tts" \
     "speech_rate": 20,
     "volume": 75,
     "format": "wav",
-    "sample_rate": 22050
+    "sample_rate": 22050,
+    "prompt": "说话温柔一些，语气轻松"
   }'
 ```
 
@@ -203,7 +204,8 @@ curl -X POST "http://localhost:8000/openai/v1/audio/speech" \
     "model": "tts-1",
     "input": "你好，这是OpenAI兼容接口测试。",
     "voice": "中文女",
-    "speed": 1.0
+    "speed": 1.0,
+    "instructions": "说话温柔一些，语气轻松"
   }' \
   --output speech.wav
 ```
@@ -237,6 +239,7 @@ curl -X POST "http://localhost:8000/openai/v1/audio/speech" \
 | voice       | String  | 否   | 音色名称，支持预训练音色（中文女、中文男等）和克隆音色              |
 | speech_rate | Float   | 否   | 语速 (-500~500，0 为正常语速，负值为减速，正值为加速)               |
 | volume      | Integer | 否   | 音量大小 (0~100，默认值 50)                                         |
+| prompt      | String  | 否   | 音色指导文本，用于指导 TTS 模型的音色生成风格                       |
 
 **预训练音色**: 中文女, 中文男, 日语男, 粤语女, 英文女, 英文男, 韩语女  
 **克隆音色**: 通过音色管理工具添加的自定义音色
@@ -250,6 +253,7 @@ curl -X POST "http://localhost:8000/openai/v1/audio/speech" \
 | speed           | Float  | 否   | 语速 (0.5-2.0)                    |
 | model           | String | 否   | 模型名称 (兼容参数，固定为 tts-1) |
 | response_format | String | 否   | 响应格式 (固定为 wav)             |
+| instructions    | String | 否   | 音色指导文本，等同于 prompt 参数  |
 
 ### 支持的音色列表
 
@@ -272,6 +276,46 @@ curl -X POST "http://localhost:8000/openai/v1/audio/speech" \
 3. **验证音色可用性**：`GET /stream/v1/tts/voices` 查看音色列表
 
 **注意**：音色名称不能与预训练音色重名，音频文件建议长度为 3-15 秒，音质清晰无噪音。
+
+### Prompt/Instructions 参数说明
+
+#### 功能说明
+
+`prompt`（常规接口）和 `instructions`（OpenAI 兼容接口）参数用于指导 TTS 模型的音色生成风格，两者功能完全相同。
+
+> ⚠️ 目前该参数仅能适用于 **克隆音色**（CosyVoice2），预设音色（SFT）不适用。
+
+#### 使用场景
+
+- **情感控制**: "说话温柔一些" / "语气激动一些" / "说话轻松随意"
+- **语速节奏**: "说话慢一点" / "说话节奏明快一些"
+- **语调风格**: "用播音腔" / "用朗读的语调" / "像讲故事一样"
+- **音色特点**: "声音低沉一些" / "声音甜美一些"
+
+#### 使用建议
+
+1. **简洁明确**: 指导文本应简洁明确，避免过于复杂的描述
+2. **中文描述**: 推荐使用中文描述，效果更好
+3. **合理长度**: 建议控制在 50 字以内，最长不超过 500 字
+4. **适用音色**: 对克隆音色效果更明显，预训练音色也有一定效果
+
+#### 示例
+
+```json
+{
+  "text": "欢迎来到我们的语音服务平台",
+  "voice": "中文女",
+  "prompt": "说话温柔一些，像客服一样亲切"
+}
+```
+
+```json
+{
+  "input": "今天天气真不错，适合出去走走",
+  "voice": "中文男",
+  "instructions": "说话轻松自然，像朋友聊天一样"
+}
+```
 
 ## ASR 模型配置
 

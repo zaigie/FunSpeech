@@ -69,6 +69,8 @@ async def openai_compatible_tts(
             request_body.speed,
             request_body.response_format,
             22050,  # 默认采样率
+            50,  # 默认音量
+            request_body.instructions or "",  # 将instructions映射到prompt
         )
 
         logger.info(f"[{task_id}] OpenAI兼容接口合成完成: {output_path}")

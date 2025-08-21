@@ -97,6 +97,13 @@ class PresetVoiceTTSRequest(BaseTTSRequest):
         example=22050,
     )
 
+    prompt: Optional[str] = Field(
+        "",
+        description="音色指导文本，用于指导TTS模型的音色生成风格",
+        example="说话温柔一些，语气轻松",
+        max_length=500,
+    )
+
     @field_validator("voice")
     @classmethod
     def validate_voice(cls, v: str) -> str:
@@ -142,6 +149,13 @@ class OpenAITTSRequest(BaseModel):
         example=1.0,
         ge=0.5,
         le=2.0,
+    )
+
+    instructions: Optional[str] = Field(
+        None,
+        description="音色指导文本，用于指导TTS模型的音色生成风格（等同于prompt参数）",
+        example="说话温柔一些，语气轻松",
+        max_length=500,
     )
 
 

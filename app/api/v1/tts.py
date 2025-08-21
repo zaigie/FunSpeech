@@ -167,6 +167,13 @@ def format_tts_response(
                                 "enum": [8000, 16000, 22050, 44100, 48000],
                                 "default": 22050,
                             },
+                            "prompt": {
+                                "type": "string",
+                                "description": "音色指导文本，用于指导TTS模型的音色生成风格",
+                                "example": "说话温柔一些，语气轻松",
+                                "maxLength": 500,
+                                "default": "",
+                            },
                         },
                         "required": ["text"],
                     }
@@ -234,6 +241,7 @@ async def synthesize_speech(
             tts_request.format,
             tts_request.sample_rate,
             tts_request.volume,
+            tts_request.prompt or "",
         )
 
         logger.info(f"[{task_id}] 语音合成完成: {output_path}")

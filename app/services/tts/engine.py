@@ -140,6 +140,7 @@ class CosyVoiceTTSEngine:
         format: str = "wav",
         sample_rate: int = 22050,
         volume: int = 50,
+        prompt: str = "",
     ) -> str:
         """语音合成（自动判断音色类型）"""
         try:
@@ -149,7 +150,7 @@ class CosyVoiceTTSEngine:
                 if voice in self._voice_manager.list_clone_voices():
                     logger.info(f"使用克隆音色模型合成: {voice}")
                     return self._synthesize_with_saved_voice(
-                        text, voice, speed, format, sample_rate, volume
+                        text, voice, speed, format, sample_rate, volume, prompt
                     )
 
             # 使用预训练音色合成
@@ -201,6 +202,7 @@ class CosyVoiceTTSEngine:
         format: str = "wav",
         sample_rate: int = 22050,
         volume: int = 50,
+        prompt: str = "",
     ) -> str:
         """使用保存的音色合成语音（基于官方API）"""
         if not self.cosyvoice_clone:
@@ -210,7 +212,7 @@ class CosyVoiceTTSEngine:
             # 使用官方API进行音色合成 - 直接通过zero_shot_spk_id引用保存的音色
             for audio_data in self.cosyvoice_clone.inference_zero_shot(
                 text,
-                "",  # 空的prompt_text
+                prompt,  # 使用传入的prompt_text
                 None,  # 不需要音频
                 zero_shot_spk_id=voice,  # 使用保存的音色ID
                 stream=False,
