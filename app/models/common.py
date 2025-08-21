@@ -14,14 +14,14 @@ class AudioFormat(str, Enum):
 
     PCM = "pcm"
     WAV = "wav"
+    OPUS = "opus"
+    SPEEX = "speex"
+    AMR = "amr"
     MP3 = "mp3"
     AAC = "aac"
     M4A = "m4a"
     FLAC = "flac"
     OGG = "ogg"
-    OPUS = "opus"
-    SPEEX = "speex"
-    AMR = "amr"
 
 
 class SampleRate(int, Enum):

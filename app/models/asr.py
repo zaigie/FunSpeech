@@ -31,9 +31,9 @@ class ASRQueryParams(BaseModel):
     )
 
     format: Optional[AudioFormat] = Field(
-        None,
-        description="音频格式。支持: pcm, wav, mp3, aac, m4a, flac, ogg",
-        example="wav",
+        "pcm",
+        description="音频格式。支持: pcm, wav, opus, speex, amr, mp3, aac, m4a, flac, ogg。仅在使用audio_address参数时生效，使用二进制音频流时默认为wav格式",
+        example="pcm",
     )
 
     sample_rate: Optional[SampleRate] = Field(

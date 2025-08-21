@@ -133,7 +133,12 @@ class CosyVoiceTTSEngine:
             logger.warning(f"初始化音色管理器失败: {str(e)}")
 
     def synthesize_speech(
-        self, text: str, voice: str = "中文女", speed: float = 1.0
+        self,
+        text: str,
+        voice: str = "中文女",
+        speed: float = 1.0,
+        format: str = "wav",
+        sample_rate: int = 22050,
     ) -> str:
         """语音合成（自动判断音色类型）"""
         try:
@@ -142,16 +147,25 @@ class CosyVoiceTTSEngine:
                 # 检查是否在克隆音色列表中
                 if voice in self._voice_manager.list_clone_voices():
                     logger.info(f"使用克隆音色模型合成: {voice}")
-                    return self._synthesize_with_saved_voice(text, voice, speed)
+                    return self._synthesize_with_saved_voice(
+                        text, voice, speed, format, sample_rate
+                    )
 
             # 使用预训练音色合成
-            return self.synthesize_with_preset_voice(text, voice, speed)
+            return self.synthesize_with_preset_voice(
+                text, voice, speed, format, sample_rate
+            )
 
         except Exception as e:
             raise TTSException(50000002, f"语音合成失败: {str(e)}")
 
     def synthesize_with_preset_voice(
-        self, text: str, voice: str = "中文女", speed: float = 1.0
+        self,
+        text: str,
+        voice: str = "中文女",
+        speed: float = 1.0,
+        format: str = "wav",
+        sample_rate: int = 22050,
     ) -> str:
         """使用预设音色合成语音"""
         # 检查SFT模型是否可用
@@ -159,21 +173,30 @@ class CosyVoiceTTSEngine:
             raise TTSModelException("SFT模型未加载")
 
         # 使用CosyVoice SFT模型进行预设音色合成
-        logger.info(f"使用预训练音色模型合成: {voice}")
+        logger.info(
+            f"使用预训练音色模型合成: {voice}, 格式: {format}, 采样率: {sample_rate}"
+        )
         for audio_data in self.cosyvoice_sft.inference_sft(
             text, voice, stream=False, speed=speed
         ):
-            # 保存音频文件
-            output_path = generate_temp_audio_path("preset_voice")
+            # 保存音频文件，使用指定的格式和采样率
+            output_path = generate_temp_audio_path("preset_voice", f".{format}")
             save_audio_array(
                 audio_data["tts_speech"].numpy(),
                 output_path,
-                sample_rate=self.cosyvoice_sft.sample_rate,
+                sample_rate=sample_rate,
+                format=format,
+                original_sr=self.cosyvoice_sft.sample_rate,
             )
             return output_path
 
     def _synthesize_with_saved_voice(
-        self, text: str, voice: str, speed: float = 1.0
+        self,
+        text: str,
+        voice: str,
+        speed: float = 1.0,
+        format: str = "wav",
+        sample_rate: int = 22050,
     ) -> str:
         """使用保存的音色合成语音（基于官方API）"""
         if not self.cosyvoice_clone:
@@ -192,12 +215,14 @@ class CosyVoiceTTSEngine:
                 output = audio_data
                 break
 
-            # 保存音频文件
-            output_path = generate_temp_audio_path("saved_voice")
+            # 保存音频文件，使用指定的格式和采样率
+            output_path = generate_temp_audio_path("saved_voice", f".{format}")
             save_audio_array(
                 output["tts_speech"].numpy(),
                 output_path,
-                sample_rate=self.cosyvoice_clone.sample_rate,
+                sample_rate=sample_rate,
+                format=format,
+                original_sr=self.cosyvoice_clone.sample_rate,
             )
 
             return output_path

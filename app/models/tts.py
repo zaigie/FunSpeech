@@ -8,7 +8,13 @@ from typing import Optional, List, Any, Union, Dict
 from pydantic import BaseModel, Field, field_validator
 from enum import Enum
 
-from .common import AudioFormat, BaseResponse, HealthCheckResponse, ErrorResponse
+from .common import (
+    AudioFormat,
+    SampleRate,
+    BaseResponse,
+    HealthCheckResponse,
+    ErrorResponse,
+)
 from ..core.config import settings
 
 
@@ -69,6 +75,18 @@ class PresetVoiceTTSRequest(BaseTTSRequest):
         description="音色名称",
         example="中文女",
         max_length=32,
+    )
+
+    format: Optional[AudioFormat] = Field(
+        "wav",
+        description="输出音频格式。支持: pcm, wav, opus, speex, amr, mp3, aac, m4a, flac, ogg",
+        example="wav",
+    )
+
+    sample_rate: Optional[SampleRate] = Field(
+        22050,
+        description="音频采样率（Hz）。支持: 8000, 16000, 22050, 44100, 48000",
+        example=22050,
     )
 
     @field_validator("voice")
@@ -265,7 +283,7 @@ class VoiceDetailResponse(BaseModel):
     voices: Dict[str, VoiceInfo] = Field(..., description="音色详细信息字典")
     total: int = Field(..., description="音色总数")
     preset_count: int = Field(..., description="预设音色数量")
-    feature_count: int = Field(..., description="特征音色数量")
+    clone_count: int = Field(..., description="克隆音色数量")
 
     class Config:
         json_schema_extra = {
@@ -283,7 +301,7 @@ class VoiceDetailResponse(BaseModel):
                 },
                 "total": 4,
                 "preset_count": 2,
-                "feature_count": 2,
+                "clone_count": 2,
             }
         }
 

@@ -65,6 +65,7 @@ class Settings:
         "amr",
         "mp3",
         "aac",
+        "m4a",
         "flac",
         "ogg",
     ]

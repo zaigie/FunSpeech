@@ -18,6 +18,7 @@ from ...core.exceptions import (
     InvalidSpeedException,
     InvalidSpeechRateException,
     ReferenceAudioException,
+    InvalidParameterException,
 )
 from ...core.security import validate_xls_token, mask_sensitive_data
 from ...models.tts import (
@@ -43,6 +44,8 @@ from ...utils.audio import (
     validate_reference_audio,
     cleanup_temp_file,
     generate_temp_audio_path,
+    validate_audio_format,
+    validate_sample_rate,
 )
 from ...services.tts.engine import get_tts_engine
 
@@ -73,7 +76,11 @@ def save_base64_audio(base64_data: str, task_id: str) -> str:
 
 
 def format_tts_response(
-    task_id: str, audio_path: str, success: bool = True, message: str = "SUCCESS"
+    task_id: str,
+    audio_path: str,
+    success: bool = True,
+    message: str = "SUCCESS",
+    audio_format: str = "wav",
 ) -> dict:
     """格式化TTS响应数据"""
     if success:
@@ -82,6 +89,7 @@ def format_tts_response(
             "audio_url": f"/tmp/{os.path.basename(audio_path)}" if audio_path else "",
             "status": 20000000,
             "message": message,
+            "audio_format": audio_format,
         }
     else:
         return {
@@ -89,6 +97,7 @@ def format_tts_response(
             "audio_url": "",
             "status": 50000000,
             "message": message,
+            "audio_format": audio_format,
         }
 
 
@@ -97,6 +106,67 @@ def format_tts_response(
     response_model=TTSResponse,
     summary="语音合成",
     description="使用指定音色进行文本转语音合成，支持预训练音色和克隆音色",
+    openapi_extra={
+        "requestBody": {
+            "description": "TTS请求参数",
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "text": {
+                                "type": "string",
+                                "description": "待合成的文本内容",
+                                "example": "你好，欢迎使用语音合成服务！",
+                                "minLength": 1,
+                                "maxLength": 1000,
+                            },
+                            "voice": {
+                                "type": "string",
+                                "description": "音色名称",
+                                "example": "中文女",
+                                "maxLength": 32,
+                            },
+                            "speech_rate": {
+                                "type": "number",
+                                "description": "语速倍率，范围-500~500，0为正常语速，负值为减速，正值为加速",
+                                "example": 0,
+                                "minimum": -500,
+                                "maximum": 500,
+                            },
+                            "format": {
+                                "type": "string",
+                                "description": "输出音频格式。支持: pcm, wav, opus, speex, amr, mp3, aac, m4a, flac, ogg",
+                                "example": "wav",
+                                "enum": [
+                                    "pcm",
+                                    "wav",
+                                    "opus",
+                                    "speex",
+                                    "amr",
+                                    "mp3",
+                                    "aac",
+                                    "m4a",
+                                    "flac",
+                                    "ogg",
+                                ],
+                                "default": "wav",
+                            },
+                            "sample_rate": {
+                                "type": "integer",
+                                "description": "音频采样率（Hz）。支持: 8000, 16000, 22050, 44100, 48000",
+                                "example": 22050,
+                                "enum": [8000, 16000, 22050, 44100, 48000],
+                                "default": 22050,
+                            },
+                        },
+                        "required": ["text"],
+                    }
+                }
+            },
+            "required": True,
+        }
+    },
 )
 async def synthesize_speech(
     request: Request,
@@ -114,8 +184,24 @@ async def synthesize_speech(
         )
 
         logger.info(
-            f"[{task_id}] 开始语音合成: 文本='{tts_request.text}', 音色={tts_request.voice}, 语速={tts_request.speech_rate}"
+            f"[{task_id}] 开始语音合成: 文本='{tts_request.text}', 音色={tts_request.voice}, 语速={tts_request.speech_rate}, 格式={tts_request.format}, 采样率={tts_request.sample_rate}"
         )
+
+        # 验证format参数
+        if tts_request.format and not validate_audio_format(tts_request.format):
+            raise InvalidParameterException(
+                f"不支持的音频格式: {tts_request.format}。支持的格式: {', '.join(settings.SUPPORTED_AUDIO_FORMATS)}",
+                task_id,
+            )
+
+        # 验证sample_rate参数
+        if tts_request.sample_rate and not validate_sample_rate(
+            tts_request.sample_rate
+        ):
+            raise InvalidParameterException(
+                f"不支持的采样率: {tts_request.sample_rate}。支持的采样率: {', '.join(map(str, settings.SUPPORTED_SAMPLE_RATES))}",
+                task_id,
+            )
 
         # 验证speech_rate参数
         is_valid, message = validate_speech_rate_parameter(tts_request.speech_rate)
@@ -133,24 +219,34 @@ async def synthesize_speech(
 
         # 获取TTS引擎并合成（Engine层会自动判断音色类型）
         tts_engine = get_tts_engine()
-        output_path = tts_engine.synthesize_speech(clean_text, tts_request.voice, speed)
+        output_path = tts_engine.synthesize_speech(
+            clean_text,
+            tts_request.voice,
+            speed,
+            tts_request.format,
+            tts_request.sample_rate,
+        )
 
         logger.info(f"[{task_id}] 语音合成完成: {output_path}")
 
         # 返回成功响应
-        response_data = format_tts_response(task_id, output_path, True, "SUCCESS")
+        response_data = format_tts_response(
+            task_id, output_path, True, "SUCCESS", tts_request.format
+        )
         return JSONResponse(content=response_data, headers={"task_id": task_id})
 
     except TTSException as e:
         e.task_id = task_id
         logger.error(f"[{task_id}] TTS异常: {e.message}")
-        response_data = format_tts_response(task_id, "", False, e.message)
+        response_data = format_tts_response(
+            task_id, "", False, e.message, tts_request.format
+        )
         return JSONResponse(content=response_data, headers={"task_id": task_id})
 
     except Exception as e:
         logger.error(f"[{task_id}] 未知异常: {str(e)}")
         response_data = format_tts_response(
-            task_id, "", False, f"内部服务错误: {str(e)}"
+            task_id, "", False, f"内部服务错误: {str(e)}", tts_request.format
         )
         return JSONResponse(content=response_data, headers={"task_id": task_id})
 

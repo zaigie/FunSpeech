@@ -13,6 +13,7 @@ import torchaudio
 import torch
 import numpy as np
 import subprocess
+import logging
 from typing import Tuple, Optional, Union
 from io import BytesIO
 from pathlib import Path
@@ -24,15 +25,19 @@ from ..core.exceptions import (
     AudioProcessingException,
 )
 
+logger = logging.getLogger(__name__)
+
 
 def validate_audio_format(format_str: Optional[str]) -> bool:
     """验证音频格式是否支持"""
     if not format_str:
         return True  # 如果未指定格式，允许通过
 
-    return format_str.lower() in [
-        fmt.lower() for fmt in settings.SUPPORTED_AUDIO_FORMATS
-    ]
+    # 统一转换为小写进行比较
+    format_lower = format_str.lower()
+    supported_formats = [fmt.lower() for fmt in settings.SUPPORTED_AUDIO_FORMATS]
+
+    return format_lower in supported_formats
 
 
 def validate_sample_rate(sample_rate: Optional[int]) -> bool:
@@ -205,19 +210,65 @@ def validate_reference_audio(audio_path: str) -> Tuple[bool, str]:
         return False, f"音频文件验证失败: {str(e)}"
 
 
+def resample_audio_array(
+    audio_array: np.ndarray,
+    original_sr: int,
+    target_sr: int,
+) -> np.ndarray:
+    """重采样音频数组
+
+    Args:
+        audio_array: 原始音频数据
+        original_sr: 原始采样率
+        target_sr: 目标采样率
+
+    Returns:
+        重采样后的音频数据
+    """
+    if original_sr == target_sr:
+        return audio_array
+
+    try:
+        # 确保是1D数组用于librosa重采样
+        if audio_array.ndim > 1:
+            # 如果是多声道，取第一个声道
+            if audio_array.shape[0] > audio_array.shape[1]:
+                audio_1d = audio_array[0, :]
+            else:
+                audio_1d = (
+                    audio_array[:, 0]
+                    if audio_array.shape[1] > 1
+                    else audio_array.flatten()
+                )
+        else:
+            audio_1d = audio_array
+
+        # 使用librosa进行重采样
+        resampled = librosa.resample(audio_1d, orig_sr=original_sr, target_sr=target_sr)
+
+        logger.info(f"音频重采样: {original_sr}Hz -> {target_sr}Hz")
+        return resampled
+
+    except Exception as e:
+        logger.warning(f"音频重采样失败: {str(e)}，使用原始音频")
+        return audio_array
+
+
 def save_audio_array(
     audio_array: np.ndarray,
     output_path: str,
     sample_rate: int = 22050,
     format: str = "wav",
+    original_sr: int = None,
 ) -> str:
     """保存音频数组到文件
 
     Args:
         audio_array: 音频数据数组
         output_path: 输出文件路径
-        sample_rate: 采样率
+        sample_rate: 目标采样率
         format: 音频格式
+        original_sr: 原始采样率（用于重采样）
 
     Returns:
         保存的文件路径
@@ -226,6 +277,9 @@ def save_audio_array(
         AudioProcessingException: 保存失败
     """
     try:
+        # 如果指定了原始采样率且与目标采样率不同，进行重采样
+        if original_sr and original_sr != sample_rate:
+            audio_array = resample_audio_array(audio_array, original_sr, sample_rate)
         # 确保音频数据是float32格式
         if audio_array.dtype != np.float32:
             audio_array = audio_array.astype(np.float32)
@@ -242,23 +296,34 @@ def save_audio_array(
             if audio_array.ndim == 1:
                 audio_array = audio_array[np.newaxis, :]
 
-        # 转换为torch张量
-        audio_tensor = torch.from_numpy(audio_array)
+        # 根据格式选择保存方法
+        if format.lower() == "wav":
+            # 使用torchaudio保存WAV格式
+            audio_tensor = torch.from_numpy(audio_array)
+            torchaudio.save(output_path, audio_tensor, sample_rate)
+        else:
+            # 使用soundfile保存其他格式
+            # 确保音频数据是单声道
+            if audio_array.shape[0] > 1:
+                audio_array = np.mean(audio_array, axis=0)
 
-        # 使用torchaudio保存，它对格式兼容性更好
-        torchaudio.save(output_path, audio_tensor, sample_rate)
+            sf.write(output_path, audio_array.T, sample_rate, format=format.upper())
+
         return output_path
 
     except Exception as e:
         raise AudioProcessingException(f"保存音频文件失败: {str(e)}")
 
 
-def convert_audio_to_wav(input_path: str, output_path: str = None) -> str:
+def convert_audio_to_wav(
+    input_path: str, output_path: str = None, target_sr: int = 16000
+) -> str:
     """转换音频文件为WAV格式
 
     Args:
         input_path: 输入文件路径
         output_path: 输出文件路径（可选）
+        target_sr: 目标采样率，默认16000Hz
 
     Returns:
         转换后的文件路径
@@ -270,9 +335,9 @@ def convert_audio_to_wav(input_path: str, output_path: str = None) -> str:
         output_path = input_path.rsplit(".", 1)[0] + ".wav"
 
     try:
-        # 使用librosa加载并保存为WAV
-        audio_data, sr = librosa.load(input_path, sr=None)
-        sf.write(output_path, audio_data, sr, format="wav")
+        # 使用librosa加载并重采样
+        audio_data, sr = librosa.load(input_path, sr=target_sr)
+        sf.write(output_path, audio_data, target_sr, format="WAV")
         return output_path
 
     except Exception as e:
@@ -286,7 +351,7 @@ def convert_audio_to_wav(input_path: str, output_path: str = None) -> str:
                     "-acodec",
                     "pcm_s16le",
                     "-ar",
-                    "16000",
+                    str(target_sr),
                     "-ac",
                     "1",
                     output_path,
@@ -298,6 +363,39 @@ def convert_audio_to_wav(input_path: str, output_path: str = None) -> str:
             return output_path
         except (subprocess.CalledProcessError, FileNotFoundError):
             raise AudioProcessingException(f"音频格式转换失败: {str(e)}")
+
+
+def normalize_audio_for_asr(audio_path: str, target_sr: int = 16000) -> str:
+    """将音频文件标准化为ASR模型所需的格式
+
+    Args:
+        audio_path: 输入音频文件路径
+        target_sr: 目标采样率，默认16000Hz
+
+    Returns:
+        标准化后的WAV文件路径
+
+    Raises:
+        AudioProcessingException: 标准化失败
+    """
+    try:
+        # 检查文件扩展名
+        file_ext = os.path.splitext(audio_path)[1].lower()
+
+        # 如果已经是WAV格式且采样率正确，直接返回
+        if file_ext == ".wav":
+            # 检查采样率
+            audio_data, sr = librosa.load(audio_path, sr=None)
+            if sr == target_sr:
+                return audio_path
+
+        # 转换为标准WAV格式
+        normalized_path = convert_audio_to_wav(audio_path, target_sr=target_sr)
+        logger.info(f"音频文件已标准化: {audio_path} -> {normalized_path}")
+        return normalized_path
+
+    except Exception as e:
+        raise AudioProcessingException(f"音频标准化失败: {str(e)}")
 
 
 def generate_temp_audio_path(prefix: str = "audio", suffix: str = ".wav") -> str:
@@ -315,6 +413,29 @@ def generate_temp_audio_path(prefix: str = "audio", suffix: str = ".wav") -> str
     timestamp = int(time.time())
     filename = f"{prefix}_{timestamp}_{os.getpid()}{suffix}"
     return os.path.join(settings.TEMP_DIR, filename)
+
+
+def get_audio_file_suffix(
+    audio_address: Optional[str] = None, format_param: Optional[str] = None
+) -> str:
+    """根据音频地址和format参数生成文件后缀
+
+    Args:
+        audio_address: 音频文件地址（可选）
+        format_param: format参数（可选）
+
+    Returns:
+        文件后缀（包含点号）
+    """
+    if audio_address and format_param:
+        # 使用audio_address时，format参数生效
+        return f".{format_param.lower()}"
+    elif audio_address:
+        # 使用audio_address但未指定format，默认为pcm
+        return ".pcm"
+    else:
+        # 使用二进制音频流时，format参数不生效，默认为wav
+        return ".wav"
 
 
 def cleanup_temp_audio_file(file_path: str) -> None:

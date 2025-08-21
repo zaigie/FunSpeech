@@ -46,6 +46,8 @@ from ...utils.audio import (
     download_audio_from_url,
     save_audio_to_temp_file,
     cleanup_temp_file,
+    get_audio_file_suffix,
+    normalize_audio_for_asr,
 )
 from ...services.asr.manager import get_model_manager
 
@@ -104,10 +106,22 @@ async def get_asr_params(request: Request) -> ASRQueryParams:
                 "required": False,
                 "schema": {
                     "type": "string",
-                    "enum": ["pcm", "wav", "mp3", "aac", "m4a", "flac", "ogg"],
-                    "example": "wav",
+                    "enum": [
+                        "pcm",
+                        "wav",
+                        "opus",
+                        "speex",
+                        "amr",
+                        "mp3",
+                        "aac",
+                        "m4a",
+                        "flac",
+                        "ogg",
+                    ],
+                    "default": "pcm",
+                    "example": "pcm",
                 },
-                "description": "音频格式。支持: pcm, wav, mp3, aac, m4a, flac, ogg",
+                "description": "音频格式。支持: pcm, wav, opus, speex, amr, mp3, aac, m4a, flac, ogg。仅在使用audio_address参数时生效，使用二进制音频流时默认为wav格式",
             },
             {
                 "name": "sample_rate",
@@ -243,12 +257,32 @@ async def asr_transcribe(
 
         logger.info(f"[{task_id}] 请求参数: {params}")
 
+        # 验证format参数（如果指定了的话）
+        if params.format and not validate_audio_format(params.format):
+            raise InvalidParameterException(
+                f"不支持的音频格式: {params.format}。支持的格式: {', '.join(settings.SUPPORTED_AUDIO_FORMATS)}",
+                task_id,
+            )
+
+        # 验证sample_rate参数
+        if params.sample_rate and not validate_sample_rate(params.sample_rate):
+            raise InvalidParameterException(
+                f"不支持的采样率: {params.sample_rate}。支持的采样率: {', '.join(map(str, settings.SUPPORTED_SAMPLE_RATES))}",
+                task_id,
+            )
+
         # 获取音频数据
         if params.audio_address:
             # 方式1: 从URL下载音频
             logger.info(f"[{task_id}] 从URL下载音频: {params.audio_address}")
             audio_data = download_audio_from_url(params.audio_address)
-            audio_path = save_audio_to_temp_file(audio_data)
+
+            # 使用format参数指定的格式保存文件
+            file_suffix = get_audio_file_suffix(params.audio_address, params.format)
+            logger.info(
+                f"[{task_id}] 使用audio_address，format参数生效: {params.format}，文件后缀: {file_suffix}"
+            )
+            audio_path = save_audio_to_temp_file(audio_data, file_suffix)
 
         else:
             # 方式2: 从请求体读取二进制音频数据
@@ -266,11 +300,18 @@ async def asr_transcribe(
                     f"音频文件太大，最大支持{max_size_mb}MB", task_id
                 )
 
-            # 保存到临时文件
-            file_suffix = f".{params.format}" if params.format else ".wav"
+            # 使用二进制音频流时，format参数不生效，默认为wav格式
+            file_suffix = get_audio_file_suffix(None, None)
+            logger.info(
+                f"[{task_id}] 使用二进制音频流，format参数不生效，默认使用wav格式，文件后缀: {file_suffix}"
+            )
             audio_path = save_audio_to_temp_file(audio_data, file_suffix)
 
         logger.info(f"[{task_id}] 音频文件已保存: {audio_path}")
+
+        # 将音频标准化为ASR模型所需的格式（统一转换为WAV格式，指定采样率）
+        normalized_audio_path = normalize_audio_for_asr(audio_path, params.sample_rate)
+        logger.info(f"[{task_id}] 音频已标准化: {normalized_audio_path}")
 
         # 执行语音识别
         model_manager = get_model_manager()
@@ -280,7 +321,7 @@ async def asr_transcribe(
         hotwords = ""  # 实际项目中可以根据vocabulary_id查询对应的热词
 
         result_text = asr_engine.transcribe_file(
-            audio_path=audio_path,
+            audio_path=normalized_audio_path,
             hotwords=hotwords,
             enable_punctuation=params.enable_punctuation_prediction,
             enable_itn=params.enable_inverse_text_normalization,
@@ -327,6 +368,12 @@ async def asr_transcribe(
         # 清理临时文件
         if audio_path:
             cleanup_temp_file(audio_path)
+        if (
+            "normalized_audio_path" in locals()
+            and normalized_audio_path
+            and normalized_audio_path != audio_path
+        ):
+            cleanup_temp_file(normalized_audio_path)
 
 
 @router.get(
