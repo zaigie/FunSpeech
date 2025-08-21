@@ -139,6 +139,7 @@ class CosyVoiceTTSEngine:
         speed: float = 1.0,
         format: str = "wav",
         sample_rate: int = 22050,
+        volume: int = 50,
     ) -> str:
         """语音合成（自动判断音色类型）"""
         try:
@@ -148,12 +149,12 @@ class CosyVoiceTTSEngine:
                 if voice in self._voice_manager.list_clone_voices():
                     logger.info(f"使用克隆音色模型合成: {voice}")
                     return self._synthesize_with_saved_voice(
-                        text, voice, speed, format, sample_rate
+                        text, voice, speed, format, sample_rate, volume
                     )
 
             # 使用预训练音色合成
             return self.synthesize_with_preset_voice(
-                text, voice, speed, format, sample_rate
+                text, voice, speed, format, sample_rate, volume
             )
 
         except Exception as e:
@@ -166,6 +167,7 @@ class CosyVoiceTTSEngine:
         speed: float = 1.0,
         format: str = "wav",
         sample_rate: int = 22050,
+        volume: int = 50,
     ) -> str:
         """使用预设音色合成语音"""
         # 检查SFT模型是否可用
@@ -187,6 +189,7 @@ class CosyVoiceTTSEngine:
                 sample_rate=sample_rate,
                 format=format,
                 original_sr=self.cosyvoice_sft.sample_rate,
+                volume=volume,
             )
             return output_path
 
@@ -197,6 +200,7 @@ class CosyVoiceTTSEngine:
         speed: float = 1.0,
         format: str = "wav",
         sample_rate: int = 22050,
+        volume: int = 50,
     ) -> str:
         """使用保存的音色合成语音（基于官方API）"""
         if not self.cosyvoice_clone:
@@ -223,6 +227,7 @@ class CosyVoiceTTSEngine:
                 sample_rate=sample_rate,
                 format=format,
                 original_sr=self.cosyvoice_clone.sample_rate,
+                volume=volume,
             )
 
             return output_path

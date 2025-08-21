@@ -148,18 +148,28 @@ curl -X GET "http://localhost:8000/stream/v1/asr/models"
 #### 1. 语音合成（支持预训练音色和克隆音色）
 
 ```bash
-# 如果设置了XLS_TOKEN环境变量，需要提供X-NLS-Token头部
+# 基础示例（如果设置了XLS_TOKEN环境变量，需要提供X-NLS-Token头部）
 curl -X POST "http://localhost:8000/stream/v1/tts" \
   -H "X-NLS-Token: your_secret_token" \
-  -F "text=你好，这是一个语音合成测试。" \
-  -F "voice=中文女" \
-  -F "speech_rate=0"
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "你好，这是一个语音合成测试。",
+    "voice": "中文女",
+    "speech_rate": 0,
+    "volume": 50
+  }'
 
-# 如果未设置XLS_TOKEN环境变量，X-NLS-Token头部是可选的
+# 完整参数示例（包含音量控制）
 curl -X POST "http://localhost:8000/stream/v1/tts" \
-  -F "text=你好，这是一个语音合成测试。" \
-  -F "voice=中文女" \
-  -F "speech_rate=0"
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "这是一个包含音量控制的语音合成示例",
+    "voice": "中文女",
+    "speech_rate": 20,
+    "volume": 75,
+    "format": "wav",
+    "sample_rate": 22050
+  }'
 ```
 
 #### 2. OpenAI 兼容接口
@@ -219,13 +229,14 @@ curl -X POST "http://localhost:8000/openai/v1/audio/speech" \
 
 #### 语音合成 (`/stream/v1/tts`)
 
-| 参数        | 类型    | 必需 | 描述                                                   |
-| ----------- | ------- | ---- | ------------------------------------------------------ | ------------------------------------------------------------------- |
-| text        | String  | 是   | 待合成的文本                                           |
-| format      | String  | 否   | -                                                      | 音频编码格式 (pcm, wav, opus, speex, amr, mp3, aac, m4a, flac, ogg) |
-| sample_rate | Integer | 否   | 16000                                                  | 音频采样率 (8000, 16000, 22050, 44100, 48000)                       |
-| voice       | String  | 否   | 音色名称，支持预训练音色（中文女、中文男等）和克隆音色 |
-| speech_rate | Float   | 否   | 语速 (-500~500，0 为正常语速，负值为减速，正值为加速)  |
+| 参数        | 类型    | 必需 | 描述                                                                |
+| ----------- | ------- | ---- | ------------------------------------------------------------------- |
+| text        | String  | 是   | 待合成的文本                                                        |
+| format      | String  | 否   | 音频编码格式 (pcm, wav, opus, speex, amr, mp3, aac, m4a, flac, ogg) |
+| sample_rate | Integer | 否   | 音频采样率 (8000, 16000, 22050, 44100, 48000)                       |
+| voice       | String  | 否   | 音色名称，支持预训练音色（中文女、中文男等）和克隆音色              |
+| speech_rate | Float   | 否   | 语速 (-500~500，0 为正常语速，负值为减速，正值为加速)               |
+| volume      | Integer | 否   | 音量大小 (0~100，默认值 50)                                         |
 
 **预训练音色**: 中文女, 中文男, 日语男, 粤语女, 英文女, 英文男, 韩语女  
 **克隆音色**: 通过音色管理工具添加的自定义音色

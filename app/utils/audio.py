@@ -254,12 +254,46 @@ def resample_audio_array(
         return audio_array
 
 
+def adjust_audio_volume(audio_array: np.ndarray, volume: int) -> np.ndarray:
+    """调节音频音量
+
+    Args:
+        audio_array: 音频数据数组
+        volume: 音量值，范围0~100，50为原始音量
+
+    Returns:
+        调节后的音频数据
+    """
+    if int(volume) == 50:
+        return audio_array
+
+    if volume < 0 or volume > 100:
+        logger.warning(f"音量值{volume}超出范围[0,100]，使用默认值50")
+        volume = 50
+
+    # 将音量值转换为倍数 (0-100 -> 0-2.0)
+    volume_factor = volume / 50.0
+
+    # 应用音量调节
+    adjusted_audio = audio_array * volume_factor
+
+    # 防止削波，如果音量过大导致超过范围，进行归一化
+    max_val = np.max(np.abs(adjusted_audio))
+    if max_val > 1.0:
+        adjusted_audio = adjusted_audio / max_val
+        logger.info(f"音量调节后进行归一化，最大值: {max_val:.3f}")
+
+    logger.info(f"音频音量已调节: {volume}/100 (倍数: {volume_factor:.2f})")
+    return adjusted_audio
+
+
 def save_audio_array(
     audio_array: np.ndarray,
     output_path: str,
     sample_rate: int = 22050,
     format: str = "wav",
     original_sr: int = None,
+    volume: int = 50,
 ) -> str:
     """保存音频数组到文件
 
@@ -269,6 +303,7 @@ def save_audio_array(
         sample_rate: 目标采样率
         format: 音频格式
         original_sr: 原始采样率（用于重采样）
+        volume: 音量值，范围0~100，默认50
 
     Returns:
         保存的文件路径
@@ -280,6 +315,10 @@ def save_audio_array(
         # 如果指定了原始采样率且与目标采样率不同，进行重采样
         if original_sr and original_sr != sample_rate:
             audio_array = resample_audio_array(audio_array, original_sr, sample_rate)
+
+        # 调节音频音量
+        audio_array = adjust_audio_volume(audio_array, volume)
+
         # 确保音频数据是float32格式
         if audio_array.dtype != np.float32:
             audio_array = audio_array.astype(np.float32)

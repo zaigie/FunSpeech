@@ -55,6 +55,14 @@ class BaseTTSRequest(BaseModel):
         le=500,
     )
 
+    volume: int = Field(
+        50,
+        description="音量大小，取值范围0~100，默认值50",
+        example=50,
+        ge=0,
+        le=100,
+    )
+
     @field_validator("text")
     @classmethod
     def validate_text(cls, v: str) -> str:

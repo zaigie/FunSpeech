@@ -134,6 +134,14 @@ def format_tts_response(
                                 "minimum": -500,
                                 "maximum": 500,
                             },
+                            "volume": {
+                                "type": "integer",
+                                "description": "音量大小，取值范围0~100，默认值50",
+                                "example": 50,
+                                "minimum": 0,
+                                "maximum": 100,
+                                "default": 50,
+                            },
                             "format": {
                                 "type": "string",
                                 "description": "输出音频格式。支持: pcm, wav, opus, speex, amr, mp3, aac, m4a, flac, ogg",
@@ -184,7 +192,7 @@ async def synthesize_speech(
         )
 
         logger.info(
-            f"[{task_id}] 开始语音合成: 文本='{tts_request.text}', 音色={tts_request.voice}, 语速={tts_request.speech_rate}, 格式={tts_request.format}, 采样率={tts_request.sample_rate}"
+            f"[{task_id}] 开始语音合成: 文本='{tts_request.text}', 音色={tts_request.voice}, 语速={tts_request.speech_rate}, 音量={tts_request.volume}, 格式={tts_request.format}, 采样率={tts_request.sample_rate}"
         )
 
         # 验证format参数
@@ -225,6 +233,7 @@ async def synthesize_speech(
             speed,
             tts_request.format,
             tts_request.sample_rate,
+            tts_request.volume,
         )
 
         logger.info(f"[{task_id}] 语音合成完成: {output_path}")
