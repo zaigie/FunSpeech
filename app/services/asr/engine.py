@@ -14,6 +14,7 @@ from abc import ABC, abstractmethod
 from ...core.config import settings
 from ...core.exceptions import ASRException, UnsupportedSampleRateException
 from ...utils.audio import cleanup_temp_file
+from ...utils.number_converter import apply_itn_to_text
 
 logger = logging.getLogger(__name__)
 
@@ -146,7 +147,15 @@ class FunASREngine(ASREngine):
             # 提取识别结果
             if result and len(result) > 0:
                 text = result[0].get("text", "")
-                return text.strip()
+                text = text.strip()
+
+                # 应用ITN处理
+                if enable_itn and text:
+                    logger.debug(f"应用ITN处理前: {text}")
+                    text = apply_itn_to_text(text)
+                    logger.debug(f"应用ITN处理后: {text}")
+
+                return text
             else:
                 return ""
 
@@ -306,6 +315,12 @@ class DolphinEngine(ASREngine):
                 final_text = self._add_punctuation(cleaned_text)
             else:
                 final_text = cleaned_text
+
+            # 应用ITN处理
+            if enable_itn and final_text:
+                logger.debug(f"应用ITN处理前: {final_text}")
+                final_text = apply_itn_to_text(final_text)
+                logger.debug(f"应用ITN处理后: {final_text}")
 
             logger.info(f"Dolphin识别完成: {final_text}")
 
