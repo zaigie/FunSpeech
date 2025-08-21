@@ -167,7 +167,8 @@ curl -X POST "http://localhost:8000/stream/v1/tts" \
     "voice": "中文女",
     "speech_rate": 0,
     "volume": 50
-  }'
+  }' \
+  --output speech.wav
 ```
 
 # 完整参数示例
@@ -184,8 +185,70 @@ curl -X POST "http://localhost:8000/stream/v1/tts" \
 "format": "wav",
 "sample_rate": 22050,
 "prompt": "说话温柔一些，语气轻松"
-}'
+}' \
+ --output speech_full_params.wav
 
+````
+
+#### Python 示例
+
+```python
+import requests
+import json
+
+def processPOSTRequest(appKey, token, text, audioSaveFile, format="wav", sampleRate=22050):
+    url = 'http://localhost:8000/stream/v1/tts'
+
+    # 设置请求头
+    headers = {
+        'Content-Type': 'application/json',
+        'X-NLS-Token': token  # 如果设置了XLS_TOKEN环境变量
+    }
+
+    # 设置请求体
+    body = {
+        'appkey': appKey,
+        'text': text,
+        'format': format,
+        'sample_rate': sampleRate,
+        'voice': '中文女',
+        'volume': 50
+    }
+
+    print('TTS请求体:', json.dumps(body, ensure_ascii=False))
+
+    # 发送POST请求
+    response = requests.post(url, json=body, headers=headers)
+
+    print('响应状态:', response.status_code, response.reason)
+    contentType = response.headers.get('Content-Type')
+    taskId = response.headers.get('task_id')
+    print('Content-Type:', contentType)
+    print('Task ID:', taskId)
+
+    # 检查响应类型
+    if contentType == 'audio/mpeg':
+        # 成功：保存音频文件（根据请求的format参数保存对应格式）
+        with open(audioSaveFile, mode='wb') as f:
+            f.write(response.content)
+        print(f'TTS请求成功！音频已保存到: {audioSaveFile}')
+    else:
+        # 失败：打印错误信息
+        try:
+            error_data = response.json()
+            print('TTS请求失败:', error_data)
+        except:
+            print('TTS请求失败:', response.text)
+
+# 使用示例
+processPOSTRequest(
+    appKey="your_app_key",  # 如果设置了APPKEY环境变量
+    token="your_token",     # 如果设置了XLS_TOKEN环境变量
+    text="你好，这是语音合成测试！",
+    audioSaveFile="output.wav",
+    format="wav",
+    sampleRate=22050
+)
 ````
 
 #### 2. OpenAI 兼容接口
@@ -208,7 +271,7 @@ with client.audio.speech.with_streaming_response.create(
 # 如果未设置XLS_TOKEN环境变量，api_key可以是任意值
 client = OpenAI(api_key='dummy', base_url='http://localhost:8000/openai/v1')
 # ... 其余代码相同
-````
+```
 
 ```bash
 # 使用curl的示例
@@ -429,14 +492,16 @@ curl -X POST "http://localhost:8000/openai/v1/audio/speech" \
 
 #### TTS 成功响应
 
-```json
-{
-  "task_id": "tts_1640995200000_12345678",
-  "result": "/tmp/tts_1640995200000_12345678.wav",
-  "status": 20000000,
-  "message": "SUCCESS"
-}
+**注意**: TTS 接口成功时直接返回音频文件的二进制数据，Content-Type 统一为 `audio/mpeg`，并在响应头中包含 `task_id`。客户端应根据请求的 `format` 参数保存对应格式的文件。
+
+**响应头**:
+
 ```
+Content-Type: audio/mpeg
+task_id: tts_1640995200000_12345678
+```
+
+**响应体**: 音频文件的二进制数据
 
 #### 错误响应
 

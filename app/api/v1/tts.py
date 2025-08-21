@@ -6,7 +6,7 @@ TTS API路由
 import os
 import base64
 from fastapi import APIRouter, Request, Form, File, UploadFile, HTTPException, Body
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from typing import Optional
 import logging
 
@@ -98,9 +98,49 @@ def format_tts_response(
 
 @router.post(
     "",
-    response_model=TTSResponse,
     summary="语音合成",
-    description="使用指定音色进行文本转语音合成，支持预训练音色和克隆音色",
+    description="使用指定音色进行文本转语音合成，支持预训练音色和克隆音色。成功时直接返回音频文件二进制数据，失败时返回JSON错误信息",
+    responses={
+        200: {
+            "description": "语音合成成功，返回音频文件",
+            "content": {"audio/mpeg": {"schema": {"type": "string"}}},
+            "headers": {
+                "task_id": {"description": "任务ID", "schema": {"type": "string"}}
+            },
+        },
+        400: {
+            "description": "客户端错误",
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "task_id": {"type": "string", "description": "任务ID"},
+                            "result": {"type": "string", "description": "结果内容"},
+                            "status": {"type": "integer", "description": "状态码"},
+                            "message": {"type": "string", "description": "错误消息"},
+                        },
+                    }
+                }
+            },
+        },
+        500: {
+            "description": "服务端错误",
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "type": "object",
+                        "properties": {
+                            "task_id": {"type": "string", "description": "任务ID"},
+                            "result": {"type": "string", "description": "结果内容"},
+                            "status": {"type": "integer", "description": "状态码"},
+                            "message": {"type": "string", "description": "错误消息"},
+                        },
+                    }
+                }
+            },
+        },
+    },
     openapi_extra={
         "requestBody": {
             "description": "TTS请求参数",
@@ -188,7 +228,7 @@ def format_tts_response(
 async def synthesize_speech(
     request: Request,
     tts_request: TTSRequest = Body(...),
-) -> JSONResponse:
+):
     """语音合成接口，自动识别预设音色和克隆音色"""
     task_id = generate_task_id("tts")
     output_path = None
@@ -254,21 +294,34 @@ async def synthesize_speech(
 
         logger.info(f"[{task_id}] 语音合成完成: {output_path}")
 
-        # 返回成功响应
-        response_data = format_tts_response(task_id, output_path, True, "SUCCESS")
-        return JSONResponse(content=response_data, headers={"task_id": task_id})
+        # 统一使用audio/mpeg作为Content-Type，客户端根据format参数自行保存对应格式
+        # 直接返回音频文件
+        return FileResponse(
+            path=output_path,
+            media_type="audio/mpeg",
+            filename=f"tts_{task_id}.{tts_request.format}",
+            headers={"task_id": task_id},
+        )
 
     except (InvalidParameterException, DefaultServerErrorException) as e:
         e.task_id = task_id
         logger.error(f"[{task_id}] TTS异常: {e.message}")
-        response_data = format_tts_response(task_id, "", False, e.message)
+        response_data = {
+            "task_id": task_id,
+            "result": "",
+            "status": e.status_code,
+            "message": e.message,
+        }
         return JSONResponse(content=response_data, headers={"task_id": task_id})
 
     except Exception as e:
         logger.error(f"[{task_id}] 未知异常: {str(e)}")
-        response_data = format_tts_response(
-            task_id, "", False, f"内部服务错误: {str(e)}"
-        )
+        response_data = {
+            "task_id": task_id,
+            "result": "",
+            "status": 50000000,
+            "message": f"内部服务错误: {str(e)}",
+        }
         return JSONResponse(content=response_data, headers={"task_id": task_id})
 
 
