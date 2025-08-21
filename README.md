@@ -34,54 +34,6 @@
 - 兼容对齐阿里云语音合成 TTS 接口，目前部分参数还未实现
 - ASR 的多模型配置更合理且可扩展化
 
-## 项目结构
-
-```
-FunSpeech/
-├── app/                   # 主应用模块
-│   ├── __init__.py
-│   ├── main.py            # FastAPI应用创建
-│   ├── api/               # API路由层
-│   │   ├── __init__.py
-│   │   └── v1/            # API版本
-│   │       ├── __init__.py
-│   │       ├── asr.py     # ASR路由
-│   │       ├── tts.py     # TTS路由
-│   │       └── openai.py  # OpenAI兼容路由
-│   ├── core/              # 核心配置和基础组件
-│   │   ├── __init__.py
-│   │   ├── config.py      # 统一配置管理
-│   │   ├── exceptions.py  # 统一异常处理
-│   │   ├── security.py    # 鉴权相关
-│   │   └── logging.py     # 日志配置
-│   ├── models/            # 数据模型
-│   │   ├── __init__.py
-│   │   ├── asr.py         # ASR相关模型
-│   │   ├── tts.py         # TTS相关模型
-│   │   └── common.py      # 通用模型
-│   ├── services/          # 业务逻辑服务
-│   │   ├── __init__.py
-│   │   ├── asr/           # ASR服务
-│   │   │   ├── __init__.py
-│   │   │   ├── models.json    # ASR模型配置文件
-│   │   │   ├── engine.py  # ASR引擎
-│   │   │   └── manager.py # 模型管理
-│   │   └── tts/           # TTS服务
-│   │       ├── __init__.py
-│   │       ├── engine.py      # TTS引擎
-│   │       ├── third_party/   # 第三方依赖
-│   │       │   └── CosyVoice/ # CosyVoice模型 (submodule)
-│   │       └── clone/         # 音色克隆相关
-│   └── utils/             # 统一工具函数
-│       ├── __init__.py
-│       ├── audio.py       # 音频处理
-│       └── common.py      # 通用工具
-├── temp/                  # 临时文件
-├── main.py                # 启动入口
-├── requirements.txt       # 依赖文件
-└── README.md              # 项目说明
-```
-
 ## 快速开始
 
 ### Docker 部署（推荐）
@@ -248,30 +200,32 @@ curl -X POST "http://localhost:8000/openai/v1/audio/speech" \
 
 ### ASR 支持的参数
 
-| 参数                              | 类型    | 必需 | 默认值           | 描述                                            |
-| --------------------------------- | ------- | ---- | ---------------- | ----------------------------------------------- |
-| appkey                            | String  | 是   | -                | 应用 Appkey                                     |
-| customization_id                  | String  | 否   | paraformer-large | ASR 模型 ID，可通过 /models 接口查看可用模型    |
-| format                            | String  | 否   | -                | 音频格式 (pcm, wav, opus, speex, amr, mp3, aac) |
-| sample_rate                       | Integer | 否   | 16000            | 音频采样率 (8000, 16000)                        |
-| vocabulary_id                     | String  | 否   | -                | 热词表 ID                                       |
-| enable_punctuation_prediction     | Boolean | 否   | false            | 是否添加标点                                    |
-| enable_inverse_text_normalization | Boolean | 否   | false            | 中文数字转阿拉伯数字                            |
-| enable_voice_detection            | Boolean | 否   | false            | 是否启用语音检测                                |
-| disfluency                        | Boolean | 否   | false            | 过滤语气词                                      |
-| audio_address                     | String  | 否   | -                | 音频文件下载链接                                |
-| dolphin_lang_sym                  | String  | 否   | zh               | Dolphin 引擎语言符号                            |
-| dolphin_region_sym                | String  | 否   | SHANGHAI         | Dolphin 引擎区域符号                            |
+| 参数                              | 类型    | 必需 | 默认值           | 描述                                                            |
+| --------------------------------- | ------- | ---- | ---------------- | --------------------------------------------------------------- |
+| appkey                            | String  | 是   | -                | 应用 Appkey                                                     |
+| customization_id                  | String  | 否   | paraformer-large | ASR 模型 ID，可通过 /models 接口查看可用模型                    |
+| format                            | String  | 否   | -                | 音频格式 (pcm, wav, opus, speex, amr, mp3, aac, m4a, flac, ogg) |
+| sample_rate                       | Integer | 否   | 16000            | 音频采样率 (8000, 16000, 22050, 44100, 48000)                   |
+| vocabulary_id                     | String  | 否   | -                | 热词表 (待实现) ID                                              |
+| enable_punctuation_prediction     | Boolean | 否   | false            | 是否添加标点                                                    |
+| enable_inverse_text_normalization | Boolean | 否   | false            | 中文数字转阿拉伯数字                                            |
+| enable_voice_detection            | Boolean | 否   | false            | 是否启用语音检测                                                |
+| disfluency                        | Boolean | 否   | false            | 过滤语气 (待实现) 词                                            |
+| audio_address                     | String  | 否   | -                | 音频文件下载链接                                                |
+| dolphin_lang_sym                  | String  | 否   | zh               | Dolphin 引擎语言符号                                            |
+| dolphin_region_sym                | String  | 否   | SHANGHAI         | Dolphin 引擎区域符号                                            |
 
 ### TTS 支持的参数
 
 #### 语音合成 (`/stream/v1/tts`)
 
-| 参数        | 类型   | 必需 | 描述                                                   |
-| ----------- | ------ | ---- | ------------------------------------------------------ |
-| text        | String | 是   | 待合成的文本                                           |
-| voice       | String | 否   | 音色名称，支持预训练音色（中文女、中文男等）和克隆音色 |
-| speech_rate | Float  | 否   | 语速 (-500~500，0 为正常语速，负值为减速，正值为加速)  |
+| 参数        | 类型    | 必需 | 描述                                                   |
+| ----------- | ------- | ---- | ------------------------------------------------------ | ------------------------------------------------------------------- |
+| text        | String  | 是   | 待合成的文本                                           |
+| format      | String  | 否   | -                                                      | 音频编码格式 (pcm, wav, opus, speex, amr, mp3, aac, m4a, flac, ogg) |
+| sample_rate | Integer | 否   | 16000                                                  | 音频采样率 (8000, 16000, 22050, 44100, 48000)                       |
+| voice       | String  | 否   | 音色名称，支持预训练音色（中文女、中文男等）和克隆音色 |
+| speech_rate | Float   | 否   | 语速 (-500~500，0 为正常语速，负值为减速，正值为加速)  |
 
 **预训练音色**: 中文女, 中文男, 日语男, 粤语女, 英文女, 英文男, 韩语女  
 **克隆音色**: 通过音色管理工具添加的自定义音色
