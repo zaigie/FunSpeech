@@ -18,7 +18,7 @@ from ...core.exceptions import (
     AuthenticationException,
 )
 from ...core.security import (
-    validate_xls_token,
+    validate_token,
     validate_request_appkey,
     mask_sensitive_data,
 )
@@ -236,7 +236,7 @@ async def synthesize_speech(
 
     try:
         # 验证请求头部（鉴权）
-        result, content = validate_xls_token(request, task_id)
+        result, content = validate_token(request, task_id)
         if not result:
             raise AuthenticationException(content, task_id)
 
@@ -357,7 +357,7 @@ async def synthesize_speech(
 async def get_voice_list(request: Request) -> JSONResponse:
     """获取支持的音色列表"""
     # 鉴权
-    result, content = validate_xls_token(request)
+    result, content = validate_token(request)
     if not result:
         raise AuthenticationException(content, "get_voice_list")
 
@@ -383,7 +383,7 @@ async def get_voice_list(request: Request) -> JSONResponse:
 async def get_voice_info(request: Request) -> JSONResponse:
     """获取详细的音色信息"""
     # 鉴权
-    result, content = validate_xls_token(request)
+    result, content = validate_token(request)
     if not result:
         raise AuthenticationException(content, "get_voice_info")
 
@@ -418,7 +418,7 @@ async def get_voice_info(request: Request) -> JSONResponse:
 async def refresh_voices(request: Request) -> JSONResponse:
     """刷新音色配置"""
     # 鉴权
-    result, content = validate_xls_token(request)
+    result, content = validate_token(request)
     if not result:
         raise AuthenticationException(content, "refresh_voices")
 
@@ -449,7 +449,7 @@ async def refresh_voices(request: Request) -> JSONResponse:
 async def health_check(request: Request) -> JSONResponse:
     """TTS服务健康检查"""
     # 鉴权
-    result, content = validate_xls_token(request)
+    result, content = validate_token(request)
     if not result:
         raise AuthenticationException(content, "health_check")
 

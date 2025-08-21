@@ -92,20 +92,20 @@ def validate_appkey(appkey: str, expected_appkey: Optional[str] = None) -> bool:
     return True
 
 
-def validate_xls_token(request: Request, task_id: str = "") -> (bool, str):
+def validate_token(request: Request, task_id: str = "") -> (bool, str):
     """验证X-NLS-Token头部"""
     # 获取认证token
     token = request.headers.get("X-NLS-Token")
 
-    # 如果没有配置XLS_TOKEN环境变量，则鉴权是可选的
-    if settings.XLS_TOKEN is None:
+    # 如果没有配置APPTOKEN环境变量，则鉴权是可选的
+    if settings.APPTOKEN is None:
         return True, token or "optional"
 
-    # 如果配置了XLS_TOKEN，则必须提供token
+    # 如果配置了APPTOKEN，则必须提供token
     if not token:
         return False, "缺少X-NLS-Token头部"
 
-    if not validate_token(token, settings.XLS_TOKEN):
+    if not validate_token(token, settings.APPTOKEN):
         masked_token = mask_sensitive_data(token)
         return False, f"Gateway:ACCESS_DENIED:The token '{masked_token}' is invalid!"
 
@@ -117,11 +117,11 @@ def validate_bearer_token(request: Request, task_id: str = "") -> (bool, str):
     # 获取Authorization头
     auth_header = request.headers.get("Authorization")
 
-    # 如果没有配置XLS_TOKEN环境变量，则鉴权是可选的
-    if settings.XLS_TOKEN is None:
+    # 如果没有配置APPTOKEN环境变量，则鉴权是可选的
+    if settings.APPTOKEN is None:
         return True, auth_header or "optional"
 
-    # 如果配置了XLS_TOKEN，则必须提供Authorization头
+    # 如果配置了APPTOKEN，则必须提供Authorization头
     if not auth_header:
         return False, "缺少Authorization头"
 
@@ -132,7 +132,7 @@ def validate_bearer_token(request: Request, task_id: str = "") -> (bool, str):
     # 提取token
     token = auth_header[7:]  # 去掉"Bearer "前缀
 
-    if not validate_token(token, settings.XLS_TOKEN):
+    if not validate_token(token, settings.APPTOKEN):
         masked_token = mask_sensitive_data(token)
         return False, f"Gateway:ACCESS_DENIED:The token '{masked_token}' is invalid!"
 

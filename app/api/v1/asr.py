@@ -27,7 +27,7 @@ from ...core.exceptions import (
     DefaultServerErrorException,
 )
 from ...core.security import (
-    validate_xls_token,
+    validate_token,
     validate_request_appkey,
     mask_sensitive_data,
 )
@@ -251,7 +251,7 @@ async def asr_transcribe(
 
     try:
         # 验证请求头部（鉴权）
-        result, content = validate_xls_token(request, task_id)
+        result, content = validate_token(request, task_id)
         if not result:
             raise AuthenticationException(content, task_id)
 
@@ -394,7 +394,7 @@ async def asr_transcribe(
 async def health_check(request: Request):
     """ASR服务健康检查端点"""
     # 鉴权
-    result, content = validate_xls_token(request)
+    result, content = validate_token(request)
     if not result:
         raise AuthenticationException(content, "health_check")
 
@@ -444,7 +444,7 @@ async def health_check(request: Request):
 async def list_models(request: Request):
     """获取可用模型列表端点"""
     # 鉴权
-    result, content = validate_xls_token(request)
+    result, content = validate_token(request)
     if not result:
         raise AuthenticationException(content, "list_models")
 

@@ -21,7 +21,7 @@ services:
       - DEVICE=auto
       - TTS_DEVICE=auto
       # 鉴权配置（可选，不设置则鉴权为可选）
-      # - XLS_TOKEN=your_secret_token
+      # - APPTOKEN=your_secret_token
       # - APPKEY=your_app_key
     restart: unless-stopped
     

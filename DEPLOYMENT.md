@@ -1,171 +1,360 @@
-# FunSpeech API 部署说明
+# FunSpeech 部署指南
 
-本文档介绍如何使用 Docker 部署 FunSpeech API 服务。
+一站式 Docker 部署指南，让您快速启动 FunSpeech API 服务。
 
-## 🚀 快速开始
+## 🚀 一键部署
 
-### 方式一：Docker Compose（推荐）
+### Docker Compose（推荐）
+
+最简单的部署方式，适合大多数用户：
 
 ```bash
-# 下载 Docker Compose 配置
+# 下载配置文件并启动
 curl -sSL https://cnb.cool/nexa/FunSpeech/-/git/raw/main/docker-compose.yml -o docker-compose.yml
-# 启动服务
 docker-compose up -d
 ```
 
-### 方式二：预构建镜像
+服务将在 `http://localhost:8000` 启动，首次启动需要下载模型，请耐心等待。
+
+### 使用预构建镜像
+
+如果需要自定义配置，可以直接使用 Docker 镜像：
 
 ```bash
-# 运行容器
 docker run -d \
   --name funspeech-api \
   -p 8000:8000 \
   -v ~/.cache/modelscope:/root/.cache/modelscope \
-  -v ./data:/app/temp \
-  -v ./logs:/app/logs \
-  -v ./voices:/app/voices \
+  -v $(pwd)/data:/app/temp \
+  -v $(pwd)/logs:/app/logs \
+  -v $(pwd)/voices:/app/voices \
   docker.cnb.cool/nexa/funspeech:latest
 ```
 
-## 📁 目录映射
+## ⚙️ 配置选项
 
-| 本地目录              | 容器目录                  | 用途         |
-| --------------------- | ------------------------- | ------------ |
-| `~/.cache/modelscope` | `/root/.cache/modelscope` | 模型缓存     |
-| `./data`              | `/app/temp`               | 临时文件     |
-| `./logs`              | `/app/logs`               | 日志文件     |
-| `./voices`            | `/app/voices`             | 音色克隆文件 |
+### 环境变量配置
 
-## ⚙️ 环境变量
+通过环境变量自定义服务行为：
 
-| 变量名       | 默认值    | 描述                       |
-| ------------ | --------- | -------------------------- |
-| `HOST`       | `0.0.0.0` | 服务地址                   |
-| `PORT`       | `8000`    | 服务端口                   |
-| `DEBUG`      | `false`   | 调试模式                   |
-| `LOG_LEVEL`  | `INFO`    | 日志级别                   |
-| `DEVICE`     | `auto`    | ASR 设备 (auto/cpu/cuda:0) |
-| `TTS_DEVICE` | `auto`    | TTS 设备 (auto/cpu/cuda:0) |
-| `XLS_TOKEN`  | -         | API 鉴权 token（可选）     |
-| `APPKEY`     | -         | ASR 和 TTS 接口 appkey（可选） |
+| 变量 | 默认值 | 说明 | 示例 |
+|------|--------|------|------|
+| `HOST` | `0.0.0.0` | 服务绑定地址 | `127.0.0.1` |
+| `PORT` | `8000` | 服务端口 | `9000` |
+| `DEBUG` | `false` | 开发调试模式 | `true` |
+| `LOG_LEVEL` | `INFO` | 日志级别 | `DEBUG`, `WARNING` |
+| `DEVICE` | `auto` | ASR 设备选择 | `cpu`, `cuda:0` |
+| `TTS_DEVICE` | `auto` | TTS 设备选择 | `cpu`, `cuda:0` |
+| `APPTOKEN` | - | API 访问令牌 | `your_secret_token` |
+| `APPKEY` | - | 应用密钥 | `your_app_key` |
 
-## 🖥️ GPU 支持
+**配置示例：**
+```bash
+# 创建环境变量文件
+cat > .env << EOF
+HOST=0.0.0.0
+PORT=8000
+DEBUG=false
+LOG_LEVEL=INFO
+DEVICE=auto
+TTS_DEVICE=auto
+APPTOKEN=your_secret_token
+APPKEY=your_app_key
+EOF
 
-安装 [nvidia-container-toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html) 后，修改 `docker-compose.yml`：
-
-```yaml
-# 取消注释以下配置
-environment:
-  - DEVICE=cuda:0
-  - TTS_DEVICE=cuda:0
-deploy:
-  resources:
-    reservations:
-      devices:
-        - driver: nvidia
-          count: 1
-          capabilities: [gpu]
+# 使用环境变量启动
+docker-compose --env-file .env up -d
 ```
 
-## 📋 服务状态检查
+### 数据目录映射
+
+重要数据通过卷映射持久化保存：
+
+| 本地路径 | 容器路径 | 用途 | 重要性 |
+|----------|----------|------|--------|
+| `~/.cache/modelscope` | `/root/.cache/modelscope` | 🤖 模型文件缓存 | ⭐⭐⭐ |
+| `./data` | `/app/temp` | 📁 临时文件存储 | ⭐⭐ |
+| `./logs` | `/app/logs` | 📝 应用日志 | ⭐⭐ |
+| `./voices` | `/app/voices` | 🎵 自定义音色 | ⭐⭐⭐ |
+
+> 💡 **提示**：模型缓存目录非常重要，建议映射到本地以避免重复下载大文件。
+
+## 🎮 GPU 加速配置
+
+### 安装 NVIDIA 容器工具包
 
 ```bash
-# 检查容器状态
-docker-compose ps
+# Ubuntu/Debian
+distribution=$(. /etc/os-release;echo $ID$VERSION_ID) \
+   && curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | sudo apt-key add - \
+   && curl -s -L https://nvidia.github.io/nvidia-docker/$distribution/nvidia-docker.list | sudo tee /etc/apt/sources.list.d/nvidia-docker.list
 
-# 查看日志
-docker-compose logs -f
+sudo apt-get update
+sudo apt-get install -y nvidia-container-toolkit
+sudo systemctl restart docker
+```
 
-# 健康检查
+### 启用 GPU 支持
+
+修改 `docker-compose.yml` 文件：
+
+```yaml
+version: '3.8'
+services:
+  funspeech:
+    image: docker.cnb.cool/nexa/funspeech:latest
+    environment:
+      - DEVICE=cuda:0        # 启用 GPU for ASR
+      - TTS_DEVICE=cuda:0    # 启用 GPU for TTS
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+```
+
+### 验证 GPU 可用性
+
+```bash
+# 检查 GPU 是否被识别
+docker exec -it funspeech-api nvidia-smi
+
+# 查看服务日志确认 GPU 使用
+docker-compose logs | grep -i cuda
+```
+
+## 🎵 音色管理系统
+
+### 添加自定义音色
+
+**步骤 1：准备音色文件**
+```bash
+# 创建音色目录
+mkdir -p ./voices
+
+# 准备音色文件（示例：张三的音色）
+# 张三.wav - 音频文件（3-30秒，清晰无噪音）
+# 张三.txt - 对应文本内容
+```
+
+**步骤 2：添加到系统**
+```bash
+# 将文件复制到映射目录
+cp 张三.wav 张三.txt ./voices/
+
+# 进入容器添加音色
+docker exec -it funspeech-api python -m app.services.tts.clone.voice_manager --add
+```
+
+**步骤 3：验证和使用**
+```bash
+# 查看所有音色
+docker exec -it funspeech-api python -m app.services.tts.clone.voice_manager --list
+
+# 测试新音色
+curl -X POST "http://localhost:8000/stream/v1/tts" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "你好，这是张三的声音测试。",
+    "voice": "张三"
+  }' \
+  --output test_voice.wav
+```
+
+### 音色文件标准
+
+| 要求项 | 规范 | 说明 |
+|--------|------|------|
+| **音频格式** | WAV | 建议 16kHz+ 采样率 |
+| **音频长度** | 3-30 秒 | 太短效果差，太长训练慢 |
+| **音频质量** | 高质量 | 无背景噪音、回音 |
+| **文本匹配** | 完全一致 | 音频内容与文本完全对应 |
+| **文件命名** | 统一前缀 | `name.wav` 和 `name.txt` |
+
+### 音色管理命令
+
+```bash
+# 进入容器后可用的管理命令
+docker exec -it funspeech-api python -m app.services.tts.clone.voice_manager \
+  --list                    # 查看所有音色
+  --list-clone             # 仅查看克隆音色
+  --add                    # 添加新音色
+  --remove <音色名>         # 删除指定音色
+  --info <音色名>           # 查看音色详细信息
+  --refresh                # 刷新音色列表
+  --registry-info          # 查看注册表信息
+```
+
+## 🔍 服务监控
+
+### 健康检查
+
+```bash
+# 检查服务状态
 curl http://localhost:8000/stream/v1/asr/health
 curl http://localhost:8000/stream/v1/tts/health
 
-# API 文档（Debug模式下）
-# http://localhost:8000/docs
+# 查看模型状态
+curl http://localhost:8000/stream/v1/asr/models
+
+# 查看音色列表
+curl http://localhost:8000/stream/v1/tts/voices
 ```
 
-## 🎙️ 音色克隆使用
-
-### 添加音色文件
+### 日志监控
 
 ```bash
-# 1. 将音色文件放入映射目录
-cp 张三.wav 张三.txt ./voices/
+# 实时查看日志
+docker-compose logs -f
 
-# 2. 进入容器添加音色到模型
-docker exec -it funspeech-api python -m app.services.tts.clone.voice_manager --add
+# 查看特定服务日志
+docker-compose logs -f funspeech
 
-# 3. 查看已添加的音色
-docker exec -it funspeech-api python -m app.services.tts.clone.voice_manager --list
+# 查看错误日志
+docker-compose logs | grep -i error
+
+# 查看最近100行日志
+docker-compose logs --tail=100
 ```
 
-### 音色文件要求
-
-- **音频格式**：WAV 格式，建议采样率 16kHz 或以上
-- **音频长度**：3-30 秒，内容清晰无杂音
-- **文本内容**：与音频内容完全一致
-- **文件命名**：音频和文本使用相同的文件名
-
-### 目录结构
-
-```
-./voices/
-├── 张三.wav               # 参考音频文件
-├── 张三.txt               # 对应的参考文本
-├── voice_registry.json   # 音色注册表（自动生成）
-└── spk/                   # 模型特征文件（自动生成）
-    └── spk2info.pt
-```
-
-## 🔧 本地构建
+### 性能监控
 
 ```bash
-# 构建镜像
-docker build -t funspeech:local .
+# 容器资源使用情况
+docker stats funspeech-api
 
-# 运行
-docker run -d \
-  --name funspeech-api \
-  -p 8000:8000 \
-  -v ~/.cache/modelscope:/root/.cache/modelscope \
-  -v ./data:/app/temp \
-  -v ./voices:/app/voices \
-  funspeech:local
+# 容器详细信息
+docker inspect funspeech-api
+
+# 磁盘使用情况
+du -sh ./data ./logs ./voices ~/.cache/modelscope
 ```
 
-## 🚨 常见问题
+## 🔧 维护操作
 
-### 模型下载失败
-
-- 检查网络连接
-- 重启容器：`docker-compose restart`
-
-### GPU 内存不足
-
-- 使用 CPU 模式：`DEVICE=cpu TTS_DEVICE=cpu`
-
-### 端口冲突
-
-- 修改端口映射：`"8080:8000"`
-
-### 权限问题
+### 更新服务
 
 ```bash
-sudo chown -R $USER:$USER ./data ./logs
-```
-
-## 🔄 更新升级
-
-```bash
-# Docker Compose
+# 更新到最新版本
 docker-compose pull
 docker-compose up -d
 
-# 手动升级
-docker pull docker.cnb.cool/nexa/funspeech:latest
+# 查看更新日志
+docker-compose logs -f
+```
+
+### 备份重要数据
+
+```bash
+# 备份音色文件
+tar -czf voices_backup_$(date +%Y%m%d).tar.gz ./voices/
+
+# 备份配置文件
+cp docker-compose.yml docker-compose.yml.backup
+cp .env .env.backup
+```
+
+### 清理和重置
+
+```bash
+# 清理临时文件
+docker exec -it funspeech-api rm -rf /app/temp/*
+
+# 重启服务
+docker-compose restart
+
+# 完全重新部署
+docker-compose down
 docker-compose up -d
+```
+
+## 🚨 故障排除
+
+### 常见问题及解决方案
+
+| 问题 | 症状 | 解决方案 |
+|------|------|----------|
+| **模型下载失败** | 启动超时、网络错误 | 检查网络，重启容器：`docker-compose restart` |
+| **GPU 内存不足** | CUDA OOM 错误 | 切换CPU模式：设置 `DEVICE=cpu TTS_DEVICE=cpu` |
+| **端口被占用** | 端口冲突错误 | 修改端口映射：`"8080:8000"` |
+| **权限错误** | 文件访问被拒绝 | 修复权限：`sudo chown -R $USER:$USER ./data ./logs` |
+| **音色添加失败** | 音色不可用 | 检查文件格式和命名是否正确 |
+
+### 调试模式
+
+```bash
+# 启用调试模式
+echo "DEBUG=true" >> .env
+docker-compose up -d
+
+# 进入容器调试
+docker exec -it funspeech-api /bin/bash
+
+# 查看详细日志
+docker-compose logs -f | grep -E "(ERROR|WARNING|DEBUG)"
+```
+
+### 获取支持
+
+如果遇到问题无法解决：
+
+1. **查看日志**：`docker-compose logs -f`
+2. **检查配置**：确认环境变量和文件映射
+3. **重启服务**：`docker-compose restart`
+4. **提交问题**：访问 [项目仓库](../../issues) 提交 Issue
+
+## 📊 部署建议
+
+### 生产环境
+
+```yaml
+# docker-compose.prod.yml
+version: '3.8'
+services:
+  funspeech:
+    image: docker.cnb.cool/nexa/funspeech:latest
+    restart: always
+    environment:
+      - DEBUG=false
+      - LOG_LEVEL=WARNING
+      - APPTOKEN=${APPTOKEN}
+      - APPKEY=${APPKEY}
+    volumes:
+      - ./data:/app/temp
+      - ./logs:/app/logs
+      - ./voices:/app/voices
+      - ~/.cache/modelscope:/root/.cache/modelscope
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+        reservations:
+          memory: 4G
+```
+
+### 开发环境
+
+```yaml
+# docker-compose.dev.yml
+version: '3.8'
+services:
+  funspeech:
+    image: docker.cnb.cool/nexa/funspeech:latest
+    environment:
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/temp
+      - ./logs:/app/logs
+      - ./voices:/app/voices
 ```
 
 ---
 
-🎉 部署完成后，请参考 [README.md](./README.md) 查看 API 使用文档。
+🎉 **部署完成！** 
+
+访问 `http://localhost:8000/docs`（调试模式下）查看 API 文档，或参考 [README.md](./README.md) 了解详细使用方法。

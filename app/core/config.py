@@ -23,7 +23,7 @@ class Settings:
     DEBUG: bool = False
 
     # 鉴权配置
-    XLS_TOKEN: Optional[str] = None  # 从环境变量XLS_TOKEN读取，如果为None则鉴权可选
+    APPTOKEN: Optional[str] = None  # 从环境变量APPTOKEN读取，如果为None则鉴权可选
     APPKEY: Optional[str] = None  # 从环境变量APPKEY读取，如果为None则appkey可选
 
     # 设备配置
@@ -118,7 +118,7 @@ class Settings:
         )
 
         # 鉴权配置
-        self.XLS_TOKEN = os.getenv("XLS_TOKEN", self.XLS_TOKEN)
+        self.APPTOKEN = os.getenv("APPTOKEN", self.APPTOKEN)
         self.APPKEY = os.getenv("APPKEY", self.APPKEY)
 
         # 设备配置
