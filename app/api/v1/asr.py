@@ -26,7 +26,11 @@ from ...core.exceptions import (
     InvalidMessageException,
     UnsupportedSampleRateException,
 )
-from ...core.security import validate_xls_token, mask_sensitive_data
+from ...core.security import (
+    validate_xls_token,
+    validate_request_appkey,
+    mask_sensitive_data,
+)
 from ...models.asr import (
     ASRResponse,
     ASRHealthCheckResponse,
@@ -91,14 +95,14 @@ async def get_asr_params(request: Request) -> ASRQueryParams:
             {
                 "name": "appkey",
                 "in": "query",
-                "required": True,
+                "required": False,
                 "schema": {
                     "type": "string",
                     "minLength": 1,
                     "maxLength": 64,
                     "example": "your_app_key_here",
                 },
-                "description": "应用Appkey，用于API调用认证",
+                "description": "应用Appkey，用于API调用认证。如果设置了APPKEY环境变量，则此参数为必需；否则为可选",
             },
             {
                 "name": "format",
@@ -253,6 +257,12 @@ async def asr_transcribe(
         token = validate_xls_token(request, task_id)
         logger.info(
             f"[{task_id}] 请求验证通过, token: {mask_sensitive_data(token) if token != 'optional' else 'optional'}"
+        )
+
+        # 验证appkey参数
+        appkey = validate_request_appkey(params.appkey, task_id)
+        logger.info(
+            f"[{task_id}] appkey验证通过, appkey: {mask_sensitive_data(appkey) if appkey != 'optional' else 'optional'}"
         )
 
         logger.info(f"[{task_id}] 请求参数: {params}")

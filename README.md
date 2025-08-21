@@ -99,14 +99,14 @@ python main.py
 #### 1. 使用默认模型（paraformer-large）
 
 ```bash
-# 如果设置了XLS_TOKEN环境变量，需要提供正确的token
+# 启用验证时
 curl -X POST "http://localhost:8000/stream/v1/asr?appkey=your-appkey&format=wav&sample_rate=16000&enable_punctuation_prediction=true" \
   -H "X-NLS-Token: your_secret_token" \
   -H "Content-Type: application/octet-stream" \
   --data-binary @audio.wav
 
-# 如果未设置XLS_TOKEN环境变量，X-NLS-Token头部是可选的
-curl -X POST "http://localhost:8000/stream/v1/asr?appkey=your-appkey&format=wav&sample_rate=16000" \
+# 开发环境（禁用验证）
+curl -X POST "http://localhost:8000/stream/v1/asr?format=wav&sample_rate=16000" \
   -H "Content-Type: application/octet-stream" \
   --data-binary @audio.wav
 ```
@@ -147,9 +147,20 @@ curl -X GET "http://localhost:8000/stream/v1/asr/models"
 #### 1. 语音合成（支持预训练音色和克隆音色）
 
 ```bash
-# 基础示例（如果设置了XLS_TOKEN环境变量，需要提供X-NLS-Token头部）
+# 启用验证时
 curl -X POST "http://localhost:8000/stream/v1/tts" \
   -H "X-NLS-Token: your_secret_token" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "appkey": "your_app_key",
+    "text": "你好，这是一个语音合成测试。",
+    "voice": "中文女",
+    "speech_rate": 0,
+    "volume": 50
+  }'
+
+# 开发环境（禁用验证）
+curl -X POST "http://localhost:8000/stream/v1/tts" \
   -H "Content-Type: application/json" \
   -d '{
     "text": "你好，这是一个语音合成测试。",
@@ -157,11 +168,14 @@ curl -X POST "http://localhost:8000/stream/v1/tts" \
     "speech_rate": 0,
     "volume": 50
   }'
+```
 
 # 完整参数示例
 curl -X POST "http://localhost:8000/stream/v1/tts" \
+  -H "X-NLS-Token: your_secret_token" \
   -H "Content-Type: application/json" \
   -d '{
+    "appkey": "your_app_key",
     "text": "这是一个包含音量控制的语音合成示例",
     "voice": "中文女",
     "speech_rate": 20,
@@ -195,7 +209,7 @@ client = OpenAI(api_key='dummy', base_url='http://localhost:8000/openai/v1')
 ```
 
 ```bash
-# 使用curl的示例（设置了XLS_TOKEN环境变量时）
+# 使用curl的示例
 curl -X POST "http://localhost:8000/openai/v1/audio/speech" \
   -H "Authorization: Bearer your_secret_token" \
   -H "Content-Type: application/json" \
@@ -213,7 +227,7 @@ curl -X POST "http://localhost:8000/openai/v1/audio/speech" \
 
 | 参数                              | 类型    | 必需 | 默认值           | 描述                                                            |
 | --------------------------------- | ------- | ---- | ---------------- | --------------------------------------------------------------- |
-| appkey                            | String  | 是   | -                | 应用 Appkey                                                     |
+| appkey                            | String  | 否   | -                | 应用 Appkey，如果设置了 APPKEY 环境变量则为必需                 |
 | customization_id                  | String  | 否   | paraformer-large | ASR 模型 ID，可通过 /models 接口查看可用模型                    |
 | format                            | String  | 否   | -                | 音频格式 (pcm, wav, opus, speex, amr, mp3, aac, m4a, flac, ogg) |
 | sample_rate                       | Integer | 否   | 16000            | 音频采样率 (8000, 16000, 22050, 44100, 48000)                   |
@@ -232,6 +246,7 @@ curl -X POST "http://localhost:8000/openai/v1/audio/speech" \
 
 | 参数        | 类型    | 必需 | 描述                                                                |
 | ----------- | ------- | ---- | ------------------------------------------------------------------- |
+| appkey      | String  | 否   | 应用 Appkey，如果设置了 APPKEY 环境变量则为必需                     |
 | text        | String  | 是   | 待合成的文本                                                        |
 | format      | String  | 否   | 音频编码格式 (pcm, wav, opus, speex, amr, mp3, aac, m4a, flac, ogg) |
 | sample_rate | Integer | 否   | 音频采样率 (8000, 16000, 22050, 44100, 48000)                       |
@@ -436,6 +451,8 @@ curl -X POST "http://localhost:8000/openai/v1/audio/speech" \
 
 ### 环境变量配置
 
+#### XLS_TOKEN 配置
+
 通过环境变量 `XLS_TOKEN` 控制鉴权行为：
 
 - **未设置 XLS_TOKEN**: 鉴权是可选的，客户端可以不提供 token
@@ -449,24 +466,58 @@ export XLS_TOKEN=your_secret_token_here
 # unset XLS_TOKEN
 ```
 
-### ASR 接口鉴权
+#### APPKEY 配置
 
-**请求头格式**: `X-NLS-Token: <token>`
+通过环境变量 `APPKEY` 控制 ASR 和 TTS 接口的 appkey 验证行为：
+
+- **未设置 APPKEY**: appkey 是可选的，客户端可以不提供 appkey
+- **设置了 APPKEY**: appkey 是必需的，客户端必须提供正确的 appkey
 
 ```bash
-# 必需鉴权时
-curl -H "X-NLS-Token: your_secret_token" ...
+# 启用appkey验证
+export APPKEY=your_app_key_here
 
-# 可选鉴权时
-curl ...  # 无需提供X-NLS-Token头部
+# 禁用appkey验证（不设置环境变量）
+# unset APPKEY
+```
+
+#### 配置示例
+
+```bash
+# 启用验证
+export XLS_TOKEN=your_secret_token_here
+export APPKEY=your_app_key_here
+
+# 开发环境（禁用验证）
+# 不设置环境变量
+```
+
+### ASR 接口鉴权
+
+**Token 鉴权**: `X-NLS-Token: <token>` 请求头
+**Appkey 鉴权**: `appkey=<appkey>` 查询参数
+
+```bash
+# 启用验证
+curl -H "X-NLS-Token: your_secret_token" "http://localhost:8000/stream/v1/asr?appkey=your_appkey" ...
+
+# 开发环境
+curl "http://localhost:8000/stream/v1/asr" ...
 ```
 
 ### TTS 接口鉴权
 
-**普通 TTS 接口**: 使用 `X-NLS-Token` 头部（与 ASR 相同）
+**普通 TTS 接口**:
+
+- **Token 鉴权**: `X-NLS-Token: <token>` 请求头
+- **Appkey 鉴权**: `appkey=<appkey>` 请求体参数
 
 ```bash
-curl -H "X-NLS-Token: your_secret_token" ...
+# 启用验证
+curl -H "X-NLS-Token: your_secret_token" -d '{"appkey": "your_app_key", "text": "..."}' ...
+
+# 开发环境
+curl -d '{"text": "..."}' ...
 ```
 
 **OpenAI 兼容接口**: 使用 `Authorization: Bearer <token>` 头部
@@ -490,28 +541,28 @@ curl -H "Authorization: Bearer your_secret_token" ...
 
 ## 状态码
 
-| 状态码   | 描述             |
-| -------- | ---------------- |
-| 20000000 | 请求成功         |
-| 40000001 | 身份认证失败     |
-| 40000002 | 无效的消息       |
-| 40000003 | 无效的参数       |
-| 40000004 | 无效的音色参数   |
-| 40000005 | 无效的语速参数   |
-| 40000006 | 参考音频处理失败 |
-| 40000011 | 缺少 appkey      |
-| 40000012 | appkey 无效      |
-| 40000013 | 参数错误         |
-| 40000014 | 不支持的音频格式 |
-| 40000015 | 不支持的采样率   |
-| 40000021 | 音频数据为空     |
-| 40000022 | 音频格式无效     |
-| 40000023 | 音频文件过大     |
-| 40000024 | 音频下载失败     |
-| 41010101 | 不支持的采样率   |
-| 50000000 | 内部服务错误     |
-| 50000001 | 模型错误         |
-| 50000002 | 音频处理失败     |
+| 状态码   | 描述                                      |
+| -------- | ----------------------------------------- |
+| 20000000 | 请求成功                                  |
+| 40000001 | 身份认证失败                              |
+| 40000002 | 无效的消息                                |
+| 40000003 | 无效的参数                                |
+| 40000004 | 无效的音色参数                            |
+| 40000005 | 无效的语速参数                            |
+| 40000006 | 参考音频处理失败                          |
+| 40000011 | 缺少 appkey（当设置了 APPKEY 环境变量时） |
+| 40000012 | appkey 无效（当设置了 APPKEY 环境变量时） |
+| 40000013 | 参数错误                                  |
+| 40000014 | 不支持的音频格式                          |
+| 40000015 | 不支持的采样率                            |
+| 40000021 | 音频数据为空                              |
+| 40000022 | 音频格式无效                              |
+| 40000023 | 音频文件过大                              |
+| 40000024 | 音频下载失败                              |
+| 41010101 | 不支持的采样率                            |
+| 50000000 | 内部服务错误                              |
+| 50000001 | 模型错误                                  |
+| 50000002 | 音频处理失败                              |
 
 ## 开发说明
 
@@ -535,3 +586,4 @@ curl -H "Authorization: Bearer your_secret_token" ...
 
 - **ASR**: 完全兼容阿里云语音识别 API，支持多模型动态切换，某些高级功能（如热词表）仅提供接口兼容性
 - **TTS**: 兼容 OpenAI TTS API 格式，支持多种音色和克隆模式
+

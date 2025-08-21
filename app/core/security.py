@@ -64,6 +64,35 @@ def validate_token(token: str, expected_token: Optional[str] = None) -> bool:
     return True
 
 
+def validate_appkey(appkey: str, expected_appkey: Optional[str] = None) -> bool:
+    """验证应用Appkey
+
+    Args:
+        appkey: 客户端提供的appkey
+        expected_appkey: 期望的appkey值（从环境变量读取），如果为None则appkey可选
+
+    Returns:
+        bool: 验证结果
+    """
+    # 如果没有配置期望的appkey，则appkey是可选的
+    if expected_appkey is None:
+        return True
+
+    # 如果配置了期望的appkey，则必须提供appkey
+    if not appkey:
+        return False
+
+    # 简单的appkey格式验证（长度检查）
+    if len(appkey) < 3:
+        return False
+
+    # 验证appkey是否匹配
+    if appkey != expected_appkey:
+        return False
+
+    return True
+
+
 def validate_xls_token(request: Request, task_id: str = "") -> str:
     """验证X-NLS-Token头部"""
     # 获取认证token
@@ -115,3 +144,22 @@ def validate_bearer_token(request: Request, task_id: str = "") -> str:
         )
 
     return token
+
+
+def validate_request_appkey(appkey: str, task_id: str = "") -> str:
+    """验证请求中的appkey参数"""
+    # 如果没有配置APPKEY环境变量，则appkey是可选的
+    if settings.APPKEY is None:
+        return appkey or "optional"
+
+    # 如果配置了APPKEY，则必须提供appkey
+    if not appkey:
+        raise AuthenticationException("缺少appkey参数", task_id)
+
+    if not validate_appkey(appkey, settings.APPKEY):
+        masked_appkey = mask_sensitive_data(appkey)
+        raise AuthenticationException(
+            f"Gateway:ACCESS_DENIED:The appkey '{masked_appkey}' is invalid!", task_id
+        )
+
+    return appkey

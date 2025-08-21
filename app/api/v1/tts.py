@@ -20,7 +20,11 @@ from ...core.exceptions import (
     ReferenceAudioException,
     InvalidParameterException,
 )
-from ...core.security import validate_xls_token, mask_sensitive_data
+from ...core.security import (
+    validate_xls_token,
+    validate_request_appkey,
+    mask_sensitive_data,
+)
 from ...models.tts import (
     TTSResponse,
     TTSHealthCheckResponse,
@@ -114,6 +118,13 @@ def format_tts_response(
                     "schema": {
                         "type": "object",
                         "properties": {
+                            "appkey": {
+                                "type": "string",
+                                "description": "应用Appkey，用于API调用认证。如果设置了APPKEY环境变量，则此参数为必需；否则为可选",
+                                "example": "your_app_key_here",
+                                "minLength": 1,
+                                "maxLength": 64,
+                            },
                             "text": {
                                 "type": "string",
                                 "description": "待合成的文本内容",
@@ -196,6 +207,12 @@ async def synthesize_speech(
         token = validate_xls_token(request, task_id)
         logger.info(
             f"[{task_id}] 请求验证通过, token: {mask_sensitive_data(token) if token != 'optional' else 'optional'}"
+        )
+
+        # 验证appkey参数
+        appkey = validate_request_appkey(tts_request.appkey, task_id)
+        logger.info(
+            f"[{task_id}] appkey验证通过, appkey: {mask_sensitive_data(appkey) if appkey != 'optional' else 'optional'}"
         )
 
         logger.info(

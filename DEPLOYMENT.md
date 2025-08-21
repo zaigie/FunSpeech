@@ -47,6 +47,7 @@ docker run -d \
 | `DEVICE`     | `auto`    | ASR 设备 (auto/cpu/cuda:0) |
 | `TTS_DEVICE` | `auto`    | TTS 设备 (auto/cpu/cuda:0) |
 | `XLS_TOKEN`  | -         | API 鉴权 token（可选）     |
+| `APPKEY`     | -         | ASR 和 TTS 接口 appkey（可选） |
 
 ## 🖥️ GPU 支持
 

@@ -78,6 +78,14 @@ class BaseTTSRequest(BaseModel):
 class PresetVoiceTTSRequest(BaseTTSRequest):
     """预设音色TTS请求模型"""
 
+    appkey: Optional[str] = Field(
+        None,
+        description="应用Appkey，用于API调用认证。如果设置了APPKEY环境变量，则此参数为必需；否则为可选",
+        example="your_app_key_here",
+        min_length=1,
+        max_length=64,
+    )
+
     voice: str = Field(
         "中文女",
         description="音色名称",
@@ -114,6 +122,14 @@ class PresetVoiceTTSRequest(BaseTTSRequest):
 
 class OpenAITTSRequest(BaseModel):
     """OpenAI兼容TTS请求模型"""
+
+    appkey: Optional[str] = Field(
+        None,
+        description="应用Appkey，用于API调用认证。如果设置了APPKEY环境变量，则此参数为必需；否则为可选",
+        example="your_app_key_here",
+        min_length=1,
+        max_length=64,
+    )
 
     model: TTSModelType = Field(
         TTSModelType.TTS_1,

@@ -22,9 +22,9 @@ from .common import (
 class ASRQueryParams(BaseModel):
     """ASR接口查询参数模型"""
 
-    appkey: str = Field(
-        ...,
-        description="应用Appkey，用于API调用认证",
+    appkey: Optional[str] = Field(
+        None,
+        description="应用Appkey，用于API调用认证。如果设置了APPKEY环境变量，则此参数为必需；否则为可选",
         example="your_app_key_here",
         min_length=1,
         max_length=64,
