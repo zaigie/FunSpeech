@@ -100,13 +100,28 @@ async def openai_compatible_tts(request_body: OpenAITTSRequest, request: Request
         # 获取TTS引擎
         tts_engine = get_tts_engine()
 
+        # 根据音色类型设置默认采样率
+        sample_rate = 22050  # 默认采样率
+        if tts_engine._voice_manager and tts_engine._voice_manager.is_voice_available(
+            request_body.voice
+        ):
+            if request_body.voice in tts_engine._voice_manager.list_clone_voices():
+                # CosyVoice2使用24000采样率（默认）
+                sample_rate = 24000
+            else:
+                # CosyVoice1使用22050采样率（默认）
+                sample_rate = 22050
+        else:
+            # 默认使用22050采样率（默认）
+            sample_rate = 22050
+
         # 统一语音合成（Engine层自动判断音色类型）
         output_path = tts_engine.synthesize_speech(
             clean_text,
             request_body.voice,
             request_body.speed,
             request_body.response_format,
-            22050,  # 默认采样率
+            sample_rate,  # 使用根据音色类型确定的采样率
             50,  # 默认音量
             request_body.instructions or "",  # 将instructions映射到prompt
         )

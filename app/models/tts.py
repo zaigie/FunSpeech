@@ -86,7 +86,7 @@ class TTSRequest(BaseModel):
 
     sample_rate: Optional[SampleRate] = Field(
         22050,
-        description="音频采样率（Hz）。支持: 8000, 16000, 22050, 44100, 48000",
+        description="音频采样率（Hz）。支持: 8000, 16000, 22050, 24000, 44100, 48000。预设音色默认22050，克隆音色默认24000",
         example=22050,
     )
 

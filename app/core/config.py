@@ -70,7 +70,7 @@ class Settings:
         "flac",
         "ogg",
     ]
-    SUPPORTED_SAMPLE_RATES: List[int] = [8000, 16000, 22050, 44100, 48000]
+    SUPPORTED_SAMPLE_RATES: List[int] = [8000, 16000, 22050, 24000, 44100, 48000]
 
     # TTS预设音色列表
     PRESET_VOICES: List[str] = [

@@ -205,9 +205,9 @@ def format_tts_response(
                             },
                             "sample_rate": {
                                 "type": "integer",
-                                "description": "音频采样率（Hz）。支持: 8000, 16000, 22050, 44100, 48000",
+                                "description": "音频采样率（Hz）。支持: 8000, 16000, 22050, 24000, 44100, 48000。预设音色默认22050，克隆音色默认24000",
                                 "example": 22050,
-                                "enum": [8000, 16000, 22050, 44100, 48000],
+                                "enum": [8000, 16000, 22050, 24000, 44100, 48000],
                                 "default": 22050,
                             },
                             "prompt": {
@@ -279,14 +279,33 @@ async def synthesize_speech(
         # 清理文本
         clean_text = clean_text_for_tts(tts_request.text)
 
-        # 获取TTS引擎并合成（Engine层会自动判断音色类型）
+        # 获取TTS引擎
         tts_engine = get_tts_engine()
+
+        # 根据音色类型设置默认采样率
+        sample_rate = tts_request.sample_rate
+        if sample_rate is None:
+            # 检查是否为克隆音色
+            if (
+                tts_engine._voice_manager
+                and tts_engine._voice_manager.is_voice_available(tts_request.voice)
+            ):
+                if tts_request.voice in tts_engine._voice_manager.list_clone_voices():
+                    # CosyVoice2使用24000采样率（默认）
+                    sample_rate = 24000
+                else:
+                    # CosyVoice1使用22050采样率（默认）
+                    sample_rate = 22050
+            else:
+                sample_rate = 22050
+
+        # 获取TTS引擎并合成（Engine层会自动判断音色类型）
         output_path = tts_engine.synthesize_speech(
             clean_text,
             tts_request.voice,
             speed,
             tts_request.format,
-            tts_request.sample_rate,
+            sample_rate,
             tts_request.volume,
             tts_request.prompt or "",
         )
