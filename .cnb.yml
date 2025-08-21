@@ -2,7 +2,7 @@
 $:
   tag_push:
     - services:
-      - docker
+        - docker
       env:
         IMAGE_NAME: ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}
       stages:
@@ -19,10 +19,10 @@ $:
           script: docker login -u ${CNB_TOKEN_USER_NAME} -p "${CNB_TOKEN}" ${CNB_DOCKER_REGISTRY}
         - name: 构建镜像
           script: docker build -t ${IMAGE_NAME}:${REPO_LATEST_TAG} .
-          timeout: 30m
+          timeout: 60m
         - name: 标签latest镜像
           script: docker tag ${IMAGE_NAME}:${REPO_LATEST_TAG} ${IMAGE_NAME}:latest
         - name: 推送镜像
-          script: 
-          - docker push ${IMAGE_NAME}:${REPO_LATEST_TAG}
-          - docker push ${IMAGE_NAME}:latest
+          script:
+            - docker push ${IMAGE_NAME}:${REPO_LATEST_TAG}
+            - docker push ${IMAGE_NAME}:latest
