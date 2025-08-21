@@ -347,6 +347,7 @@ async def asr_transcribe(
         return JSONResponse(content=response_data, headers={"task_id": task_id})
 
     except (
+        AuthenticationException,
         InvalidParameterException,
         InvalidMessageException,
         UnsupportedSampleRateException,
@@ -392,12 +393,12 @@ async def asr_transcribe(
 )
 async def health_check(request: Request):
     """ASR服务健康检查端点"""
-    try:
-        # 鉴权
-        result, content = validate_xls_token(request)
-        if not result:
-            raise AuthenticationException(content, "health_check")
+    # 鉴权
+    result, content = validate_xls_token(request)
+    if not result:
+        raise AuthenticationException(content, "health_check")
 
+    try:
         model_manager = get_model_manager()
 
         # 尝试获取默认模型的引擎
@@ -442,11 +443,12 @@ async def health_check(request: Request):
 )
 async def list_models(request: Request):
     """获取可用模型列表端点"""
+    # 鉴权
+    result, content = validate_xls_token(request)
+    if not result:
+        raise AuthenticationException(content, "list_models")
+
     try:
-        # 验证请求头部（鉴权）
-        result, content = validate_xls_token(request)
-        if not result:
-            raise AuthenticationException(content, "list_models")
 
         model_manager = get_model_manager()
         models = model_manager.list_models()

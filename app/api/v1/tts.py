@@ -302,7 +302,12 @@ async def synthesize_speech(
             headers={"task_id": task_id},
         )
 
-    except (InvalidParameterException, DefaultServerErrorException) as e:
+    except (
+        InvalidParameterException,
+        DefaultServerErrorException,
+        AuthenticationException,
+        UnsupportedSampleRateException,
+    ) as e:
         e.task_id = task_id
         logger.error(f"[{task_id}] TTS异常: {e.message}")
         response_data = {
@@ -332,12 +337,12 @@ async def synthesize_speech(
 )
 async def get_voice_list(request: Request) -> JSONResponse:
     """获取支持的音色列表"""
-    try:
-        # 鉴权
-        result, content = validate_xls_token(request)
-        if not result:
-            raise AuthenticationException(content, "get_voice_list")
+    # 鉴权
+    result, content = validate_xls_token(request)
+    if not result:
+        raise AuthenticationException(content, "get_voice_list")
 
+    try:
         tts_engine = get_tts_engine()
         voices = tts_engine.get_voices()
 
@@ -358,12 +363,12 @@ async def get_voice_list(request: Request) -> JSONResponse:
 )
 async def get_voice_info(request: Request) -> JSONResponse:
     """获取详细的音色信息"""
-    try:
-        # 鉴权
-        result, content = validate_xls_token(request)
-        if not result:
-            raise AuthenticationException(content, "get_voice_info")
+    # 鉴权
+    result, content = validate_xls_token(request)
+    if not result:
+        raise AuthenticationException(content, "get_voice_info")
 
+    try:
         tts_engine = get_tts_engine()
         voices_info = tts_engine.get_voices_info()
 
@@ -393,12 +398,12 @@ async def get_voice_info(request: Request) -> JSONResponse:
 )
 async def refresh_voices(request: Request) -> JSONResponse:
     """刷新音色配置"""
-    try:
-        # 鉴权
-        result, content = validate_xls_token(request)
-        if not result:
-            raise AuthenticationException(content, "refresh_voices")
+    # 鉴权
+    result, content = validate_xls_token(request)
+    if not result:
+        raise AuthenticationException(content, "refresh_voices")
 
+    try:
         tts_engine = get_tts_engine()
         tts_engine.refresh_voices()
 
@@ -424,12 +429,12 @@ async def refresh_voices(request: Request) -> JSONResponse:
 )
 async def health_check(request: Request) -> JSONResponse:
     """TTS服务健康检查"""
-    try:
-        # 鉴权
-        result, content = validate_xls_token(request)
-        if not result:
-            raise AuthenticationException(content, "health_check")
+    # 鉴权
+    result, content = validate_xls_token(request)
+    if not result:
+        raise AuthenticationException(content, "health_check")
 
+    try:
         tts_engine = get_tts_engine()
 
         response_data = {
