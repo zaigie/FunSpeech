@@ -8,7 +8,7 @@ import sys
 import os
 
 # 添加项目路径
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "app"))
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from app.utils.number_converter import (
     NumberConverter,
@@ -127,6 +127,10 @@ def test_itn_function():
             "识别文本：这个项目需要三个月，预算是一万五千元。",
             "识别文本：这个项目需要3个月，预算是15000元。",
         ),
+        (
+            "热线电话是一三九一三九一三九一三，请拨打。",
+            "热线电话是13913913913，请拨打。",
+        ),
     ]
 
     for input_text, expected in test_cases:
@@ -184,6 +188,10 @@ def test_auto_conversion():
         ("我有3个苹果和五个橙子。", "我有3个苹果和5个橙子。"),
         ("今天是一月十五日，温度25度。", "今天是1月15日，温度25度。"),
         ("这个项目需要三个月，预算一万五千元。", "这个项目需要3个月，预算15000元。"),
+        (
+            "热线电话是一三九一三九一三九一三，请拨打。",
+            "热线电话是13913913913，请拨打。",
+        ),
     ]
 
     for input_text, expected in test_cases:

@@ -187,6 +187,23 @@ class NumberConverter:
             return text
 
         try:
+            # 首先处理连续的单个中文数字（如电话号码）
+            consecutive_pattern = (
+                r"[零一二三四五六七八九](?:[零一二三四五六七八九]){2,}"
+            )
+
+            def replace_consecutive_digits(match):
+                consecutive_digits = match.group(0)
+                # 将连续的单个中文数字转换为阿拉伯数字
+                result_digits = ""
+                for char in consecutive_digits:
+                    if char in cls.CHINESE_TO_DIGIT:
+                        result_digits += str(cls.CHINESE_TO_DIGIT[char])
+                return result_digits
+
+            # 先处理连续数字
+            text = re.sub(consecutive_pattern, replace_consecutive_digits, text)
+
             # 使用正则表达式匹配中文数字模式，包括负数
             pattern = (
                 r"负?[零一二三四五六七八九十百千万亿]+(?:点[零一二三四五六七八九]+)?"
