@@ -74,6 +74,8 @@ def create_app() -> FastAPI:
                 "tts_openai": "/openai/v1/audio/speech",
                 "tts_voices": "/stream/v1/tts/voices",
                 "tts_health": "/stream/v1/tts/health",
+                "ws_tts": "/ws/v1/tts",
+                "ws_tts_test": "/ws/v1/tts/test",
                 "docs": settings.docs_url or "禁用",
             },
         }

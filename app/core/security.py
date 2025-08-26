@@ -154,3 +154,20 @@ def validate_request_appkey(appkey: str, task_id: str = "") -> tuple[bool, str]:
         return False, f"Gateway:ACCESS_DENIED:The appkey '{masked_appkey}' is invalid!"
 
     return True, appkey
+
+
+def validate_token_websocket(token: str, task_id: str = "") -> tuple[bool, str]:
+    """验证WebSocket连接中的token"""
+    # 如果没有配置APPTOKEN环境变量，则鉴权是可选的
+    if settings.APPTOKEN is None:
+        return True, token or "optional"
+    
+    # 如果配置了APPTOKEN，则必须提供token
+    if not token:
+        return False, "缺少token参数"
+    
+    if not validate_token(token, settings.APPTOKEN):
+        masked_token = mask_sensitive_data(token)
+        return False, f"Gateway:ACCESS_DENIED:The token '{masked_token}' is invalid!"
+    
+    return True, token
