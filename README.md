@@ -87,6 +87,8 @@ export APPKEY=your_app_key           # AppKey 验证
 | `/stream/v1/tts/voices/info` | GET | 音色详细信息 |
 | `/stream/v1/tts/voices/refresh` | POST | 刷新音色配置 |
 | `/stream/v1/tts/health` | GET | 健康检查 |
+| **`/ws/v1/tts`** | WebSocket | **双向流式语音合成** 🚀 |
+| `/ws/v1/tts/test` | GET | WebSocket 测试页面 |
 
 ## 🎯 使用示例
 
@@ -169,6 +171,95 @@ def text_to_speech(text, voice="中文女", output_file="output.wav"):
 # 使用示例
 text_to_speech("你好，这是语音合成测试！")
 ```
+
+### WebSocket 双向流式语音合成 🚀
+
+**特别适用于 LLM 逐词输出场景**，支持在同一连接中连续发送多个文本片段进行实时合成。
+
+**在线测试：** 访问 `http://localhost:8000/ws/v1/tts/test`
+
+**核心特性：**
+- 🔄 **双向流模式**：StartSynthesis → 多次RunSynthesis → StopSynthesis
+- 🎯 **真实流式**：基于CosyVoice的`stream=True`功能，音频实时生成
+- 🚀 **低延迟**：音频数据立即传输，无需等待完整合成
+- 🎪 **完全兼容**：严格遵循阿里云流式语音合成WebSocket协议
+
+**JavaScript 快速示例：**
+```javascript
+const ws = new WebSocket('ws://localhost:8000/ws/v1/tts');
+ws.binaryType = 'arraybuffer';
+
+let taskId = 'uuid_task_id';
+let audioChunks = [];
+
+ws.onopen = () => {
+    // 1. 开始合成会话
+    ws.send(JSON.stringify({
+        header: {
+            message_id: 'uuid_msg_id',
+            task_id: taskId,
+            namespace: 'FlowingSpeechSynthesizer',
+            name: 'StartSynthesis'
+        },
+        payload: {
+            voice: '中文女',
+            format: 'PCM',
+            sample_rate: 22050
+        }
+    }));
+};
+
+ws.onmessage = (event) => {
+    if (event.data instanceof ArrayBuffer) {
+        // 音频数据
+        audioChunks.push(new Uint8Array(event.data));
+    } else {
+        // JSON消息
+        const response = JSON.parse(event.data);
+        if (response.header.name === 'SynthesisStarted') {
+            // 2. 发送文本片段（可多次调用）
+            sendText('你好，这是第一段文本。');
+            sendText('这是第二段文本。');
+            // 3. 结束合成
+            stopSynthesis();
+        }
+    }
+};
+
+function sendText(text) {
+    ws.send(JSON.stringify({
+        header: {
+            message_id: 'uuid_msg_id',
+            task_id: taskId,
+            namespace: 'FlowingSpeechSynthesizer',
+            name: 'RunSynthesis'
+        },
+        payload: { text }
+    }));
+}
+
+function stopSynthesis() {
+    ws.send(JSON.stringify({
+        header: {
+            message_id: 'uuid_msg_id',
+            task_id: taskId,
+            namespace: 'FlowingSpeechSynthesizer',
+            name: 'StopSynthesis'
+        }
+    }));
+}
+```
+
+**Python 交互式示例：**
+```bash
+# 交互式双向流测试
+python tests/test_aliyun_websocket.py
+
+# 指定参数测试
+python tests/test_aliyun_websocket.py --voice "中文女" --format PCM
+```
+
+> 📖 **完整协议文档：** [WebSocket 流式语音合成接口](./docs/websocket_tts_api.md)
 
 ## 🎵 音色系统
 
@@ -317,6 +408,15 @@ python -m app.services.tts.clone.voice_manager --refresh        # 刷新音色�
 
 - **开发模式**：访问 `http://localhost:8000/docs` 查看完整 API 文档
 - **生产模式**：API 文档自动隐藏
+- **WebSocket 流式合成**：查看 [详细协议文档](./docs/websocket_tts_api.md)
+
+## 🌐 相关链接
+
+- **WebSocket 流式合成协议**: [详细文档](./docs/websocket_tts_api.md)
+- **阿里云官方协议**: [流式语音合成WebSocket协议](https://help.aliyun.com/zh/isi/developer-reference/websocket-protocol-description)
+- **CosyVoice模型**: [CosyVoice GitHub](https://github.com/FunAudioLLM/CosyVoice)
+- **FunASR模型**: [FunASR GitHub](https://github.com/alibaba-damo-academy/FunASR)
+- **在线测试**: `http://localhost:8000/ws/v1/tts/test`
 
 ## 📋 TODO
 
