@@ -362,11 +362,26 @@ async def get_voice_list(request: Request) -> JSONResponse:
         raise AuthenticationException(content, "get_voice_list")
 
     try:
-        tts_engine = get_tts_engine()
-        voices = tts_engine.get_voices()
+        # 使用懒加载的方式获取音色列表
+        from app.core.config import settings
+        
+        # 直接返回预设音色，避免触发TTS引擎初始化
+        preset_voices = settings.PRESET_VOICES.copy()
+        
+        # 尝试从音色管理器的注册表获取克隆音色（不触发模型加载）
+        try:
+            from app.services.tts.clone import VoiceManager
+            voice_manager = VoiceManager()  # 不传入cosyvoice实例，避免模型加载
+            clone_voices = voice_manager.list_clone_voices()
+            
+            # 合并音色列表
+            for voice in clone_voices:
+                if voice not in preset_voices:
+                    preset_voices.append(voice)
+        except Exception as e:
+            logger.warning(f"获取克隆音色失败，仅返回预设音色: {e}")
 
-        response_data = {"voices": voices, "total": len(voices)}
-
+        response_data = {"voices": preset_voices, "total": len(preset_voices)}
         return JSONResponse(content=response_data)
 
     except Exception as e:

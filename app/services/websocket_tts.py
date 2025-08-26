@@ -39,7 +39,6 @@ class AliyunWebSocketTTSService:
     
     def __init__(self):
         self.tts_engine = None
-        self._initialize_engine()
     
     def cleanup(self):
         """清理资源"""
@@ -58,13 +57,20 @@ class AliyunWebSocketTTSService:
         except Exception as e:
             logger.warning(f"清理所有TTS引擎时出现异常: {e}")
     
+    def _ensure_tts_engine(self):
+        """确保TTS引擎已加载（懒加载）"""
+        if self.tts_engine is None:
+            logger.info("首次使用WebSocket TTS，正在加载TTS引擎...")
+            self._initialize_engine()
+        return self.tts_engine
+    
     def _initialize_engine(self):
         """初始化TTS引擎"""
         try:
             self.tts_engine = get_tts_engine()
-            logger.info("阿里云WebSocket TTS引擎初始化成功")
+            logger.info("WebSocket TTS引擎加载完成")
         except Exception as e:
-            logger.error(f"阿里云WebSocket TTS引擎初始化失败: {e}")
+            logger.error(f"WebSocket TTS引擎加载失败: {e}")
             raise e
     
     async def _process_websocket_connection(self, websocket, task_id: str):
@@ -253,16 +259,18 @@ class AliyunWebSocketTTSService:
     ) -> AsyncGenerator[Optional[bytes], None]:
         """生成流式音频数据"""
         try:
+            tts_engine = self._ensure_tts_engine()
+            
             # 检查是否为克隆音色
-            if self.tts_engine._voice_manager and self.tts_engine._voice_manager.is_voice_available(voice):
-                if voice in self.tts_engine._voice_manager.list_clone_voices():
+            if tts_engine._voice_manager and tts_engine._voice_manager.is_voice_available(voice):
+                if voice in tts_engine._voice_manager.list_clone_voices():
                     # 使用CosyVoice2流式合成（克隆音色）
                     async for chunk in self._stream_clone_voice(text, voice, speed, format, task_id):
                         yield chunk
                     return
             
             # 使用CosyVoice1流式合成（预设音色）
-            if self.tts_engine.cosyvoice_sft:
+            if tts_engine.cosyvoice_sft:
                 async for chunk in self._stream_preset_voice(text, voice, speed, format, task_id):
                     yield chunk
             else:
@@ -278,8 +286,10 @@ class AliyunWebSocketTTSService:
         """使用CosyVoice1进行流式合成（预设音色）"""
         logger.info(f"[{task_id}] 使用CosyVoice1流式合成预设音色: {voice}")
         
+        tts_engine = self._ensure_tts_engine()
+        
         # 使用CosyVoice1的stream=True功能
-        for audio_data in self.tts_engine.cosyvoice_sft.inference_sft(
+        for audio_data in tts_engine.cosyvoice_sft.inference_sft(
             text, voice, stream=True, speed=speed
         ):
             # 将tensor转换为numpy数组
@@ -288,11 +298,11 @@ class AliyunWebSocketTTSService:
             # 根据格式转换音频数据
             if format.upper() == 'PCM':
                 # PCM格式：直接发送16位PCM数据
-                pcm_bytes = self._convert_audio_to_pcm(audio_array, self.tts_engine.cosyvoice_sft.sample_rate)
+                pcm_bytes = self._convert_audio_to_pcm(audio_array, tts_engine.cosyvoice_sft.sample_rate)
                 yield pcm_bytes
             else:
                 # WAV格式：转换为WAV字节流
-                wav_bytes = self._convert_audio_to_wav(audio_array, self.tts_engine.cosyvoice_sft.sample_rate)
+                wav_bytes = self._convert_audio_to_wav(audio_array, tts_engine.cosyvoice_sft.sample_rate)
                 yield wav_bytes
                 
             # 添加小延迟以模拟真实流式效果
@@ -304,8 +314,10 @@ class AliyunWebSocketTTSService:
         """使用CosyVoice2进行流式合成（克隆音色）"""
         logger.info(f"[{task_id}] 使用CosyVoice2流式合成克隆音色: {voice}")
         
+        tts_engine = self._ensure_tts_engine()
+        
         # 使用CosyVoice2的stream=True功能进行零样本合成
-        for audio_data in self.tts_engine.cosyvoice_clone.inference_zero_shot(
+        for audio_data in tts_engine.cosyvoice_clone.inference_zero_shot(
             text,
             "",  # prompt_text - 使用空字符串，由于我们使用保存的音色
             None,  # prompt_speech_16k - 不需要，因为使用保存的音色
@@ -319,11 +331,11 @@ class AliyunWebSocketTTSService:
             # 根据格式转换音频数据
             if format.upper() == 'PCM':
                 # PCM格式：直接发送16位PCM数据
-                pcm_bytes = self._convert_audio_to_pcm(audio_array, self.tts_engine.cosyvoice_clone.sample_rate)
+                pcm_bytes = self._convert_audio_to_pcm(audio_array, tts_engine.cosyvoice_clone.sample_rate)
                 yield pcm_bytes
             else:
                 # WAV格式：转换为WAV字节流
-                wav_bytes = self._convert_audio_to_wav(audio_array, self.tts_engine.cosyvoice_clone.sample_rate)
+                wav_bytes = self._convert_audio_to_wav(audio_array, tts_engine.cosyvoice_clone.sample_rate)
                 yield wav_bytes
                 
             # 添加小延迟以模拟真实流式效果

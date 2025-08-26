@@ -133,8 +133,8 @@ class VoiceManager:
         if self.cosyvoice is None:
             from app.services.tts.engine import get_tts_engine
 
-            # 只加载克隆模型，不加载SFT模型以节省内存
-            tts_engine = get_tts_engine(load_sft=False)
+            # 使用统一的TTS引擎实例
+            tts_engine = get_tts_engine()
 
             if not tts_engine.is_clone_model_loaded():
                 raise RuntimeError("克隆模型未加载，无法管理音色")

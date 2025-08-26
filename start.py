@@ -12,7 +12,7 @@ import os
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 if __name__ == "__main__":
-    from main import app, settings, logger
+    from main import settings, logger
     import uvicorn
 
     print("=" * 60)
@@ -35,10 +35,12 @@ if __name__ == "__main__":
 
     try:
         uvicorn.run(
-            app,
+            "main:app",
             host=settings.HOST,
             port=settings.PORT,
+            reload=settings.DEBUG,
             log_level=settings.LOG_LEVEL.lower(),
+            access_log=True,
         )
     except KeyboardInterrupt:
         print("\n👋 服务已停止")

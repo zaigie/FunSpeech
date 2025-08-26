@@ -64,6 +64,7 @@ class CosyVoiceTTSEngine:
 
     def _load_models(self):
         """加载TTS模型"""
+        logger.info("开始加载TTS模型...")
         try:
             from cosyvoice.cli.cosyvoice import CosyVoice, CosyVoice2
 
@@ -72,6 +73,7 @@ class CosyVoiceTTSEngine:
             # 根据配置决定是否加载SFT模型（用于预设音色）
             if self._load_sft:
                 try:
+                    logger.info("正在加载SFT模型（CosyVoice1）...")
                     self.cosyvoice_sft = CosyVoice(
                         settings.SFT_MODEL_ID,
                         load_jit=True,
@@ -89,6 +91,7 @@ class CosyVoiceTTSEngine:
 
             # 加载克隆模型（用于零样本和跨语言）
             try:
+                logger.info("正在加载克隆模型（CosyVoice2）...")
                 self.cosyvoice_clone = CosyVoice2(
                     settings.CLONE_MODEL_ID,
                     load_jit=True,
@@ -107,6 +110,7 @@ class CosyVoiceTTSEngine:
 
             # 初始化音色管理器（只有克隆模型加载成功时才初始化）
             if self._clone_model_loaded:
+                logger.info("正在初始化音色管理器...")
                 self._load_voice_manager()
 
             logger.info("TTS模型加载完成")
@@ -122,7 +126,7 @@ class CosyVoiceTTSEngine:
 
             self._voice_manager = VoiceManager(self.cosyvoice_clone)
 
-            # 获取克隆音色列表并添加到预设音色中
+            # 获取克隆音色列表并添加到预设音色中（一次性加载）
             clone_voices = self._voice_manager.list_clone_voices()
             for voice in clone_voices:
                 if voice not in self._preset_voices:
@@ -239,13 +243,7 @@ class CosyVoiceTTSEngine:
 
     def get_voices(self) -> List[str]:
         """获取音色列表（包含克隆音色）"""
-        if self._voice_manager:
-            clone_voices = self._voice_manager.list_clone_voices()
-            current_voices = set(self._preset_voices)
-            for voice in clone_voices:
-                if voice not in current_voices:
-                    self._preset_voices.append(voice)
-
+        # 只返回当前缓存的音色列表，不触发刷新
         return self._preset_voices.copy()
 
     def get_voices_info(self) -> Dict[str, Dict[str, Any]]:
@@ -332,15 +330,15 @@ class CosyVoiceTTSEngine:
         return voices_info
 
     def refresh_voices(self):
-        """刷新音色配置"""
+        """刷新音色配置（仅在必要时重新加载）"""
         self._preset_voices = settings.PRESET_VOICES.copy()
         if self._voice_manager:
-            self._voice_manager.refresh_voices()
-            # 重新添加克隆音色到预设列表
+            # 只从注册表获取克隆音色，避免触发模型重新加载
             clone_voices = self._voice_manager.list_clone_voices()
             for voice in clone_voices:
                 if voice not in self._preset_voices:
                     self._preset_voices.append(voice)
+            logger.info(f"音色配置已刷新，当前有 {len(self._preset_voices)} 个音色")
 
     def is_sft_model_loaded(self) -> bool:
         """检查SFT模型是否已加载"""
@@ -381,11 +379,12 @@ def get_tts_engine(load_sft: bool = True) -> CosyVoiceTTSEngine:
     """
     global _tts_engines
 
-    # 根据配置生成缓存key
-    cache_key = f"sft_{load_sft}"
+    # 统一使用一个缓存key，避免创建多个实例
+    cache_key = "unified_engine"
 
     if cache_key not in _tts_engines:
-        _tts_engines[cache_key] = CosyVoiceTTSEngine(load_sft=load_sft)
+        logger.info("创建统一的TTS引擎实例，加载所有模型")
+        _tts_engines[cache_key] = CosyVoiceTTSEngine(load_sft=True)  # 始终加载所有模型
 
     return _tts_engines[cache_key]
 
