@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-阿里云流式语音合成WebSocket测试工具
+阿里云双向流式语音合成WebSocket测试工具
+支持LLM逐词输出场景 - 交互式连续发送文本片段
 使用正确的阿里云协议进行测试
 """
 
@@ -19,8 +20,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
-class AliyunTTSTestClient:
-    """阿里云TTS测试客户端"""
+class AliyunBidirectionalTTSTestClient:
+    """阿里云双向流式TTS测试客户端"""
     
     def __init__(self, ws_url: str, appkey: str = None, token: str = None):
         self.ws_url = ws_url
@@ -28,6 +29,9 @@ class AliyunTTSTestClient:
         self.token = token
         self.task_id = None
         self.audio_data = b''
+        self.websocket = None
+        self.connection_state = 'READY'  # READY, STARTED, COMPLETED
+        self.text_segments_count = 0
         
     def generate_message_id(self) -> str:
         """生成32位消息ID"""
@@ -37,16 +41,23 @@ class AliyunTTSTestClient:
         """生成任务ID"""
         return str(uuid.uuid4()).replace('-', '')[:32]
     
-    async def test_streaming_synthesis(self, text: str, voice: str = "中文女", 
-                                     format: str = "PCM", sample_rate: int = 22050):
-        """测试流式语音合成"""
+    async def test_bidirectional_synthesis(self, voice: str = "中文女", 
+                                          format: str = "PCM", sample_rate: int = 22050):
+        """测试双向流式语音合成 - 支持交互式连续输入"""
         self.task_id = self.generate_task_id()
         self.audio_data = b''
+        self.text_segments_count = 0
         
-        logger.info(f"开始测试流式合成，任务ID: {self.task_id}")
+        logger.info(f"开始双向流式合成测试，任务ID: {self.task_id}")
         logger.info(f"目标URL: {self.ws_url}")
-        logger.info(f"文本: '{text}'")
         logger.info(f"音色: {voice}, 格式: {format}, 采样率: {sample_rate}")
+        logger.info("\n" + "="*60)
+        logger.info("交互式测试说明:")
+        logger.info("1. 建立WebSocket连接并发送StartSynthesis")
+        logger.info("2. 输入文本片段，按回车发送RunSynthesis")
+        logger.info("3. 输入'stop'或'exit'发送StopSynthesis并结束")
+        logger.info("4. 支持连续输入多个文本片段")
+        logger.info("="*60 + "\n")
         
         headers = {}
         if self.token:
@@ -59,37 +70,23 @@ class AliyunTTSTestClient:
                 ping_interval=None,
                 ping_timeout=None
             ) as websocket:
+                self.websocket = websocket
                 logger.info("✓ WebSocket连接成功")
                 
                 # 1. 发送StartSynthesis
-                await self._send_start_synthesis(websocket, voice, format, sample_rate)
+                await self._send_start_synthesis(voice, format, sample_rate)
                 
                 # 2. 等待SynthesisStarted响应
-                await self._wait_for_synthesis_started(websocket)
+                await self._wait_for_synthesis_started()
                 
-                # 3. 发送RunSynthesis
-                await self._send_run_synthesis(websocket, text)
-                
-                # 4. 接收音频数据和响应
-                await self._receive_audio_stream(websocket)
-                
-                # 5. 发送StopSynthesis
-                await self._send_stop_synthesis(websocket)
-                
-                # 6. 等待SynthesisCompleted响应
-                await self._wait_for_synthesis_completed(websocket)
-                
-                # 7. 保存音频文件
-                if self.audio_data:
-                    await self._save_audio_file(format, sample_rate)
-                
-                logger.info("✅ 流式合成测试完成")
+                # 3. 启动交互式文本输入
+                await self._interactive_text_input()
                 
         except Exception as e:
             logger.error(f"❌ 测试失败: {e}")
             raise
     
-    async def _send_start_synthesis(self, websocket, voice: str, format: str, sample_rate: int):
+    async def _send_start_synthesis(self, voice: str, format: str, sample_rate: int):
         """发送StartSynthesis消息"""
         message = {
             "header": {
@@ -111,19 +108,20 @@ class AliyunTTSTestClient:
             }
         }
         
-        await websocket.send(json.dumps(message))
+        await self.websocket.send(json.dumps(message))
         logger.info("→ 发送StartSynthesis")
     
-    async def _wait_for_synthesis_started(self, websocket):
+    async def _wait_for_synthesis_started(self):
         """等待SynthesisStarted响应"""
         while True:
-            response = await websocket.recv()
+            response = await self.websocket.recv()
             try:
                 data = json.loads(response)
                 header = data.get('header', {})
                 
                 if header.get('name') == 'SynthesisStarted':
                     if header.get('status') == 20000000:
+                        self.connection_state = 'STARTED'
                         logger.info("✓ 收到SynthesisStarted，合成已开始")
                         return
                     else:
@@ -135,7 +133,7 @@ class AliyunTTSTestClient:
             except json.JSONDecodeError:
                 logger.warning("收到非JSON消息，可能是音频数据")
     
-    async def _send_run_synthesis(self, websocket, text: str):
+    async def _send_run_synthesis(self, text: str):
         """发送RunSynthesis消息"""
         message = {
             "header": {
@@ -149,23 +147,73 @@ class AliyunTTSTestClient:
             }
         }
         
-        await websocket.send(json.dumps(message))
-        logger.info(f"→ 发送RunSynthesis: '{text}'")
+        await self.websocket.send(json.dumps(message))
+        logger.info(f"→ 发送RunSynthesis [{self.text_segments_count}]: '{text}'")
     
-    async def _receive_audio_stream(self, websocket):
-        """接收音频流数据"""
-        sentence_begin_received = False
-        audio_chunks_count = 0
+    async def _interactive_text_input(self):
+        """交互式文本输入处理"""
+        import sys
         
-        while True:
+        logger.info("🎯 进入交互式模式，请输入文本片段:")
+        
+        # 创建接收消息的任务
+        receive_task = asyncio.create_task(self._receive_messages())
+        
+        try:
+            while self.connection_state == 'STARTED':
+                try:
+                    # 获取用户输入
+                    text = await asyncio.get_event_loop().run_in_executor(
+                        None, lambda: input(f"[片段{self.text_segments_count + 1}] > ")
+                    )
+                    
+                    text = text.strip()
+                    if not text:
+                        continue
+                    
+                    # 检查是否要停止
+                    if text.lower() in ['stop', 'exit', 'quit', 'q']:
+                        logger.info("用户请求停止合成")
+                        await self._send_stop_synthesis()
+                        await self._wait_for_synthesis_completed()
+                        break
+                    
+                    # 发送RunSynthesis
+                    self.text_segments_count += 1
+                    await self._send_run_synthesis(text)
+                    
+                except (EOFError, KeyboardInterrupt):
+                    logger.info("\n用户中断，发送停止信号")
+                    await self._send_stop_synthesis()
+                    await self._wait_for_synthesis_completed()
+                    break
+                except Exception as e:
+                    logger.error(f"处理输入时出错: {e}")
+                    break
+        
+        finally:
+            receive_task.cancel()
             try:
-                response = await websocket.recv()
+                await receive_task
+            except asyncio.CancelledError:
+                pass
+            
+            # 保存音频文件
+            if self.audio_data:
+                await self._save_audio_file("PCM", 22050)
+                
+            logger.info(f"\n✅ 交互式合成完成！共发送了{self.text_segments_count}个文本片段")
+    
+    async def _receive_messages(self):
+        """接收WebSocket消息"""
+        try:
+            while self.websocket and not self.websocket.closed:
+                response = await self.websocket.recv()
                 
                 # 检查是否为二进制数据（音频）
                 if isinstance(response, bytes):
                     self.audio_data += response
-                    audio_chunks_count += 1
-                    logger.info(f"♪ 收到音频数据块 {audio_chunks_count}，大小: {len(response)} 字节")
+                    print(f"♪ 收到音频数据块，大小: {len(response)} 字节")
                     continue
                 
                 # 解析JSON响应
@@ -175,34 +223,33 @@ class AliyunTTSTestClient:
                     message_name = header.get('name', '')
                     
                     if message_name == 'SentenceBegin':
-                        logger.info("✓ 收到SentenceBegin，句子开始")
-                        sentence_begin_received = True
+                        print("  ✓ 句子开始")
                         
                     elif message_name == 'SentenceSynthesis':
-                        logger.info("♪ 收到SentenceSynthesis，合成进度")
+                        print("  ♪ 合成中...")
                         
                     elif message_name == 'SentenceEnd':
-                        logger.info("✓ 收到SentenceEnd，句子结束")
-                        # 句子结束后可以继续等待更多音频或结束
-                        return
+                        print("  ✓ 句子结束\n")
+                        
+                    elif message_name == 'SynthesisCompleted':
+                        logger.info("✅ 收到SynthesisCompleted")
+                        self.connection_state = 'COMPLETED'
+                        break
                         
                     elif message_name == 'TaskFailed':
-                        raise Exception(f"任务失败: {header.get('status_text')}")
-                        
-                    else:
-                        logger.info(f"← 收到消息: {message_name}")
+                        logger.error(f"❌ 任务失败: {header.get('status_text')}")
+                        self.connection_state = 'FAILED'
+                        break
                         
                 except json.JSONDecodeError:
                     logger.warning(f"无法解析的响应: {response[:100]}...")
                     
-            except websockets.exceptions.ConnectionClosed:
-                logger.info("WebSocket连接已关闭")
-                break
-            except Exception as e:
-                logger.error(f"接收数据时出错: {e}")
-                break
+        except websockets.exceptions.ConnectionClosed:
+            logger.info("WebSocket连接已关闭")
+        except Exception as e:
+            logger.error(f"接收消息时出错: {e}")
     
-    async def _send_stop_synthesis(self, websocket):
+    async def _send_stop_synthesis(self):
         """发送StopSynthesis消息"""
         message = {
             "header": {
@@ -213,14 +260,14 @@ class AliyunTTSTestClient:
             }
         }
         
-        await websocket.send(json.dumps(message))
+        await self.websocket.send(json.dumps(message))
         logger.info("→ 发送StopSynthesis")
     
-    async def _wait_for_synthesis_completed(self, websocket):
+    async def _wait_for_synthesis_completed(self):
         """等待SynthesisCompleted响应"""
         while True:
             try:
-                response = await websocket.recv()
+                response = await self.websocket.recv()
                 
                 # 可能还有剩余的音频数据
                 if isinstance(response, bytes):
@@ -235,6 +282,7 @@ class AliyunTTSTestClient:
                     if header.get('name') == 'SynthesisCompleted':
                         if header.get('status') == 20000000:
                             logger.info("✅ 收到SynthesisCompleted，合成完成")
+                            self.connection_state = 'COMPLETED'
                             return
                         else:
                             raise Exception(f"SynthesisCompleted失败: {header.get('status_message')}")
@@ -325,11 +373,9 @@ class AliyunTTSTestClient:
 
 async def main():
     """主函数"""
-    parser = argparse.ArgumentParser(description='阿里云流式语音合成WebSocket测试工具')
+    parser = argparse.ArgumentParser(description='阿里云双向流式语音合成WebSocket测试工具')
     parser.add_argument('--url', default='ws://localhost:8000/ws/v1/tts', 
                        help='WebSocket服务URL')
-    parser.add_argument('--text', default='你好，这是阿里云流式语音合成测试。', 
-                       help='待合成的文本')
     parser.add_argument('--voice', default='中文女', 
                        help='音色名称')
     parser.add_argument('--format', choices=['PCM', 'WAV', 'MP3'], default='PCM',
@@ -347,19 +393,18 @@ async def main():
         logging.getLogger().setLevel(logging.DEBUG)
     
     # 创建测试客户端
-    client = AliyunTTSTestClient(args.url, args.appkey, args.token)
+    client = AliyunBidirectionalTTSTestClient(args.url, args.appkey, args.token)
     
     try:
-        # 执行测试
-        await client.test_streaming_synthesis(
-            text=args.text,
+        # 执行双向流测试
+        await client.test_bidirectional_synthesis(
             voice=args.voice,
             format=args.format,
             sample_rate=args.sample_rate
         )
         
         print("\n" + "="*50)
-        print("🎉 测试完成！")
+        print("🎉 双向流式合成测试完成！")
         print("="*50)
         
     except KeyboardInterrupt:

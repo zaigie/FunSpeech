@@ -143,12 +143,12 @@ async def websocket_test_page():
     <body>
         <div class="container">
             <div class="header">
-                <h1>🎙️ 阿里云流式语音合成WebSocket测试</h1>
-                <p>完整阿里云协议实现 - StartSynthesis → RunSynthesis → StopSynthesis</p>
+                <h1>🎙️ 阿里云双向流式语音合成测试</h1>
+                <p>支持LLM逐词输出场景 - StartSynthesis → 多次RunSynthesis → StopSynthesis</p>
             </div>
             
             <div class="protocol-info">
-                <strong>协议说明：</strong>本测试页面完全按照阿里云WebSocket流式语音合成协议实现，支持二进制音频数据流式传输。
+                <strong>双向流协议说明：</strong>本页面支持在同一WebSocket连接中连续发送多个文本片段进行合成，完美适配LLM逐词输出场景。每次点击"发送文本"都会在当前连接中进行新的合成。
             </div>
             
             <div class="form-row">
@@ -164,8 +164,15 @@ async def websocket_test_page():
             
             <div class="form-row">
                 <div class="form-group">
-                    <label>待合成文本:</label>
-                    <textarea id="text" placeholder="请输入要合成的文本">你好，欢迎使用阿里云流式语音合成服务！这是一个完整的WebSocket协议实现。</textarea>
+                    <label>当前文本片段:</label>
+                    <textarea id="text" placeholder="输入文本片段，支持连续发送多个片段">你好，这是第一个文本片段。</textarea>
+                </div>
+            </div>
+            
+            <div class="form-row">
+                <div class="form-group">
+                    <label>已发送的文本历史:</label>
+                    <div id="textHistory" style="background: #f8f9fa; border: 1px solid #ddd; padding: 10px; height: 80px; overflow-y: auto; font-size: 12px; border-radius: 4px;">等待发送文本...</div>
                 </div>
             </div>
             
@@ -222,7 +229,8 @@ async def websocket_test_page():
             </div>
             
             <div class="controls">
-                <button id="startBtn" onclick="startSynthesis()">🚀 开始合成</button>
+                <button id="connectBtn" onclick="connectWebSocket()">🔌 建立连接</button>
+                <button id="sendTextBtn" onclick="sendTextSegment()" disabled>📤 发送文本片段</button>
                 <button id="stopBtn" onclick="stopSynthesis()" disabled>🛑 停止合成</button>
                 <button onclick="clearLog()">🗑️ 清空日志</button>
                 <button onclick="downloadAudio()" id="downloadBtn" disabled>💾 下载音频</button>
@@ -246,6 +254,10 @@ async def websocket_test_page():
                 <div class="stat">
                     <div class="stat-value" id="connectionState">未连接</div>
                     <div class="stat-label">连接状态</div>
+                </div>
+                <div class="stat">
+                    <div class="stat-value" id="textSegments">0</div>
+                    <div class="stat-label">文本片段数</div>
                 </div>
             </div>
             
@@ -271,7 +283,9 @@ async def websocket_test_page():
             let startTime = null;
             let isConnected = false;
             let synthParams = null;
-            let autoStopAfterSentence = false;
+            let textSegmentsCount = 0;
+            let textHistory = [];
+            let connectionState = 'READY'; // READY, STARTED, COMPLETED
             
             // 生成UUID
             function generateUUID() {
@@ -318,7 +332,8 @@ async def websocket_test_page():
             function updateStats() {
                 document.getElementById('audioChunks').textContent = audioChunksCount;
                 document.getElementById('audioSize').textContent = (audioData.length / 1024).toFixed(1) + ' KB';
-                document.getElementById('connectionState').textContent = isConnected ? '已连接' : '未连接';
+                document.getElementById('connectionState').textContent = isConnected ? connectionState : '未连接';
+                document.getElementById('textSegments').textContent = textSegmentsCount;
                 
                 if (startTime) {
                     const duration = (Date.now() - startTime) / 1000;
@@ -331,10 +346,26 @@ async def websocket_test_page():
                 document.getElementById('log').innerHTML = '';
                 audioData = new Uint8Array(0);
                 audioChunksCount = 0;
+                textSegmentsCount = 0;
+                textHistory = [];
                 startTime = null;
                 updateStats();
+                updateTextHistory();
                 document.getElementById('audioPlayer').src = '';
                 document.getElementById('downloadBtn').disabled = true;
+            }
+            
+            // 更新文本历史显示
+            function updateTextHistory() {
+                const historyEl = document.getElementById('textHistory');
+                if (textHistory.length === 0) {
+                    historyEl.textContent = '等待发送文本...';
+                } else {
+                    historyEl.innerHTML = textHistory.map((text, index) => 
+                        `<div style="margin-bottom: 5px; padding: 3px; background: #e9ecef; border-radius: 3px;"><span style="color: #666; font-size: 10px;">[${index + 1}]</span> ${text}</div>`
+                    ).join('');
+                    historyEl.scrollTop = historyEl.scrollHeight;
+                }
             }
             
             // 连接合并数据
@@ -347,30 +378,25 @@ async def websocket_test_page():
                 updateStats();
             }
             
-            // 开始合成
-            async function startSynthesis() {
+            // 建立WebSocket连接
+            async function connectWebSocket() {
                 const wsUrl = document.getElementById('wsUrl').value;
                 const token = document.getElementById('token').value;
-                const text = document.getElementById('text').value;
                 
-                if (!text.trim()) {
-                    updateStatus('请输入待合成的文本', 'error');
+                if (isConnected) {
+                    updateStatus('WebSocket已连接', 'info');
                     return;
                 }
                 
                 try {
-                    // 准备连接头部
-                    const headers = {};
-                    if (token) {
-                        headers['X-NLS-Token'] = token;
-                    }
-                    
                     // 重置状态
                     audioData = new Uint8Array(0);
                     audioChunksCount = 0;
+                    textSegmentsCount = 0;
+                    textHistory = [];
                     startTime = Date.now();
                     taskId = generateUUID();
-                    autoStopAfterSentence = document.getElementById('autoStopAfterSentence').checked;
+                    connectionState = 'READY';
                     
                     updateStatus('正在连接WebSocket...', 'info');
                     log('开始连接WebSocket: ' + wsUrl, 'info');
@@ -382,7 +408,8 @@ async def websocket_test_page():
                     websocket.onopen = async () => {
                         isConnected = true;
                         updateStats();
-                        updateStatus('WebSocket连接成功，发送StartSynthesis', 'success');
+                        updateTextHistory();
+                        updateStatus('WebSocket连接成功，准备发送StartSynthesis', 'success');
                         log('✅ WebSocket连接成功', 'success');
                         
                         // 发送StartSynthesis
@@ -413,10 +440,12 @@ async def websocket_test_page():
                     
                     websocket.onclose = () => {
                         isConnected = false;
+                        connectionState = 'READY';
                         updateStats();
                         updateStatus('WebSocket连接已关闭', 'info');
                         log('WebSocket连接已关闭', 'info');
-                        document.getElementById('startBtn').disabled = false;
+                        document.getElementById('connectBtn').disabled = false;
+                        document.getElementById('sendTextBtn').disabled = true;
                         document.getElementById('stopBtn').disabled = true;
                         
                         // 如果有音频数据，生成播放文件
@@ -425,12 +454,45 @@ async def websocket_test_page():
                         }
                     };
                     
-                    document.getElementById('startBtn').disabled = true;
-                    document.getElementById('stopBtn').disabled = false;
+                    document.getElementById('connectBtn').disabled = true;
                     
                 } catch (e) {
                     updateStatus('连接失败: ' + e.message, 'error');
                     log('连接失败: ' + e.message, 'error');
+                }
+            }
+            
+            // 发送文本片段
+            async function sendTextSegment() {
+                const text = document.getElementById('text').value;
+                
+                if (!text.trim()) {
+                    updateStatus('请输入文本片段', 'error');
+                    return;
+                }
+                
+                if (!isConnected || connectionState !== 'STARTED') {
+                    updateStatus('WebSocket未连接或未开始合成', 'error');
+                    return;
+                }
+                
+                try {
+                    // 记录文本历史
+                    textHistory.push(text.trim());
+                    textSegmentsCount++;
+                    updateTextHistory();
+                    updateStats();
+                    
+                    // 发送RunSynthesis
+                    await sendRunSynthesis(text);
+                    
+                    // 清空输入框，准备下一个片段
+                    document.getElementById('text').value = '';
+                    document.getElementById('text').placeholder = '输入下一个文本片段...';
+                    
+                } catch (e) {
+                    updateStatus('发送文本失败: ' + e.message, 'error');
+                    log('发送文本失败: ' + e.message, 'error');
                 }
             }
             
@@ -445,9 +507,13 @@ async def websocket_test_page():
                 switch (name) {
                     case 'SynthesisStarted':
                         if (status === 20000000) {
-                            updateStatus('合成已开始，发送RunSynthesis', 'success');
+                            connectionState = 'STARTED';
+                            updateStatus('合成已开始，可以发送文本片段', 'success');
                             log('✅ 合成已开始', 'success');
-                            await sendRunSynthesis();
+                            updateStats();
+                            // 启用发送文本按钮
+                            document.getElementById('sendTextBtn').disabled = false;
+                            document.getElementById('stopBtn').disabled = false;
                         } else {
                             throw new Error('SynthesisStarted失败: ' + header.status_message);
                         }
@@ -463,21 +529,15 @@ async def websocket_test_page():
                         break;
                         
                     case 'SentenceEnd':
-                        updateStatus('句子合成结束，等待更多数据...', 'info');
+                        updateStatus('句子合成结束，可以继续发送文本片段', 'info');
                         log('✅ 句子结束', 'success');
-                        
-                        // 检查是否启用自动停止
-                        if (autoStopAfterSentence) {
-                            log('🔄 自动停止已启用，正在断开连接...', 'info');
-                            if (websocket) {
-                                websocket.close();
-                            }
-                        }
                         break;
                         
                     case 'SynthesisCompleted':
+                        connectionState = 'COMPLETED';
                         updateStatus('合成完成！', 'success');
                         log('🎉 合成完成', 'success');
+                        updateStats();
                         if (websocket) {
                             websocket.close();
                         }
@@ -531,9 +591,7 @@ async def websocket_test_page():
             }
             
             // 发送RunSynthesis
-            async function sendRunSynthesis() {
-                const text = document.getElementById('text').value;
-                
+            async function sendRunSynthesis(text) {
                 const message = {
                     header: {
                         message_id: generateMessageId(),
@@ -552,7 +610,7 @@ async def websocket_test_page():
             
             // 停止合成
             async function stopSynthesis() {
-                if (websocket && taskId) {
+                if (websocket && taskId && connectionState === 'STARTED') {
                     const message = {
                         header: {
                             message_id: generateMessageId(),
@@ -565,6 +623,12 @@ async def websocket_test_page():
                     websocket.send(JSON.stringify(message));
                     log('→ 发送StopSynthesis', 'info');
                     updateStatus('正在停止合成...', 'info');
+                    
+                    // 禁用发送按钮
+                    document.getElementById('sendTextBtn').disabled = true;
+                    document.getElementById('stopBtn').disabled = true;
+                } else {
+                    updateStatus('没有正在进行的合成任务', 'warning');
                 }
             }
             
@@ -692,8 +756,17 @@ async def websocket_test_page():
             // 页面加载完成
             window.onload = function() {
                 updateStats();
+                updateTextHistory();
                 loadVoices();
-                log('阿里云WebSocket流式语音合成测试页面已加载', 'success');
+                log('阿里云双向流式WebSocket语音合成测试页面已加载', 'success');
+                
+                // 回车键快捷发送
+                document.getElementById('text').addEventListener('keydown', function(event) {
+                    if (event.key === 'Enter' && !event.shiftKey) {
+                        event.preventDefault();
+                        sendTextSegment();
+                    }
+                });
             };
             
             // 页面卸载时关闭连接

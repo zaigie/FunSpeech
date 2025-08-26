@@ -81,3 +81,7 @@ def create_app() -> FastAPI:
         }
 
     return app
+
+
+# 创建全局应用实例
+app = create_app()

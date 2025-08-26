@@ -30,8 +30,8 @@ logger = logging.getLogger(__name__)
 class ConnectionState(IntEnum):
     """连接状态"""
     READY = 1           # 准备就绪
-    STARTED = 2         # 已开始合成
-    COMPLETED = 3       # 已完成
+    STARTED = 2         # 已开始合成，可以处理多次RunSynthesis
+    COMPLETED = 3       # 已完成，只有收到StopSynthesis才会到达此状态
 
 
 class AliyunWebSocketTTSService:
@@ -136,10 +136,11 @@ class AliyunWebSocketTTSService:
                                 await self._send_task_failed(websocket, task_id, "Task ID not match")
                                 continue
                             
-                            # 执行流式合成
+                            # 执行流式合成 - 支持多次调用
                             text = data.get('payload', {}).get('text', '')
                             if text and synthesis_params:
                                 await self._run_synthesis(websocket, task_id, session_id, text, synthesis_params)
+                                # 注意：state保持STARTED，允许后续继续发送RunSynthesis
                             else:
                                 await self._send_task_failed(websocket, task_id, "Missing text in RunSynthesis")
                         else:
