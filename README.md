@@ -2,7 +2,7 @@
 
 ![FunSpeech](./docs/images/banner.png)
 
-  <h3>实现本地私有化部署的阿里云语音服务</h3>
+  <h3>开箱即用的本地私有化部署的阿里云语音服务</h3>
 
 基于 FunASR 和 CosyVoice 的语音处理 API 服务，提供语音识别（ASR）和语音合成（TTS）功能，与阿里云语音 API 完全兼容，且支持 Websocket 流式 TTS 协议。
 
@@ -45,7 +45,7 @@ docker-compose up -d
 
 > 💡 详细部署说明请查看 [部署指南](./docs/deployment.md)
 
-对于要使用和下载的模型，您可以在运行中动态下载，也可以提前从 ModelScope 下载后映射，需要的模型在 [支持的模型](#-支持的模型)
+对于要使用和下载的模型，您可以在运行中动态下载，也可以提前从 ModelScope 下载后映射，需要的模型在 [支持的模型](#-支持的模型) ，同时注意提前规划好存储空间以免存储空间不足无法下载～
 
 ### 本地开发
 
@@ -377,21 +377,25 @@ python -m app.services.tts.clone.voice_manager --refresh        # 刷新音色�
 
 - **Paraformer Large** - 高精度中文识别（默认）
   - [ModelScope](https://www.modelscope.cn/models/iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch)
+  - 占用大小：**约 850MB**
 - **SenseVoice Small** - 高精度多语言混合识别、情感辨识和音频事件检测
   - [ModelScope](https://www.modelscope.cn/models/iic/SenseVoiceSmall)
+  - 占用大小：**约 900MB**
 
 **Dolphin 系列：**
 
 - **Dolphin Small** - 多语言、多方言识别模型
   - [ModelScope](https://www.modelscope.cn/models/DataoceanAI/dolphin-small)
-  - [Github](https://github.com/DataoceanAI/Dolphin)
+  - 占用大小：**约 1.4GB**
 
 ### TTS 模型
 
 - **CosyVoice-300M-SFT** - CosyVoice1 预训练音色模型
   - [ModelScope](https://www.modelscope.cn/models/iic/CosyVoice-300M-SFT)
+  - 占用大小：**约 5.4GB**
 - **CosyVoice2-0.5B** - CosyVoice2 音色克隆模型
   - [ModelScope](https://www.modelscope.cn/models/iic/CosyVoice2-0.5B)
+  - 占用大小：**约 5.5GB**
 
 ### PUNC 模型
 
@@ -399,11 +403,15 @@ python -m app.services.tts.clone.voice_manager --refresh        # 刷新音色�
 
 [ModelScope](https://www.modelscope.cn/models/iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch)
 
+占用大小：**约 290MB**
+
 ### VAD 模型
 
 **语音活动检测模型**用于检测音频中的语音片段，过滤静音和噪音，提高识别准确率。
 
 [ModelScope](https://www.modelscope.cn/models/iic/speech_fsmn_vad_zh-cn-16k-common-pytorch)
+
+占用大小：**约 4MB**
 
 ## 📋 响应格式
 
