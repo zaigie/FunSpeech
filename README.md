@@ -2,7 +2,7 @@
 
 ![FunSpeech](./docs/images/banner.png)
 
-  <h3>开箱即用的本地私有化部署的阿里云语音服务</h3>
+  <h3>开箱即用的本地私有化部署语音服务</h3>
 
 基于 FunASR 和 CosyVoice 的语音处理 API 服务，提供语音识别（ASR）和语音合成（TTS）功能，与阿里云语音 API 完全兼容，且支持 Websocket 流式 TTS 协议。
 
