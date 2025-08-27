@@ -22,7 +22,7 @@ docker-compose up -d
 
 ```bash
 docker run -d \
-  --name funspeech-api \
+  --name funspeech \
   -p 8000:8000 \
   -v ~/.cache/modelscope:/root/.cache/modelscope \
   -v $(pwd)/data:/app/temp \
@@ -119,7 +119,7 @@ services:
 
 ```bash
 # 检查 GPU 是否被识别
-docker exec -it funspeech-api nvidia-smi
+docker exec -it funspeech nvidia-smi
 
 # 查看服务日志确认 GPU 使用
 docker-compose logs | grep -i cuda
@@ -145,13 +145,13 @@ mkdir -p ./voices
 cp 张三.wav 张三.txt ./voices/
 
 # 进入容器添加音色
-docker exec -it funspeech-api python -m app.services.tts.clone.voice_manager --add
+docker exec -it funspeech python -m app.services.tts.clone.voice_manager --add
 ```
 
 **步骤 3：验证和使用**
 ```bash
 # 查看所有音色
-docker exec -it funspeech-api python -m app.services.tts.clone.voice_manager --list
+docker exec -it funspeech python -m app.services.tts.clone.voice_manager --list
 
 # 测试新音色
 curl -X POST "http://localhost:8000/stream/v1/tts" \
@@ -177,7 +177,7 @@ curl -X POST "http://localhost:8000/stream/v1/tts" \
 
 ```bash
 # 进入容器后可用的管理命令
-docker exec -it funspeech-api python -m app.services.tts.clone.voice_manager \
+docker exec -it funspeech python -m app.services.tts.clone.voice_manager \
   --list                    # 查看所有音色
   --list-clone             # 仅查看克隆音色
   --add                    # 添加新音色
@@ -223,10 +223,10 @@ docker-compose logs --tail=100
 
 ```bash
 # 容器资源使用情况
-docker stats funspeech-api
+docker stats funspeech
 
 # 容器详细信息
-docker inspect funspeech-api
+docker inspect funspeech
 
 # 磁盘使用情况
 du -sh ./data ./logs ./voices ~/.cache/modelscope
@@ -260,7 +260,7 @@ cp .env .env.backup
 
 ```bash
 # 清理临时文件
-docker exec -it funspeech-api rm -rf /app/temp/*
+docker exec -it funspeech rm -rf /app/temp/*
 
 # 重启服务
 docker-compose restart
@@ -290,7 +290,7 @@ echo "DEBUG=true" >> .env
 docker-compose up -d
 
 # 进入容器调试
-docker exec -it funspeech-api /bin/bash
+docker exec -it funspeech /bin/bash
 
 # 查看详细日志
 docker-compose logs -f | grep -E "(ERROR|WARNING|DEBUG)"
