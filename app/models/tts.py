@@ -272,7 +272,7 @@ class VoiceListResponse(BaseModel):
     class Config:
         json_schema_extra = {
             "example": {
-                "voices": ["中文女", "中文男", "安翘楚", "活力女孩"],
+                "voices": ["中文女", "中文男", "活力女孩"],
                 "total": 4,
             }
         }
@@ -320,7 +320,7 @@ class VoiceRefreshResponse(BaseModel):
         json_schema_extra = {
             "example": {
                 "message": "特征音色配置已刷新",
-                "voices": ["中文女", "中文男", "安翘楚", "活力女孩"],
+                "voices": ["中文女", "中文男", "活力女孩"],
                 "total": 4,
                 "added": ["新音色1"],
                 "removed": ["旧音色1"],
