@@ -17,6 +17,8 @@
 - **消息格式**: JSON + 二进制音频流
 - **测试页面**: `http://localhost:8000/ws/v1/tts/test`
 
+![测试页面](./images/wss_page.png)
+
 ## 鉴权
 
 支持通过WebSocket Header进行可选鉴权：

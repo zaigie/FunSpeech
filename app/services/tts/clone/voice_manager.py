@@ -90,7 +90,7 @@ class VoiceManager:
         import types
 
         def custom_save_spkinfo(cosyvoice_self):
-            """自定义的save_spkinfo方法，保存到clone/spk目录"""
+            """自定义的save_spkinfo方法，保存到voices/spk目录"""
             import torch
 
             try:

@@ -1,11 +1,13 @@
 # FunSpeech
 
-基于 FunASR 和 CosyVoice 的语音处理 API 服务，提供语音识别（ASR）和语音合成（TTS）功能，与阿里云语音 API 完全兼容。
+实现本地私有化部署的阿里云语音服务。
+
+基于 FunASR 和 CosyVoice 的语音处理 API 服务，提供语音识别（ASR）和语音合成（TTS）功能，与阿里云语音 API 完全兼容，且支持Websocket流式TTS协议。
 
 ## ✨ 主要特性
 
 - **🚀 多模型支持** - 集成 FunASR、Dolphin、CosyVoice 等多种高质量模型
-- **🌐 完全 API 兼容** - 支持阿里云语音 API 和 OpenAI TTS API 格式
+- **🌐 完全 API 兼容** - 支持阿里云语音 API 和 OpenAI TTS API 格式，及Websocket流式TTS协议
 - **🎭 智能音色管理** - 支持预训练音色和自定义克隆音色
 - **🔧 灵活配置** - 统一的配置系统，支持环境变量和文件配置
 - **🛡️ 安全鉴权** - 完善的身份认证和权限控制
@@ -38,11 +40,11 @@ docker-compose up -d
 
 ```bash
 # 克隆项目
-git clone <repository-url>
 cd FunSpeech
 git submodule update --init --recursive
 
 # 安装依赖
+pip install -r app/services/tts/third_party/CosyVoice/requirements.txt
 pip install -r requirements.txt
 
 # 启动服务
@@ -276,7 +278,8 @@ python tests/test_aliyun_websocket.py --voice "中文女" --format PCM
 
 **添加新音色：**
 ```bash
-# 1. 将音频文件 (*.wav) 和文本文件 (*.txt) 放入 app/services/tts/clone/ 目录
+# 1. 将音频文件 (*.wav) 和文本文件 (*.txt) 放入 voices 目录
+mkdir -p ./voices
 # 2. 运行音色管理工具
 python -m app.services.tts.clone.voice_manager --add
 
@@ -337,12 +340,12 @@ python -m app.services.tts.clone.voice_manager --refresh        # 刷新音色�
 - **SenseVoice Small** - 高精度多语言混合识别、情感辨识和音频事件检测
 
 **Dolphin 系列：**
-- **Dolphin Small** - 多语言、多方言识别模型
+- **Dolphin Small** - 多语言、多方言识别模型 => [Github](https://github.com/DataoceanAI/Dolphin)
 
 ### TTS 模型
 
-- **CosyVoice-300M-SFT** - 预训练音色模型
-- **CosyVoice2-0.5B** - 音色克隆模型
+- **CosyVoice-300M-SFT** - CosyVoice1预训练音色模型
+- **CosyVoice2-0.5B** - CosyVoice2音色克隆模型
 
 ## 📋 响应格式
 
