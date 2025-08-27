@@ -45,6 +45,8 @@ docker-compose up -d
 
 > 💡 详细部署说明请查看 [部署指南](./docs/deployment.md)
 
+对于要使用和下载的模型，您可以在运行中动态下载，也可以提前从 ModelScope 下载后映射，需要的模型在 [支持的模型](#-支持的模型)
+
 ### 本地开发
 
 **系统要求：**
@@ -374,16 +376,34 @@ python -m app.services.tts.clone.voice_manager --refresh        # 刷新音色�
 **FunASR 系列：**
 
 - **Paraformer Large** - 高精度中文识别（默认）
+  - [ModelScope](https://www.modelscope.cn/models/iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch)
 - **SenseVoice Small** - 高精度多语言混合识别、情感辨识和音频事件检测
+  - [ModelScope](https://www.modelscope.cn/models/iic/SenseVoiceSmall)
 
 **Dolphin 系列：**
 
-- **Dolphin Small** - 多语言、多方言识别模型 => [Github](https://github.com/DataoceanAI/Dolphin)
+- **Dolphin Small** - 多语言、多方言识别模型
+  - [ModelScope](https://www.modelscope.cn/models/DataoceanAI/dolphin-small)
+  - [Github](https://github.com/DataoceanAI/Dolphin)
 
 ### TTS 模型
 
 - **CosyVoice-300M-SFT** - CosyVoice1 预训练音色模型
+  - [ModelScope](https://www.modelscope.cn/models/iic/CosyVoice-300M-SFT)
 - **CosyVoice2-0.5B** - CosyVoice2 音色克隆模型
+  - [ModelScope](https://www.modelscope.cn/models/iic/CosyVoice2-0.5B)
+
+### PUNC 模型
+
+**标点符号预测模型**用于为语音识别结果自动添加标点符号，提高文本的可读性。
+
+[ModelScope](https://www.modelscope.cn/models/iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch)
+
+### VAD 模型
+
+**语音活动检测模型**用于检测音频中的语音片段，过滤静音和噪音，提高识别准确率。
+
+[ModelScope](https://www.modelscope.cn/models/iic/speech_fsmn_vad_zh-cn-16k-common-pytorch)
 
 ## 📋 响应格式
 
