@@ -80,13 +80,13 @@ class TTSRequest(BaseModel):
 
     format: Optional[AudioFormat] = Field(
         "wav",
-        description="输出音频格式。支持: pcm, wav, opus, speex, amr, mp3, aac, m4a, flac, ogg",
+        description=f"输出音频格式。支持: {', '.join(AudioFormat.get_enums())}",
         example="wav",
     )
 
     sample_rate: Optional[SampleRate] = Field(
         22050,
-        description="音频采样率（Hz）。支持: 8000, 16000, 22050, 24000, 44100, 48000。预设音色默认22050，克隆音色默认24000",
+        description=f"音频采样率（Hz）。支持: {', '.join(map(str, SampleRate.get_enums()))}。预设音色默认22050，克隆音色默认24000",
         example=22050,
     )
 

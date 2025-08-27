@@ -24,6 +24,7 @@ from ..core.exceptions import (
     InvalidMessageException,
     DefaultServerErrorException,
 )
+from ..models.common import SampleRate, AudioFormat
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ def validate_audio_format(format_str: Optional[str]) -> bool:
 
     # 统一转换为小写进行比较
     format_lower = format_str.lower()
-    supported_formats = [fmt.lower() for fmt in settings.SUPPORTED_AUDIO_FORMATS]
+    supported_formats = [fmt.lower() for fmt in AudioFormat.get_enums()]
 
     return format_lower in supported_formats
 
@@ -45,7 +46,7 @@ def validate_sample_rate(sample_rate: Optional[int]) -> bool:
     if not sample_rate:
         return True  # 如果未指定采样率，允许通过
 
-    return sample_rate in settings.SUPPORTED_SAMPLE_RATES
+    return sample_rate in SampleRate.get_enums()
 
 
 def download_audio_from_url(url: str, max_size: int = None) -> bytes:

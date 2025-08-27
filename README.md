@@ -25,7 +25,7 @@ docker-compose up -d
 
 服务将在 `http://localhost:8000` 启动
 
-> 💡 详细部署说明请查看 [DEPLOYMENT.md](./DEPLOYMENT.md)
+> 💡 详细部署说明请查看 [部署指南](./docs/deployment.md)
 
 ### 本地开发
 
@@ -311,7 +311,7 @@ python -m app.services.tts.clone.voice_manager --refresh        # 刷新音色�
 |------|------|--------|------|
 | `customization_id` | String | paraformer-large | ASR 模型 ID |
 | `format` | String | - | 音频格式 (wav, mp3, aac 等) |
-| `sample_rate` | Integer | 16000 | 采样率 (8000-48000) |
+| `sample_rate` | Integer | 16000 | 采样率 (8000-24000) |
 | `enable_punctuation_prediction` | Boolean | false | 是否添加标点 |
 | `enable_inverse_text_normalization` | Boolean | false | 中文数字转换 |
 | `audio_address` | String | - | 音频文件链接 |
@@ -437,4 +437,4 @@ python -m app.services.tts.clone.voice_manager --refresh        # 刷新音色�
 
 如有问题或建议，请通过以下方式联系：
 - 提交 [Issue](../../issues)
-- 查看 [DEPLOYMENT.md](./DEPLOYMENT.md) 部署指南
+- 查看 [部署指南](./docs/deployment.md)

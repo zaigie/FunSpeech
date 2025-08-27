@@ -152,6 +152,7 @@ class CosyVoiceTTSEngine:
             if self._voice_manager and self._voice_manager.is_voice_available(voice):
                 # 检查是否在克隆音色列表中
                 if voice in self._voice_manager.list_clone_voices():
+                    sample_rate = 24000
                     logger.info(f"使用克隆音色模型合成: {voice}")
                     return self._synthesize_with_saved_voice(
                         text, voice, speed, format, sample_rate, volume, prompt

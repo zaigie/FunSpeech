@@ -57,21 +57,6 @@ class Settings:
     MAX_AUDIO_SIZE: int = 100 * 1024 * 1024  # 100MB
     MAX_TEXT_LENGTH: int = 1000  # 最大文本长度
 
-    # 支持的音频格式和采样率
-    SUPPORTED_AUDIO_FORMATS: List[str] = [
-        "pcm",
-        "wav",
-        "opus",
-        "speex",
-        "amr",
-        "mp3",
-        "aac",
-        "m4a",
-        "flac",
-        "ogg",
-    ]
-    SUPPORTED_SAMPLE_RATES: List[int] = [8000, 16000, 22050, 24000, 44100, 48000]
-
     # TTS预设音色列表
     PRESET_VOICES: List[str] = [
         "中文女",

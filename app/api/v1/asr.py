@@ -31,6 +31,7 @@ from ...core.security import (
     validate_request_appkey,
     mask_sensitive_data,
 )
+from ...models.common import SampleRate, AudioFormat
 from ...models.asr import (
     ASRResponse,
     ASRHealthCheckResponse,
@@ -107,22 +108,11 @@ async def get_asr_params(request: Request) -> ASRQueryParams:
                 "required": False,
                 "schema": {
                     "type": "string",
-                    "enum": [
-                        "pcm",
-                        "wav",
-                        "opus",
-                        "speex",
-                        "amr",
-                        "mp3",
-                        "aac",
-                        "m4a",
-                        "flac",
-                        "ogg",
-                    ],
+                    "enum": AudioFormat.get_enums(),
                     "default": "pcm",
                     "example": "pcm",
                 },
-                "description": "音频格式。支持: pcm, wav, opus, speex, amr, mp3, aac, m4a, flac, ogg。仅在使用audio_address参数时生效，使用二进制音频流时默认为wav格式",
+                "description": f"音频格式。支持: {', '.join(AudioFormat.get_enums())}。仅在使用audio_address参数时生效，使用二进制音频流时默认为wav格式",
             },
             {
                 "name": "sample_rate",
@@ -130,11 +120,11 @@ async def get_asr_params(request: Request) -> ASRQueryParams:
                 "required": False,
                 "schema": {
                     "type": "integer",
-                    "enum": [8000, 16000, 22050, 44100, 48000],
+                    "enum": SampleRate.get_enums(),
                     "default": 16000,
                     "example": 16000,
                 },
-                "description": "音频采样率（Hz）。支持: 8000, 16000, 22050, 44100, 48000",
+                "description": f"音频采样率（Hz）。支持: {', '.join(map(str, SampleRate.get_enums()))}",
             },
             {
                 "name": "vocabulary_id",
@@ -263,14 +253,14 @@ async def asr_transcribe(
         # 验证format参数（如果指定了的话）
         if params.format and not validate_audio_format(params.format):
             raise InvalidParameterException(
-                f"不支持的音频格式: {params.format}。支持的格式: {', '.join(settings.SUPPORTED_AUDIO_FORMATS)}",
+                f"不支持的音频格式: {params.format}。支持的格式: {', '.join(AudioFormat.get_enums())}",
                 task_id,
             )
 
         # 验证sample_rate参数
         if params.sample_rate and not validate_sample_rate(params.sample_rate):
             raise InvalidParameterException(
-                f"不支持的采样率: {params.sample_rate}。支持的采样率: {', '.join(map(str, settings.SUPPORTED_SAMPLE_RATES))}",
+                f"不支持的采样率: {params.sample_rate}。支持的采样率: {', '.join(map(str, SampleRate.get_enums()))}",
                 task_id,
             )
 

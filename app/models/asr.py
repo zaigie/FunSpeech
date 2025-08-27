@@ -32,13 +32,13 @@ class ASRQueryParams(BaseModel):
 
     format: Optional[AudioFormat] = Field(
         "pcm",
-        description="音频格式。支持: pcm, wav, opus, speex, amr, mp3, aac, m4a, flac, ogg。仅在使用audio_address参数时生效，使用二进制音频流时默认为wav格式",
+        description=f"音频格式。支持: {', '.join(AudioFormat.get_enums())}。仅在使用audio_address参数时生效，使用二进制音频流时默认为wav格式",
         example="pcm",
     )
 
     sample_rate: Optional[SampleRate] = Field(
         16000,
-        description="音频采样率（Hz）。支持: 8000, 16000, 22050, 44100, 48000",
+        description=f"音频采样率（Hz）。支持: {', '.join(map(str, SampleRate.get_enums()))}",
         example=16000,
     )
 

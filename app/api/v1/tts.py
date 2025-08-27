@@ -30,6 +30,7 @@ from ...models.tts import (
     VoiceRefreshResponse,
     TTSRequest,
 )
+from ...models.common import SampleRate, AudioFormat
 from ...utils.common import (
     generate_task_id,
     validate_text_input,
@@ -187,27 +188,16 @@ def format_tts_response(
                             },
                             "format": {
                                 "type": "string",
-                                "description": "输出音频格式。支持: pcm, wav, opus, speex, amr, mp3, aac, m4a, flac, ogg",
+                                "description": f"输出音频格式。支持: {', '.join(AudioFormat.get_enums())}",
                                 "example": "wav",
-                                "enum": [
-                                    "pcm",
-                                    "wav",
-                                    "opus",
-                                    "speex",
-                                    "amr",
-                                    "mp3",
-                                    "aac",
-                                    "m4a",
-                                    "flac",
-                                    "ogg",
-                                ],
+                                "enum": AudioFormat.get_enums(),
                                 "default": "wav",
                             },
                             "sample_rate": {
                                 "type": "integer",
-                                "description": "音频采样率（Hz）。支持: 8000, 16000, 22050, 24000, 44100, 48000。预设音色默认22050，克隆音色默认24000",
+                                "description": f"音频采样率（Hz）。支持: {', '.join(map(str, SampleRate.get_enums()))}。预设音色默认22050，克隆音色默认24000",
                                 "example": 22050,
-                                "enum": [8000, 16000, 22050, 24000, 44100, 48000],
+                                "enum": SampleRate.get_enums(),
                                 "default": 22050,
                             },
                             "prompt": {
@@ -252,7 +242,7 @@ async def synthesize_speech(
         # 验证format参数
         if tts_request.format and not validate_audio_format(tts_request.format):
             raise InvalidParameterException(
-                f"不支持的音频格式: {tts_request.format}。支持的格式: {', '.join(settings.SUPPORTED_AUDIO_FORMATS)}",
+                f"不支持的音频格式: {tts_request.format}。支持的格式: {', '.join(AudioFormat.get_enums())}",
                 task_id,
             )
 
@@ -261,7 +251,7 @@ async def synthesize_speech(
             tts_request.sample_rate
         ):
             raise UnsupportedSampleRateException(
-                f"不支持的采样率: {tts_request.sample_rate}。支持的采样率: {', '.join(map(str, settings.SUPPORTED_SAMPLE_RATES))}",
+                f"不支持的采样率: {tts_request.sample_rate}。支持的采样率: {', '.join(map(str, SampleRate.get_enums()))}",
                 task_id,
             )
 
@@ -279,33 +269,14 @@ async def synthesize_speech(
         # 清理文本
         clean_text = clean_text_for_tts(tts_request.text)
 
-        # 获取TTS引擎
+        # 获取TTS引擎并合成
         tts_engine = get_tts_engine()
-
-        # 根据音色类型设置默认采样率
-        sample_rate = tts_request.sample_rate
-        if sample_rate is None:
-            # 检查是否为克隆音色
-            if (
-                tts_engine._voice_manager
-                and tts_engine._voice_manager.is_voice_available(tts_request.voice)
-            ):
-                if tts_request.voice in tts_engine._voice_manager.list_clone_voices():
-                    # CosyVoice2使用24000采样率（默认）
-                    sample_rate = 24000
-                else:
-                    # CosyVoice1使用22050采样率（默认）
-                    sample_rate = 22050
-            else:
-                sample_rate = 22050
-
-        # 获取TTS引擎并合成（Engine层会自动判断音色类型）
         output_path = tts_engine.synthesize_speech(
             clean_text,
             tts_request.voice,
             speed,
             tts_request.format,
-            sample_rate,
+            tts_request.sample_rate,
             tts_request.volume,
             tts_request.prompt or "",
         )
@@ -364,16 +335,17 @@ async def get_voice_list(request: Request) -> JSONResponse:
     try:
         # 使用懒加载的方式获取音色列表
         from app.core.config import settings
-        
+
         # 直接返回预设音色，避免触发TTS引擎初始化
         preset_voices = settings.PRESET_VOICES.copy()
-        
+
         # 尝试从音色管理器的注册表获取克隆音色（不触发模型加载）
         try:
             from app.services.tts.clone import VoiceManager
+
             voice_manager = VoiceManager()  # 不传入cosyvoice实例，避免模型加载
             clone_voices = voice_manager.list_clone_voices()
-            
+
             # 合并音色列表
             for voice in clone_voices:
                 if voice not in preset_voices:

@@ -23,6 +23,10 @@ class AudioFormat(str, Enum):
     FLAC = "flac"
     OGG = "ogg"
 
+    @classmethod
+    def get_enums(cls):
+        return [e.value for e in cls]
+
 
 class SampleRate(int, Enum):
     """支持的采样率"""
@@ -30,8 +34,11 @@ class SampleRate(int, Enum):
     RATE_8000 = 8000
     RATE_16000 = 16000
     RATE_22050 = 22050
-    RATE_44100 = 44100
-    RATE_48000 = 48000
+    RATE_24000 = 24000
+
+    @classmethod
+    def get_enums(cls):
+        return [e.value for e in cls]
 
 
 class BaseResponse(BaseModel):
