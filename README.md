@@ -10,7 +10,7 @@
 
 ![Static Badge](https://img.shields.io/badge/Python-3.10+-blue?logo=python)
 ![Static Badge](https://img.shields.io/badge/Torch-2.3.1-%23EE4C2C?logo=pytorch&logoColor=white)
-![Static Badge](https://img.shields.io/badge/CUDA-12.4+-%2376B900?logo=nvidia&logoColor=white)
+![Static Badge](https://img.shields.io/badge/CUDA-11.8+-%2376B900?logo=nvidia&logoColor=white)
 
   <div style="margin: 30px 0;">
     <h3>强劲动力来自</h3>
@@ -43,6 +43,8 @@ docker-compose up -d
 
 服务将在 `http://localhost:8000` 启动
 
+GPU 部署请将 docker-compose.yml 文件中的 image 替换为 **docker.cnb.cool/nexa/funspeech:gpu-latest**
+
 > 💡 详细部署说明请查看 [部署指南](./docs/deployment.md)
 
 对于要使用和下载的模型，您可以在运行中动态下载，也可以提前从 ModelScope 下载后映射，需要的模型在 [支持的模型](#-支持的模型) ，同时注意提前规划好存储空间以免存储空间不足无法下载～
@@ -52,7 +54,7 @@ docker-compose up -d
 **系统要求：**
 
 - Python 3.10+
-- CUDA 12.4+（可选，用于 GPU 加速）
+- CUDA 11.8+（可选，用于 GPU 加速）
 - FFmpeg（音频格式转换）
 
 **安装步骤：**

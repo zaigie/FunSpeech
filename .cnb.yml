@@ -6,23 +6,20 @@ $:
       env:
         IMAGE_NAME: ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}
       stages:
-        - name: 获取最新标签
-          script: git fetch --tags &>/dev/null; git describe --tags --abbrev=0
-          exports:
-            code: REPO_LATEST_TAG_CODE
-            info: REPO_LATEST_TAG
         - name: 镜像构建信息
           script:
-            - echo "即将构建镜像：${IMAGE_NAME}:${REPO_LATEST_TAG}"
+            - echo "即将构建镜像：${IMAGE_NAME}:latest"
+            - echo "即将构建镜像：${IMAGE_NAME}:gpu-latest"
             - echo "推送到制品库：${IMAGE_NAME}"
         - name: 登录制品库
           script: docker login -u ${CNB_TOKEN_USER_NAME} -p "${CNB_TOKEN}" ${CNB_DOCKER_REGISTRY}
-        - name: 构建镜像
-          script: docker build -t ${IMAGE_NAME}:${REPO_LATEST_TAG} .
+        - name: 构建CPU版本镜像
+          script: docker build -t ${IMAGE_NAME}:latest -f Dockerfile .
           timeout: 60m
-        - name: 标签latest镜像
-          script: docker tag ${IMAGE_NAME}:${REPO_LATEST_TAG} ${IMAGE_NAME}:latest
+        - name: 构建GPU版本镜像
+          script: docker build -t ${IMAGE_NAME}:gpu-latest -f Dockerfile.gpu .
+          timeout: 60m
         - name: 推送镜像
           script:
-            - docker push ${IMAGE_NAME}:${REPO_LATEST_TAG}
             - docker push ${IMAGE_NAME}:latest
+            - docker push ${IMAGE_NAME}:gpu-latest

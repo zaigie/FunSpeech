@@ -1,6 +1,5 @@
 services:
   funspeech:
-    # build: .
     image: docker.cnb.cool/nexa/funspeech:latest
     container_name: funspeech
     ports:
@@ -25,11 +24,11 @@ services:
       # - APPKEY=your_app_key
     restart: unless-stopped
     
-    # GPU支持（如果需要，取消注释以下配置）
+    # GPU支持（如果需要，取消注释以下配置并将image替换为docker.cnb.cool/nexa/funspeech:gpu-latest）
     # deploy:
     #   resources:
     #     reservations:
     #       devices:
     #         - driver: nvidia
-    #           count: 1
+    #           count: all
     #           capabilities: [gpu]
