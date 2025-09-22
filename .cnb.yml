@@ -16,10 +16,10 @@ $:
         - name: 构建CPU版本镜像
           script: docker build -t ${IMAGE_NAME}:latest -f Dockerfile .
           timeout: 60m
+        - name: 推送CPU版本镜像
+          script: docker push ${IMAGE_NAME}:latest
         - name: 构建GPU版本镜像
           script: docker build -t ${IMAGE_NAME}:gpu-latest -f Dockerfile.gpu .
           timeout: 60m
-        - name: 推送镜像
-          script:
-            - docker push ${IMAGE_NAME}:latest
-            - docker push ${IMAGE_NAME}:gpu-latest
+        - name: 推送GPU版本镜像
+          script: docker push ${IMAGE_NAME}:gpu-latest
