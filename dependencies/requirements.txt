@@ -13,3 +13,4 @@ datasets==4.0.0
 dataoceanai-dolphin==20250716
 numpy==1.23.5
 scipy==1.15.3
+httpx==0.28.1
