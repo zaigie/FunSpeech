@@ -8,7 +8,9 @@ services:
       # 模型缓存目录（ModelScope默认缓存路径）
       - ~/.cache/modelscope:/root/.cache/modelscope
       # 临时文件目录（ASR和TTS共用）
-      - ./data:/app/temp
+      - ./temp:/app/temp
+      # 数据持久化目录（数据库等）
+      - ./data:/app/data
       # 日志目录
       - ./logs:/app/logs
       # 零样本音色文件目录（用户数据）

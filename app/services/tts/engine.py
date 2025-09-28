@@ -5,7 +5,7 @@ TTS引擎模块
 
 import sys
 import logging
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Union, Tuple, Optional
 from pathlib import Path
 
 from ...core.config import settings
@@ -153,7 +153,8 @@ class CosyVoiceTTSEngine:
         sample_rate: int = 22050,
         volume: int = 50,
         prompt: str = "",
-    ) -> str:
+        return_timestamps: bool = False,
+    ) -> Union[str, Tuple[str, Optional[List[Dict[str, Any]]]]]:
         """语音合成（自动判断音色类型）"""
         try:
             # 检查是否为零样本克隆音色
@@ -163,12 +164,12 @@ class CosyVoiceTTSEngine:
                     sample_rate = 24000
                     logger.info(f"使用零样本克隆音色模型合成: {voice}")
                     return self._synthesize_with_saved_voice(
-                        text, voice, speed, format, sample_rate, volume, prompt
+                        text, voice, speed, format, sample_rate, volume, prompt, return_timestamps
                     )
 
             # 使用预训练音色合成
             return self.synthesize_with_preset_voice(
-                text, voice, speed, format, sample_rate, volume
+                text, voice, speed, format, sample_rate, volume, return_timestamps
             )
 
         except Exception as e:
@@ -182,7 +183,8 @@ class CosyVoiceTTSEngine:
         format: str = "wav",
         sample_rate: int = 22050,
         volume: int = 50,
-    ) -> str:
+        return_timestamps: bool = False,
+    ) -> Union[str, Tuple[str, Optional[List[Dict[str, Any]]]]]:
         """使用预设音色合成语音"""
         # 检查SFT模型是否可用
         if not self.cosyvoice_sft:
@@ -200,25 +202,65 @@ class CosyVoiceTTSEngine:
             f"使用预训练音色模型合成: {voice}, 格式: {format}, 采样率: {sample_rate}"
         )
 
-        # 收集所有音频片段
-        audio_segments = []
-        for audio_data in self.cosyvoice_sft.inference_sft(
-            text, voice, stream=False, speed=speed
-        ):
-            audio_segments.append(audio_data["tts_speech"].numpy())
+        sentences_info = []
+        all_audio_segments = []
+        current_time = 0.0
 
-        if not audio_segments:
+        if return_timestamps:
+            # 获取CosyVoice的分句结果
+            normalized_texts = self.cosyvoice_sft.frontend.text_normalize(
+                text, split=True, text_frontend=True
+            )
+            logger.info(f"CosyVoice分句结果: {len(normalized_texts)} 个句子")
+
+            # 为每个句子生成音频并记录时间戳
+            for sentence_text in normalized_texts:
+                sentence_audio_segments = []
+                for audio_data in self.cosyvoice_sft.inference_sft(
+                    sentence_text, voice, stream=False, speed=speed
+                ):
+                    sentence_audio_segments.append(audio_data["tts_speech"].numpy())
+
+                if sentence_audio_segments:
+                    # 拼接当前句子的音频片段
+                    if len(sentence_audio_segments) > 1:
+                        import numpy as np
+                        sentence_audio = np.concatenate(sentence_audio_segments, axis=1)
+                    else:
+                        sentence_audio = sentence_audio_segments[0]
+
+                    # 计算当前句子的时长
+                    sentence_duration = sentence_audio.shape[1] / self.cosyvoice_sft.sample_rate
+                    sentence_duration_ms = sentence_duration * 1000
+
+                    # 记录句子信息
+                    sentences_info.append({
+                        "text": sentence_text,
+                        "begin_time": str(int(current_time)),
+                        "end_time": str(int(current_time + sentence_duration_ms))
+                    })
+
+                    # 添加到总音频
+                    all_audio_segments.append(sentence_audio)
+                    current_time += sentence_duration_ms
+
+        else:
+            # 不需要时间戳，直接合成
+            for audio_data in self.cosyvoice_sft.inference_sft(
+                text, voice, stream=False, speed=speed
+            ):
+                all_audio_segments.append(audio_data["tts_speech"].numpy())
+
+        if not all_audio_segments:
             raise DefaultServerErrorException("音频合成失败，未生成任何音频片段")
 
-        # 如果有多个音频片段，需要拼接它们
-        if len(audio_segments) > 1:
+        # 拼接所有音频片段
+        if len(all_audio_segments) > 1:
             import numpy as np
-
-            # 拼接所有音频片段
-            combined_audio = np.concatenate(audio_segments, axis=1)
-            logger.info(f"合并了 {len(audio_segments)} 个音频片段")
+            combined_audio = np.concatenate(all_audio_segments, axis=1)
+            logger.info(f"合并了 {len(all_audio_segments)} 个音频片段")
         else:
-            combined_audio = audio_segments[0]
+            combined_audio = all_audio_segments[0]
 
         # 保存音频文件，使用指定的格式和采样率
         output_path = generate_temp_audio_path("preset_voice", f".{format}")
@@ -230,7 +272,11 @@ class CosyVoiceTTSEngine:
             original_sr=self.cosyvoice_sft.sample_rate,
             volume=volume,
         )
-        return output_path
+
+        if return_timestamps:
+            return output_path, sentences_info
+        else:
+            return output_path
 
     def _synthesize_with_saved_voice(
         self,
@@ -241,7 +287,8 @@ class CosyVoiceTTSEngine:
         sample_rate: int = 22050,
         volume: int = 50,
         prompt: str = "",
-    ) -> str:
+        return_timestamps: bool = False,
+    ) -> Union[str, Tuple[str, Optional[List[Dict[str, Any]]]]]:
         """使用保存的音色合成语音（基于官方API）"""
         if not self.cosyvoice_clone:
             model_mode = settings.TTS_MODEL_MODE.lower()
@@ -254,31 +301,75 @@ class CosyVoiceTTSEngine:
                 raise DefaultServerErrorException("零样本克隆模型未加载")
 
         try:
-            # 收集所有音频片段
-            audio_segments = []
-            # 使用官方API进行音色合成 - 直接通过zero_shot_spk_id引用保存的音色
-            for audio_data in self.cosyvoice_clone.inference_zero_shot(
-                text,
-                prompt,  # 使用传入的prompt_text
-                None,  # 不需要音频
-                zero_shot_spk_id=voice,  # 使用保存的音色ID
-                stream=False,
-                speed=speed,
-            ):
-                audio_segments.append(audio_data["tts_speech"].numpy())
+            sentences_info = []
+            all_audio_segments = []
+            current_time = 0.0
 
-            if not audio_segments:
+            if return_timestamps:
+                # 获取CosyVoice的分句结果
+                normalized_texts = self.cosyvoice_clone.frontend.text_normalize(
+                    text, split=True, text_frontend=True
+                )
+                logger.info(f"CosyVoice分句结果: {len(normalized_texts)} 个句子")
+
+                # 为每个句子生成音频并记录时间戳
+                for sentence_text in normalized_texts:
+                    sentence_audio_segments = []
+                    for audio_data in self.cosyvoice_clone.inference_zero_shot(
+                        sentence_text,
+                        prompt,  # 使用传入的prompt_text
+                        None,  # 不需要音频
+                        zero_shot_spk_id=voice,  # 使用保存的音色ID
+                        stream=False,
+                        speed=speed,
+                    ):
+                        sentence_audio_segments.append(audio_data["tts_speech"].numpy())
+
+                    if sentence_audio_segments:
+                        # 拼接当前句子的音频片段
+                        if len(sentence_audio_segments) > 1:
+                            import numpy as np
+                            sentence_audio = np.concatenate(sentence_audio_segments, axis=1)
+                        else:
+                            sentence_audio = sentence_audio_segments[0]
+
+                        # 计算当前句子的时长
+                        sentence_duration = sentence_audio.shape[1] / self.cosyvoice_clone.sample_rate
+                        sentence_duration_ms = sentence_duration * 1000
+
+                        # 记录句子信息
+                        sentences_info.append({
+                            "text": sentence_text,
+                            "begin_time": str(int(current_time)),
+                            "end_time": str(int(current_time + sentence_duration_ms))
+                        })
+
+                        # 添加到总音频
+                        all_audio_segments.append(sentence_audio)
+                        current_time += sentence_duration_ms
+
+            else:
+                # 不需要时间戳，直接合成
+                for audio_data in self.cosyvoice_clone.inference_zero_shot(
+                    text,
+                    prompt,  # 使用传入的prompt_text
+                    None,  # 不需要音频
+                    zero_shot_spk_id=voice,  # 使用保存的音色ID
+                    stream=False,
+                    speed=speed,
+                ):
+                    all_audio_segments.append(audio_data["tts_speech"].numpy())
+
+            if not all_audio_segments:
                 raise DefaultServerErrorException("音频合成失败，未生成任何音频片段")
 
-            # 如果有多个音频片段，需要拼接它们
-            if len(audio_segments) > 1:
+            # 拼接所有音频片段
+            if len(all_audio_segments) > 1:
                 import numpy as np
-
-                # 拼接所有音频片段
-                combined_audio = np.concatenate(audio_segments, axis=1)
-                logger.info(f"合并了 {len(audio_segments)} 个音频片段")
+                combined_audio = np.concatenate(all_audio_segments, axis=1)
+                logger.info(f"合并了 {len(all_audio_segments)} 个音频片段")
             else:
-                combined_audio = audio_segments[0]
+                combined_audio = all_audio_segments[0]
 
             # 保存音频文件，使用指定的格式和采样率
             output_path = generate_temp_audio_path("saved_voice", f".{format}")
@@ -291,7 +382,10 @@ class CosyVoiceTTSEngine:
                 volume=volume,
             )
 
-            return output_path
+            if return_timestamps:
+                return output_path, sentences_info
+            else:
+                return output_path
 
         except Exception as e:
             raise DefaultServerErrorException(f"保存音色合成失败: {str(e)}")

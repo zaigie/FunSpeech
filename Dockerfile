@@ -38,7 +38,7 @@ RUN apt remove -y build-essential && apt autoremove -y \
 COPY . .
 
 # Create runtime directories
-RUN mkdir -p /app/temp /app/voices /app/logs \
+RUN mkdir -p /app/temp /app/data /app/voices /app/logs \
     && chmod +x start.py
 
 EXPOSE 8000

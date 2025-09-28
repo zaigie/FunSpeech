@@ -25,7 +25,8 @@ docker run -d \
   --name funspeech \
   -p 8000:8000 \
   -v ~/.cache/modelscope:/root/.cache/modelscope \
-  -v $(pwd)/data:/app/temp \
+  -v $(pwd)/temp:/app/temp \
+  -v $(pwd)/data:/app/data \
   -v $(pwd)/logs:/app/logs \
   -v $(pwd)/voices:/app/voices \
   docker.cnb.cool/nexa/funspeech:latest
@@ -73,12 +74,13 @@ docker-compose --env-file .env up -d
 
 重要数据通过卷映射持久化保存：
 
-| 本地路径              | 容器路径                  | 用途            | 重要性 |
-| --------------------- | ------------------------- | --------------- | ------ |
-| `~/.cache/modelscope` | `/root/.cache/modelscope` | 🤖 模型文件缓存 | ⭐⭐⭐ |
-| `./data`              | `/app/temp`               | 📁 临时文件存储 | ⭐⭐   |
-| `./logs`              | `/app/logs`               | 📝 应用日志     | ⭐⭐   |
-| `./voices`            | `/app/voices`             | 🎵 自定义音色   | ⭐⭐⭐ |
+| 本地路径              | 容器路径                  | 用途                         | 重要性 |
+| --------------------- | ------------------------- | ---------------------------- | ------ |
+| `~/.cache/modelscope` | `/root/.cache/modelscope` | 🤖 模型文件缓存              | ⭐⭐⭐ |
+| `./temp`              | `/app/temp`               | 📁 临时文件存储              | ⭐⭐   |
+| `./data`              | `/app/data`               | 💾 数据库文件（异步 TTS 等） | ⭐⭐⭐ |
+| `./logs`              | `/app/logs`               | 📝 应用日志                  | ⭐⭐   |
+| `./voices`            | `/app/voices`             | 🎵 自定义音色                | ⭐⭐⭐ |
 
 > 💡 **提示**：模型缓存目录非常重要，建议映射到本地以避免重复下载大文件。
 
@@ -322,6 +324,9 @@ cp .env .env.backup
 # 清理临时文件
 docker exec -it funspeech rm -rf /app/temp/*
 
+# 备份数据库文件
+tar -czf data_backup_$(date +%Y%m%d).tar.gz ./data/
+
 # 重启服务
 docker-compose restart
 
@@ -382,7 +387,8 @@ services:
       - APPTOKEN=${APPTOKEN}
       - APPKEY=${APPKEY}
     volumes:
-      - ./data:/app/temp
+      - ./temp:/app/temp
+      - ./data:/app/data
       - ./logs:/app/logs
       - ./voices:/app/voices
       - ~/.cache/modelscope:/root/.cache/modelscope
@@ -408,7 +414,8 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      - ./data:/app/temp
+      - ./temp:/app/temp
+      - ./data:/app/data
       - ./logs:/app/logs
       - ./voices:/app/voices
 ```

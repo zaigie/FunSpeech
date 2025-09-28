@@ -45,6 +45,17 @@ docker-compose up -d
 
 GPU 部署请将 docker-compose.yml 文件中的 image 替换为 **docker.cnb.cool/nexa/funspeech:gpu-latest**
 
+### 数据持久化
+
+FunSpeech 会在以下目录存储持久化数据：
+
+- **`./data`** - 数据库文件（异步 TTS 任务记录等）
+- **`./temp`** - 临时文件（音频缓存等）
+- **`./logs`** - 日志文件
+- **`./voices`** - 零样本音色文件
+
+Docker Compose 已自动配置数据卷映射，确保容器重启后数据不丢失。
+
 > 💡 详细部署说明请查看 [部署指南](./docs/deployment.md)
 
 对于要使用和下载的模型，您可以在运行中动态下载，也可以提前从 ModelScope 下载后映射，需要的模型在 [支持的模型](#-支持的模型) ，同时注意提前规划好存储空间以免存储空间不足无法下载～
@@ -129,16 +140,18 @@ export TTS_MODEL_MODE=cosyvoice2
 
 ### TTS（语音合成）
 
-| 端点                            | 方法      | 功能                    |
-| ------------------------------- | --------- | ----------------------- |
-| `/stream/v1/tts`                | POST      | 语音合成                |
-| `/openai/v1/audio/speech`       | POST      | OpenAI 兼容接口         |
-| `/stream/v1/tts/voices`         | GET       | 音色列表                |
-| `/stream/v1/tts/voices/info`    | GET       | 音色详细信息            |
-| `/stream/v1/tts/voices/refresh` | POST      | 刷新音色配置            |
-| `/stream/v1/tts/health`         | GET       | 健康检查                |
-| **`/ws/v1/tts`**                | WebSocket | **双向流式语音合成** 🚀 |
-| `/ws/v1/tts/test`               | GET       | WebSocket 测试页面      |
+| 端点                            | 方法      | 功能                        |
+| ------------------------------- | --------- | --------------------------- |
+| `/stream/v1/tts`                | POST      | 语音合成                    |
+| `/openai/v1/audio/speech`       | POST      | OpenAI 兼容接口             |
+| **`/rest/v1/tts/async`**        | **POST**  | **提交异步语音合成任务** 🚀 |
+| **`/rest/v1/tts/async`**        | **GET**   | **查询异步语音合成结果** 🚀 |
+| `/stream/v1/tts/voices`         | GET       | 音色列表                    |
+| `/stream/v1/tts/voices/info`    | GET       | 音色详细信息                |
+| `/stream/v1/tts/voices/refresh` | POST      | 刷新音色配置                |
+| `/stream/v1/tts/health`         | GET       | 健康检查                    |
+| **`/ws/v1/tts`**                | WebSocket | **双向流式语音合成** 🚀     |
+| `/ws/v1/tts/test`               | GET       | WebSocket 测试页面          |
 
 ## 🎯 使用示例
 
@@ -313,6 +326,48 @@ function stopSynthesis() {
   );
 }
 ```
+
+### 异步 TTS（长文本语音合成）🚀
+
+**特别适用于长文本处理**，避免超时问题，支持句子级时间戳返回。
+
+**提交异步合成任务：**
+
+```bash
+curl -X POST "http://localhost:8000/rest/v1/tts/async" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "payload": {
+      "tts_request": {
+        "voice": "中文女",
+        "sample_rate": 16000,
+        "format": "wav",
+        "text": "这是一个长文本语音合成测试。支持异步处理，避免超时问题。",
+        "enable_subtitle": true
+      },
+      "enable_notify": false
+    },
+    "header": {
+      "appkey": "your_appkey",
+      "token": "your_token"
+    }
+  }'
+```
+
+**查询合成结果：**
+
+```bash
+curl "http://localhost:8000/rest/v1/tts/async?appkey=your_appkey&token=your_token&task_id=your_task_id"
+```
+
+**Python 测试示例：**
+
+```bash
+# 运行完整的异步TTS测试
+python tests/test_async_tts.py
+```
+
+> 📖 **详细 API 格式参考**：[阿里云异步语音合成 RESTful API](https://help.aliyun.com/zh/isi/developer-reference/restful-api)
 
 **Python 交互式示例：**
 
