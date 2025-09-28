@@ -184,20 +184,38 @@ class CosyVoiceTTSEngine:
         logger.info(
             f"使用预训练音色模型合成: {voice}, 格式: {format}, 采样率: {sample_rate}"
         )
+
+        # 收集所有音频片段
+        audio_segments = []
         for audio_data in self.cosyvoice_sft.inference_sft(
             text, voice, stream=False, speed=speed
         ):
-            # 保存音频文件，使用指定的格式和采样率
-            output_path = generate_temp_audio_path("preset_voice", f".{format}")
-            save_audio_array(
-                audio_data["tts_speech"].numpy(),
-                output_path,
-                sample_rate=sample_rate,
-                format=format,
-                original_sr=self.cosyvoice_sft.sample_rate,
-                volume=volume,
-            )
-            return output_path
+            audio_segments.append(audio_data["tts_speech"].numpy())
+
+        if not audio_segments:
+            raise DefaultServerErrorException("音频合成失败，未生成任何音频片段")
+
+        # 如果有多个音频片段，需要拼接它们
+        if len(audio_segments) > 1:
+            import numpy as np
+
+            # 拼接所有音频片段
+            combined_audio = np.concatenate(audio_segments, axis=1)
+            logger.info(f"合并了 {len(audio_segments)} 个音频片段")
+        else:
+            combined_audio = audio_segments[0]
+
+        # 保存音频文件，使用指定的格式和采样率
+        output_path = generate_temp_audio_path("preset_voice", f".{format}")
+        save_audio_array(
+            combined_audio,
+            output_path,
+            sample_rate=sample_rate,
+            format=format,
+            original_sr=self.cosyvoice_sft.sample_rate,
+            volume=volume,
+        )
+        return output_path
 
     def _synthesize_with_saved_voice(
         self,
@@ -214,6 +232,8 @@ class CosyVoiceTTSEngine:
             raise DefaultServerErrorException("克隆模型未加载")
 
         try:
+            # 收集所有音频片段
+            audio_segments = []
             # 使用官方API进行音色合成 - 直接通过zero_shot_spk_id引用保存的音色
             for audio_data in self.cosyvoice_clone.inference_zero_shot(
                 text,
@@ -223,13 +243,25 @@ class CosyVoiceTTSEngine:
                 stream=False,
                 speed=speed,
             ):
-                output = audio_data
-                break
+                audio_segments.append(audio_data["tts_speech"].numpy())
+
+            if not audio_segments:
+                raise DefaultServerErrorException("音频合成失败，未生成任何音频片段")
+
+            # 如果有多个音频片段，需要拼接它们
+            if len(audio_segments) > 1:
+                import numpy as np
+
+                # 拼接所有音频片段
+                combined_audio = np.concatenate(audio_segments, axis=1)
+                logger.info(f"合并了 {len(audio_segments)} 个音频片段")
+            else:
+                combined_audio = audio_segments[0]
 
             # 保存音频文件，使用指定的格式和采样率
             output_path = generate_temp_audio_path("saved_voice", f".{format}")
             save_audio_array(
-                output["tts_speech"].numpy(),
+                combined_audio,
                 output_path,
                 sample_rate=sample_rate,
                 format=format,
