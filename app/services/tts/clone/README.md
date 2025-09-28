@@ -1,6 +1,6 @@
-# 音色克隆管理模块
+# 零样本音色克隆管理模块
 
-本模块基于 CosyVoice2 官方 API 实现音色克隆和管理功能，使用`add_zero_shot_spk`和`save_spkinfo`实现高效的音色管理。
+本模块基于 CosyVoice2 官方 API 实现零样本音色克隆和管理功能，使用`add_zero_shot_spk`和`save_spkinfo`实现高效的音色管理。
 
 ## 📁 目录结构
 
@@ -25,7 +25,7 @@ voices/                         # 音色文件目录（用户数据）
 
 - **基于官方 API**: 使用`add_zero_shot_spk`和`save_spkinfo`
 - **高效性能**: 音色特征保存在内存中，推理时直接使用 ID 引用
-- **统一接口**: 克隆音色与预训练音色使用完全相同的调用方式
+- **统一接口**: 零样本克隆音色与预训练音色使用完全相同的调用方式
 - **简化管理**: 音色特征统一保存在`spk2info.pt`文件中
 
 ## 🚀 使用方法
@@ -81,16 +81,16 @@ python -m app.services.tts.clone.voice_manager --refresh
 **API 调用示例:**
 
 ```bash
-# 使用克隆音色进行语音合成
+# 使用零样本克隆音色进行语音合成
 curl -X POST "http://localhost:8000/tts/v1/tts" \
   -H "Content-Type: application/json" \
   -d '{
-    "text": "你好，这是使用克隆音色的语音合成测试",
+    "text": "你好，这是使用零样本克隆音色的语音合成测试",
     "voice": "张三",
     "speed": 1.0
   }'
 
-# 获取所有可用音色（包括克隆音色）
+# 获取所有可用音色（包括零样本克隆音色）
 curl "http://localhost:8000/tts/v1/voices"
 
 # 获取详细音色信息
@@ -112,9 +112,9 @@ tts_engine = get_tts_engine()
 voices = tts_engine.get_preset_voices()
 print(f"可用音色: {voices}")
 
-# 使用克隆音色合成
+# 使用零样本克隆音色合成
 output_path = tts_engine.synthesize_speech(
-    text="你好，这是克隆音色测试",
+    text="你好，这是零样本克隆音色测试",
     voice="张三",
     speed=1.0
 )
@@ -127,9 +127,9 @@ if voice_manager:
     success, total = voice_manager.add_all_voices()
     print(f"添加音色: {success}/{total}")
 
-    # 查看克隆音色
+    # 查看零样本克隆音色
     clone_voices = voice_manager.list_clone_voices()
-    print(f"克隆音色: {clone_voices}")
+    print(f"零样本克隆音色: {clone_voices}")
 ```
 
 ## 📝 配置文件说明
@@ -194,7 +194,7 @@ if voice_manager:
 
 ### 与预训练音色的统一
 
-克隆音色和预训练音色都存储在同一个 `spk2info` 字典中，使用完全相同的调用接口，实现真正的统一管理。
+零样本克隆音色和预训练音色都存储在同一个 `spk2info` 字典中，使用完全相同的调用接口，实现真正的统一管理。
 
 ## 🐛 故障排除
 
@@ -247,20 +247,20 @@ tail -f logs/tts.log
 - `add_all_voices()`: 添加所有音色文件对
 - `remove_voice(voice_name)`: 移除音色
 - `list_voices()`: 列出所有音色
-- `list_clone_voices()`: 列出克隆音色
+- `list_clone_voices()`: 列出零样本克隆音色
 - `is_voice_available(voice_name)`: 检查音色可用性
 - `refresh_voices()`: 刷新音色列表
 
 ### 集成到 TTS 引擎
 
-TTS 引擎自动检测和使用克隆音色：
+TTS 引擎自动检测和使用零样本克隆音色：
 
 ```python
-# 自动检测克隆音色
+# 自动检测零样本克隆音色
 if self._voice_manager and voice in self._voice_manager.list_clone_voices():
     return self._synthesize_with_saved_voice(text, voice, speed)
 ```
 
 ## 🎉 总结
 
-音色克隆模块基于 CosyVoice2 的官方设计，提供了简洁高效的音色管理功能。通过使用`add_zero_shot_spk`和`save_spkinfo`，克隆音色与预训练音色享受完全相同的推理性能。
+零样本音色克隆模块基于 CosyVoice2 的官方设计，提供了简洁高效的音色管理功能。通过使用`add_zero_shot_spk`和`save_spkinfo`，零样本克隆音色与预训练音色享受完全相同的推理性能。

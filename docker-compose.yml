@@ -11,7 +11,7 @@ services:
       - ./data:/app/temp
       # 日志目录
       - ./logs:/app/logs
-      # 音色克隆文件目录（用户数据）
+      # 零样本音色文件目录（用户数据）
       - ./voices:/app/voices
     environment:
       # 服务器配置
@@ -19,6 +19,10 @@ services:
       - LOG_LEVEL=INFO
       - DEVICE=auto
       - TTS_DEVICE=auto
+      # TTS 模型按需加载配置（可选，默认为 all）
+      # - TTS_MODEL_MODE=all          # 加载所有模型（默认）
+      # - TTS_MODEL_MODE=cosyvoice1   # 仅加载SFT模型，用于预设音色
+      # - TTS_MODEL_MODE=cosyvoice2   # 仅加载零样本克隆模型，用于音色克隆
       # 鉴权配置（可选，不设置则鉴权为可选）
       # - APPTOKEN=your_secret_token
       # - APPKEY=your_app_key

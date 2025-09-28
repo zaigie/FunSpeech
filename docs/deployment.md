@@ -37,16 +37,17 @@ docker run -d \
 
 通过环境变量自定义服务行为：
 
-| 变量         | 默认值    | 说明         | 示例                |
-| ------------ | --------- | ------------ | ------------------- |
-| `HOST`       | `0.0.0.0` | 服务绑定地址 | `127.0.0.1`         |
-| `PORT`       | `8000`    | 服务端口     | `9000`              |
-| `DEBUG`      | `false`   | 开发调试模式 | `true`              |
-| `LOG_LEVEL`  | `INFO`    | 日志级别     | `DEBUG`, `WARNING`  |
-| `DEVICE`     | `auto`    | ASR 设备选择 | `cpu`, `cuda:0`     |
-| `TTS_DEVICE` | `auto`    | TTS 设备选择 | `cpu`, `cuda:0`     |
-| `APPTOKEN`   | -         | API 访问令牌 | `your_secret_token` |
-| `APPKEY`     | -         | 应用密钥     | `your_app_key`      |
+| 变量             | 默认值    | 说明                 | 示例                       |
+| ---------------- | --------- | -------------------- | -------------------------- |
+| `HOST`           | `0.0.0.0` | 服务绑定地址         | `127.0.0.1`                |
+| `PORT`           | `8000`    | 服务端口             | `9000`                     |
+| `DEBUG`          | `false`   | 开发调试模式         | `true`                     |
+| `LOG_LEVEL`      | `INFO`    | 日志级别             | `DEBUG`, `WARNING`         |
+| `DEVICE`         | `auto`    | ASR 设备选择         | `cpu`, `cuda:0`            |
+| `TTS_DEVICE`     | `auto`    | TTS 设备选择         | `cpu`, `cuda:0`            |
+| `TTS_MODEL_MODE` | `all`     | TTS 模型按需加载模式 | `cosyvoice1`, `cosyvoice2` |
+| `APPTOKEN`       | -         | API 访问令牌         | `your_secret_token`        |
+| `APPKEY`         | -         | 应用密钥             | `your_app_key`             |
 
 **配置示例：**
 
@@ -59,6 +60,7 @@ DEBUG=false
 LOG_LEVEL=INFO
 DEVICE=auto
 TTS_DEVICE=auto
+TTS_MODEL_MODE=all
 APPTOKEN=your_secret_token
 APPKEY=your_app_key
 EOF
@@ -181,7 +183,7 @@ curl -X POST "http://localhost:8000/stream/v1/tts" \
 # 进入容器后可用的管理命令
 docker exec -it funspeech python -m app.services.tts.clone.voice_manager \
   --list                    # 查看所有音色
-  --list-clone             # 仅查看克隆音色
+  --list-clone             # 仅查看零样本克隆音色
   --add                    # 添加新音色
   --remove <音色名>         # 删除指定音色
   --info <音色名>           # 查看音色详细信息
@@ -232,6 +234,62 @@ docker inspect funspeech
 
 # 磁盘使用情况
 du -sh ./data ./logs ./voices ~/.cache/modelscope
+```
+
+## 🎯 TTS 模型按需加载优化
+
+### 模型模式选择
+
+针对不同使用场景选择合适的模型模式以优化资源使用：
+
+```bash
+# 仅需预设音色场景（推荐：轻量部署）
+export TTS_MODEL_MODE=cosyvoice1
+
+# 仅需音色克隆场景（推荐：个性化应用）
+export TTS_MODEL_MODE=cosyvoice2
+
+# 需要完整功能场景（推荐：全功能部署）
+export TTS_MODEL_MODE=all
+```
+
+### 资源使用对比
+
+| 模式       | 磁盘空间 | 内存使用 | 启动时间 | 适用场景       |
+| ---------- | -------- | -------- | -------- | -------------- |
+| cosyvoice1 | ~5.4GB   | 较低     | 较快     | 标准语音合成   |
+| cosyvoice2 | ~5.5GB   | 较低     | 较快     | 个性化音色定制 |
+| all        | ~11GB    | 较高     | 较慢     | 完整功能需求   |
+
+### 部署建议
+
+```yaml
+# 轻量部署 (cosyvoice1)
+environment:
+  - TTS_MODEL_MODE=cosyvoice1
+  - LOG_LEVEL=WARNING
+deploy:
+  resources:
+    limits:
+      memory: 6G
+
+# 个性化部署 (cosyvoice2)
+environment:
+  - TTS_MODEL_MODE=cosyvoice2
+  - LOG_LEVEL=WARNING
+deploy:
+  resources:
+    limits:
+      memory: 6G
+
+# 完整功能部署 (all)
+environment:
+  - TTS_MODEL_MODE=all
+  - LOG_LEVEL=INFO
+deploy:
+  resources:
+    limits:
+      memory: 12G
 ```
 
 ## 🔧 维护操作

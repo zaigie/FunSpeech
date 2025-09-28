@@ -24,7 +24,7 @@
 
 - **🚀 多模型支持** - 集成 FunASR、Dolphin、CosyVoice 等多种高质量模型
 - **🌐 完全 API 兼容** - 支持阿里云语音 API 和 OpenAI TTS API 格式，及 Websocket 流式 TTS 协议
-- **🎭 智能音色管理** - 支持预训练音色和自定义克隆音色
+- **🎭 智能音色管理** - 支持预训练音色和零样本克隆音色
 - **🔧 灵活配置** - 统一的配置系统，支持环境变量和文件配置
 - **🛡️ 安全鉴权** - 完善的身份认证和权限控制
 - **💾 性能优化** - 智能模型缓存和动态加载机制
@@ -85,10 +85,37 @@ export APPKEY=your_app_key           # AppKey 验证
 # 不设置以上环境变量即可
 ```
 
+### TTS 模型按需加载配置
+
+```bash
+# 加载所有模型（默认）
+export TTS_MODEL_MODE=all
+
+# 仅加载SFT模型（CosyVoice1），用于预设音色
+export TTS_MODEL_MODE=cosyvoice1
+
+# 仅加载零样本克隆模型（CosyVoice2），用于音色克隆
+export TTS_MODEL_MODE=cosyvoice2
+```
+
 ### 配置说明
 
 - **未设置 APPTOKEN/APPKEY**：验证可选，开发模式
 - **设置了 APPTOKEN/APPKEY**：验证必需，生产模式
+
+### TTS 模型模式说明
+
+| 模式           | 功能       | 优势           | 限制         |
+| -------------- | ---------- | -------------- | ------------ |
+| **all**        | 完整功能   | 预设+克隆音色  | 需要更多资源 |
+| **cosyvoice1** | 仅预设音色 | 节省空间和内存 | 无音色克隆   |
+| **cosyvoice2** | 仅音色克隆 | 节省空间和内存 | 无预设音色   |
+
+**典型使用场景：**
+
+- 🎯 **仅需预设音色**：`TTS_MODEL_MODE=cosyvoice1` - 适合标准语音合成需求
+- 🔊 **仅需音色克隆**：`TTS_MODEL_MODE=cosyvoice2` - 适合个性化语音定制
+- 🌟 **完整功能**：`TTS_MODEL_MODE=all` - 适合需要所有语音功能的场景
 
 ## 📚 API 接口
 
@@ -301,6 +328,14 @@ python tests/test_aliyun_websocket.py --voice "中文女" --format PCM
 
 ## 🎵 音色系统
 
+### 智能音色列表
+
+音色列表 API (`/stream/v1/tts/voices`) 会根据当前的模型模式智能返回对应的音色：
+
+- **cosyvoice1 模式**：仅返回预设音色列表（7 个）
+- **cosyvoice2 模式**：仅返回零样本克隆音色列表（允许为空）
+- **all 模式**：返回所有音色列表（预设+零样本克隆）
+
 ### 预训练音色
 
 - **中文女** - 温柔甜美的女性音色
@@ -311,7 +346,7 @@ python tests/test_aliyun_websocket.py --voice "中文女" --format PCM
 - **韩语女** - 清新可爱的韩语女性音色
 - **粤语女** - 地道的粤语女性音色
 
-### 自定义克隆音色
+### 零样本克隆音色
 
 **添加新音色：**
 
@@ -344,7 +379,7 @@ python -m app.services.tts.clone.voice_manager --refresh        # 刷新音色�
 }
 ```
 
-> ⚠️ 注意：音色指导功能目前仅适用于克隆音色（CosyVoice2）
+> ⚠️ 注意：音色指导功能目前仅适用于零样本克隆音色（CosyVoice2）
 
 ## ⚙️ 参数配置
 

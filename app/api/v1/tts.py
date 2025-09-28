@@ -101,7 +101,7 @@ def format_tts_response(
 @router.post(
     "",
     summary="语音合成",
-    description="使用指定音色进行文本转语音合成，支持预训练音色和克隆音色。成功时直接返回音频文件二进制数据，失败时返回JSON错误信息",
+    description="使用指定音色进行文本转语音合成，支持预训练音色和零样本克隆音色。成功时直接返回音频文件二进制数据，失败时返回JSON错误信息",
     responses={
         200: {
             "description": "语音合成成功，返回音频文件",
@@ -195,7 +195,7 @@ def format_tts_response(
                             },
                             "sample_rate": {
                                 "type": "integer",
-                                "description": f"音频采样率（Hz）。支持: {', '.join(map(str, SampleRate.get_enums()))}。预设音色默认22050，克隆音色默认24000",
+                                "description": f"音频采样率（Hz）。支持: {', '.join(map(str, SampleRate.get_enums()))}。预设音色默认22050，零样本克隆音色默认24000",
                                 "example": 22050,
                                 "enum": SampleRate.get_enums(),
                                 "default": 22050,
@@ -220,7 +220,7 @@ async def synthesize_speech(
     request: Request,
     tts_request: TTSRequest = Body(...),
 ):
-    """语音合成接口，自动识别预设音色和克隆音色"""
+    """语音合成接口，自动识别预设音色和零样本克隆音色"""
     task_id = generate_task_id("tts")
     output_path = None
 
@@ -333,27 +333,10 @@ async def get_voice_list(request: Request) -> JSONResponse:
         raise AuthenticationException(content, "get_voice_list")
 
     try:
-        # 使用懒加载的方式获取音色列表
-        from app.core.config import settings
-
-        # 直接返回预设音色，避免触发TTS引擎初始化
-        preset_voices = settings.PRESET_VOICES.copy()
-
-        # 尝试从音色管理器的注册表获取克隆音色（不触发模型加载）
-        try:
-            from app.services.tts.clone import VoiceManager
-
-            voice_manager = VoiceManager()  # 不传入cosyvoice实例，避免模型加载
-            clone_voices = voice_manager.list_clone_voices()
-
-            # 合并音色列表
-            for voice in clone_voices:
-                if voice not in preset_voices:
-                    preset_voices.append(voice)
-        except Exception as e:
-            logger.warning(f"获取克隆音色失败，仅返回预设音色: {e}")
-
-        response_data = {"voices": preset_voices, "total": len(preset_voices)}
+        # 使用TTS引擎统一接口获取音色列表（根据模型模式返回对应音色）
+        tts_engine = get_tts_engine()
+        voices = tts_engine.get_voices()
+        response_data = {"voices": voices, "total": len(voices)}
         return JSONResponse(content=response_data)
 
     except Exception as e:

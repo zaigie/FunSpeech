@@ -86,7 +86,7 @@ class TTSRequest(BaseModel):
 
     sample_rate: Optional[SampleRate] = Field(
         22050,
-        description=f"音频采样率（Hz）。支持: {', '.join(map(str, SampleRate.get_enums()))}。预设音色默认22050，克隆音色默认24000",
+        description=f"音频采样率（Hz）。支持: {', '.join(map(str, SampleRate.get_enums()))}。预设音色默认22050，零样本克隆音色默认24000",
         example=22050,
     )
 
@@ -284,7 +284,7 @@ class VoiceDetailResponse(BaseModel):
     voices: Dict[str, VoiceInfo] = Field(..., description="音色详细信息字典")
     total: int = Field(..., description="音色总数")
     preset_count: int = Field(..., description="预设音色数量")
-    clone_count: int = Field(..., description="克隆音色数量")
+    clone_count: int = Field(..., description="零样本克隆音色数量")
 
     class Config:
         json_schema_extra = {

@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 音色管理器
-基于CosyVoice2官方API实现音色克隆和管理功能
+基于CosyVoice2官方API实现零样本音色克隆和管理功能
 """
 
 import os
@@ -130,6 +130,14 @@ class VoiceManager:
 
     def _get_cosyvoice(self):
         """获取CosyVoice实例"""
+        from app.core.config import settings
+
+        model_mode = settings.TTS_MODEL_MODE.lower()
+        if model_mode == "cosyvoice1":
+            raise RuntimeError(
+                "当前配置为仅使用SFT模型（TTS_MODEL_MODE=cosyvoice1），无法使用零样本音色克隆功能。"
+                "如需使用零样本音色克隆，请设置环境变量 TTS_MODEL_MODE=all 或 TTS_MODEL_MODE=cosyvoice2"
+            )
         if self.cosyvoice is None:
             from app.services.tts.engine import get_tts_engine
 
@@ -137,7 +145,7 @@ class VoiceManager:
             tts_engine = get_tts_engine()
 
             if not tts_engine.is_clone_model_loaded():
-                raise RuntimeError("克隆模型未加载，无法管理音色")
+                raise RuntimeError("零样本克隆模型未加载，无法管理音色")
 
             self.cosyvoice = tts_engine.cosyvoice_clone
 
@@ -393,7 +401,7 @@ class VoiceManager:
         """列出所有可用的音色"""
         try:
             cosyvoice = self._get_cosyvoice()
-            # 从模型中获取所有音色，包括预训练和克隆的
+            # 从模型中获取所有音色，包括预训练和零样本克隆的
             all_voices = list(cosyvoice.frontend.spk2info.keys())
             return all_voices
         except Exception as e:
@@ -402,7 +410,7 @@ class VoiceManager:
             return list(self.registry["voices"].keys())
 
     def list_clone_voices(self) -> List[str]:
-        """列出所有克隆音色"""
+        """列出所有零样本克隆音色"""
         return list(self.registry["voices"].keys())
 
     def get_voice_info(self, voice_name: str) -> Optional[Dict[str, Any]]:
@@ -445,7 +453,7 @@ def main():
     parser = argparse.ArgumentParser(description="CosyVoice2音色管理工具")
     parser.add_argument("--add", action="store_true", help="添加所有音色文件对")
     parser.add_argument("--list", action="store_true", help="列出所有音色")
-    parser.add_argument("--list-clone", action="store_true", help="列出克隆音色")
+    parser.add_argument("--list-clone", action="store_true", help="列出零样本克隆音色")
     parser.add_argument("--remove", type=str, help="移除指定音色")
     parser.add_argument("--info", type=str, help="显示指定音色信息")
     parser.add_argument("--refresh", action="store_true", help="刷新音色列表")
@@ -476,11 +484,11 @@ def main():
         elif args.list_clone:
             voices = manager.list_clone_voices()
             if voices:
-                print("克隆音色列表:")
+                print("零样本克隆音色列表:")
                 for voice in voices:
                     print(f"  - {voice}")
             else:
-                print("暂无克隆音色")
+                print("暂无零样本克隆音色")
         elif args.remove:
             if manager.remove_voice(args.remove):
                 print(f"音色 {args.remove} 已成功移除")

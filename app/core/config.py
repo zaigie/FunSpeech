@@ -51,7 +51,8 @@ class Settings:
 
     # TTS模型配置
     SFT_MODEL_ID: str = "iic/CosyVoice-300M-SFT"  # 预训练音色模型（CosyVoice）
-    CLONE_MODEL_ID: str = "iic/CosyVoice2-0.5B"  # 音色克隆模型（CosyVoice2）
+    CLONE_MODEL_ID: str = "iic/CosyVoice2-0.5B"  # 零样本克隆模型（CosyVoice2）
+    TTS_MODEL_MODE: str = "all"  # TTS模型加载模式: all, cosyvoice1, cosyvoice2
 
     # 音频处理配置
     MAX_AUDIO_SIZE: int = 100 * 1024 * 1024  # 100MB
@@ -109,6 +110,9 @@ class Settings:
         # 设备配置
         self.DEVICE = os.getenv("DEVICE", self.DEVICE)
         self.TTS_DEVICE = os.getenv("TTS_DEVICE", self.TTS_DEVICE)
+
+        # TTS模型配置
+        self.TTS_MODEL_MODE = os.getenv("TTS_MODEL_MODE", self.TTS_MODEL_MODE)
 
     def _ensure_directories(self):
         """确保必需的目录存在"""
