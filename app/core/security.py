@@ -34,7 +34,7 @@ def mask_sensitive_data(
     return f"{prefix}{mask}{suffix}"
 
 
-def validate_token(token: str, expected_token: Optional[str] = None) -> bool:
+def validate_token_value(token: str, expected_token: Optional[str] = None) -> bool:
     """验证访问令牌
 
     Args:
@@ -105,7 +105,7 @@ def validate_token(request: Request, task_id: str = "") -> tuple[bool, str]:
     if not token:
         return False, "缺少X-NLS-Token头部"
 
-    if not validate_token(token, settings.APPTOKEN):
+    if not validate_token_value(token, settings.APPTOKEN):
         masked_token = mask_sensitive_data(token)
         return False, f"Gateway:ACCESS_DENIED:The token '{masked_token}' is invalid!"
 
@@ -132,7 +132,7 @@ def validate_bearer_token(request: Request, task_id: str = "") -> tuple[bool, st
     # 提取token
     token = auth_header[7:]  # 去掉"Bearer "前缀
 
-    if not validate_token(token, settings.APPTOKEN):
+    if not validate_token_value(token, settings.APPTOKEN):
         masked_token = mask_sensitive_data(token)
         return False, f"Gateway:ACCESS_DENIED:The token '{masked_token}' is invalid!"
 
@@ -166,7 +166,7 @@ def validate_token_websocket(token: str, task_id: str = "") -> tuple[bool, str]:
     if not token:
         return False, "缺少token参数"
     
-    if not validate_token(token, settings.APPTOKEN):
+    if not validate_token_value(token, settings.APPTOKEN):
         masked_token = mask_sensitive_data(token)
         return False, f"Gateway:ACCESS_DENIED:The token '{masked_token}' is invalid!"
     
