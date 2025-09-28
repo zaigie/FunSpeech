@@ -1,0 +1,25 @@
+# CosyVoice 推理运行时依赖
+
+# 核心模型加载与配置
+conformer==0.3.2
+diffusers==0.29.0
+transformers==4.51.3
+HyperPyYAML==1.2.2
+lightning==2.2.4
+matplotlib==3.7.5
+
+# 声学与文本前端
+openai-whisper==20231117
+inflect==7.0.0
+wetext==0.0.4
+
+# ONNX 推理
+onnx==1.16.0
+onnxruntime==1.18.0
+
+# 公共依赖
+protobuf==4.25
+gdown==5.1.0
+rich==13.7.1
+wget==3.2
+# tqdm==4.67.1
