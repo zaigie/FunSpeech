@@ -10,7 +10,7 @@
 
 ![Static Badge](https://img.shields.io/badge/Python-3.10+-blue?logo=python)
 ![Static Badge](https://img.shields.io/badge/Torch-2.3.1-%23EE4C2C?logo=pytorch&logoColor=white)
-![Static Badge](https://img.shields.io/badge/CUDA-11.8+-%2376B900?logo=nvidia&logoColor=white)
+![Static Badge](https://img.shields.io/badge/CUDA-12.1+-%2376B900?logo=nvidia&logoColor=white)
 
   <div style="margin: 30px 0;">
     <h3>强劲动力来自</h3>
@@ -54,7 +54,7 @@ GPU 部署请将 docker-compose.yml 文件中的 image 替换为 **docker.cnb.co
 **系统要求：**
 
 - Python 3.10+
-- CUDA 11.8+（可选，用于 GPU 加速）
+- CUDA 12.1+（可选，用于 GPU 加速）
 - FFmpeg（音频格式转换）
 
 **安装步骤：**
