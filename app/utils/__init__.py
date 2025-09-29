@@ -6,13 +6,7 @@
 
 from .common import *
 from .audio import *
-from .number_converter import (
-    NumberConverter,
-    arabic_to_chinese,
-    chinese_to_arabic,
-    convert_text_numbers,
-    apply_itn_to_text,
-)
+from .text_processing import apply_itn_to_text
 
 __all__ = [
     # 通用工具函数
@@ -30,10 +24,6 @@ __all__ = [
     "load_audio_file",
     "generate_temp_audio_path",
     "cleanup_temp_file",
-    # 数字转换功能
-    "NumberConverter",
-    "arabic_to_chinese",
-    "chinese_to_arabic",
-    "convert_text_numbers",
+    # ITN（逆文本标准化）功能 - 基于WeText
     "apply_itn_to_text",
 ]

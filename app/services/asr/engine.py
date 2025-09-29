@@ -14,7 +14,7 @@ from abc import ABC, abstractmethod
 from ...core.config import settings
 from ...core.exceptions import DefaultServerErrorException
 from ...utils.audio import cleanup_temp_file
-from ...utils.number_converter import apply_itn_to_text
+from ...utils.text_processing import apply_itn_to_text
 
 logger = logging.getLogger(__name__)
 
