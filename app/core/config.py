@@ -44,7 +44,7 @@ class Settings:
 
     # ASR模型配置
     ASR_MODELS_CONFIG: str = BASE_DIR / "app/services/asr/models.json"
-    ASR_MODEL_MODE: str = "realtime"  # ASR模型加载模式: realtime, offline, all
+    ASR_MODEL_MODE: str = "all"  # ASR模型加载模式: realtime, offline, all
     ASR_ENABLE_REALTIME_PUNC: bool = False  # 是否启用实时标点模型（用于中间结果展示）
     VAD_MODEL: str = "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch"
     VAD_MODEL_REVISION: str = "v2.0.4"
@@ -119,9 +119,9 @@ class Settings:
 
         # ASR模型配置
         self.ASR_MODEL_MODE = os.getenv("ASR_MODEL_MODE", self.ASR_MODEL_MODE)
-        self.ASR_ENABLE_REALTIME_PUNC = os.getenv(
-            "ASR_ENABLE_REALTIME_PUNC", "false"
-        ).lower() == "true"
+        self.ASR_ENABLE_REALTIME_PUNC = (
+            os.getenv("ASR_ENABLE_REALTIME_PUNC", "false").lower() == "true"
+        )
 
         # TTS模型配置
         self.TTS_MODEL_MODE = os.getenv("TTS_MODEL_MODE", self.TTS_MODEL_MODE)
