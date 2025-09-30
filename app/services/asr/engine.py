@@ -1,8 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-ASR引擎模块
-封装ASR模型的加载和推理功能，支持多种ASR引擎
-重构为BaseASREngine和RealTimeASREngine的继承结构
+ASR引擎模块 - 支持多种ASR引擎
 """
 
 import torch
@@ -13,12 +11,20 @@ from typing import Optional, Dict, Any, List
 from abc import ABC, abstractmethod
 from enum import Enum
 
+from funasr import AutoModel
+
 from ...core.config import settings
 from ...core.exceptions import DefaultServerErrorException
 from ...utils.audio import cleanup_temp_file
 from ...utils.text_processing import apply_itn_to_text
 
 logger = logging.getLogger(__name__)
+
+FUNASR_AUTOMODEL_KWARGS = {
+    "trust_remote_code": False,
+    "disable_update": True,
+    "disable_pbar": True,
+}
 
 
 class ModelType(Enum):
@@ -29,7 +35,7 @@ class ModelType(Enum):
 
 
 class BaseASREngine(ABC):
-    """基础ASR引擎抽象基类，提供基础的文件识别能力"""
+    """基础ASR引擎抽象基类"""
 
     @abstractmethod
     def transcribe_file(
@@ -74,7 +80,7 @@ class BaseASREngine(ABC):
 
 
 class RealTimeASREngine(BaseASREngine):
-    """实时ASR引擎抽象基类，继承基础能力并添加实时识别功能"""
+    """实时ASR引擎抽象基类"""
 
     @property
     def supports_realtime(self) -> bool:
@@ -94,7 +100,7 @@ class RealTimeASREngine(BaseASREngine):
 
 
 class FunASREngine(RealTimeASREngine):
-    """FunASR语音识别引擎，支持离线和实时模型"""
+    """FunASR语音识别引擎"""
 
     def __init__(
         self,
@@ -108,10 +114,10 @@ class FunASREngine(RealTimeASREngine):
         punc_realtime_model: str = None,
         spk_model: str = None,
     ):
-        from funasr import AutoModel
-
         self.offline_model: Optional[AutoModel] = None
         self.realtime_model: Optional[AutoModel] = None
+        self.punc_model_instance: Optional[AutoModel] = None
+        self.punc_realtime_model_instance: Optional[AutoModel] = None
         self._device: str = self._detect_device(device)
 
         # 模型路径配置
@@ -126,7 +132,6 @@ class FunASREngine(RealTimeASREngine):
         self.punc_realtime_model = punc_realtime_model or settings.PUNC_REALTIME_MODEL
         self.spk_model = spk_model or settings.SPK_MODEL
 
-        # 根据ASR_MODEL_MODE决定加载哪些模型
         self._load_models_based_on_mode()
 
     def _load_models_based_on_mode(self) -> None:
@@ -155,32 +160,26 @@ class FunASREngine(RealTimeASREngine):
             raise DefaultServerErrorException(f"不支持的ASR_MODEL_MODE: {mode}")
 
     def _load_offline_model(self) -> None:
-        """加载离线FunASR模型"""
+        """加载离线FunASR模型（内置标点模型）"""
         try:
-            from funasr import AutoModel
-
             logger.info(f"正在加载离线FunASR模型: {self.offline_model_path}")
 
-            # 构建离线模型参数
             model_kwargs = {
                 "model": self.offline_model_path,
                 "trust_remote_code": True,
                 "device": self._device,
             }
 
-            # 添加VAD模型
             if self.vad_model:
                 model_kwargs["vad_model"] = self.vad_model
                 if self.vad_model_revision:
                     model_kwargs["vad_model_revision"] = self.vad_model_revision
 
-            # 添加离线标点模型
             if self.punc_model:
                 model_kwargs["punc_model"] = self.punc_model
                 if self.punc_model_revision:
                     model_kwargs["punc_model_revision"] = self.punc_model_revision
 
-            # 添加说话人分离模型（如果启用）
             if self.spk_model:
                 model_kwargs["spk_model"] = self.spk_model
 
@@ -191,37 +190,43 @@ class FunASREngine(RealTimeASREngine):
             raise DefaultServerErrorException(f"离线FunASR模型加载失败: {str(e)}")
 
     def _load_realtime_model(self) -> None:
-        """加载实时FunASR模型"""
+        """加载实时FunASR模型及其配套的标点模型"""
         try:
-            from funasr import AutoModel
-
             logger.info(f"正在加载实时FunASR模型: {self.realtime_model_path}")
 
-            # 构建实时模型参数
             model_kwargs = {
                 "model": self.realtime_model_path,
-                "trust_remote_code": True,
                 "device": self._device,
+                **FUNASR_AUTOMODEL_KWARGS,
             }
 
-            # 添加VAD模型
-            if self.vad_model:
-                model_kwargs["vad_model"] = self.vad_model
-                if self.vad_model_revision:
-                    model_kwargs["vad_model_revision"] = self.vad_model_revision
-
-            # 添加实时标点模型
-            if self.punc_realtime_model:
-                model_kwargs["punc_model"] = self.punc_realtime_model
-                if self.punc_model_revision:
-                    model_kwargs["punc_model_revision"] = self.punc_model_revision
-
-            # 添加说话人分离模型（如果启用）
             if self.spk_model:
                 model_kwargs["spk_model"] = self.spk_model
 
             self.realtime_model = AutoModel(**model_kwargs)
             logger.info("实时FunASR模型加载成功")
+
+            # 始终加载离线标点模型（用于句子结束时的完整标点处理）
+            if self.punc_model:
+                logger.info(f"正在加载离线标点模型: {self.punc_model}")
+                self.punc_model_instance = AutoModel(
+                    model=self.punc_model,
+                    model_revision=self.punc_model_revision,
+                    device=self._device,
+                    **FUNASR_AUTOMODEL_KWARGS,
+                )
+                logger.info("离线标点模型加载成功")
+
+            # 根据配置决定是否加载实时标点模型（用于流式中间结果展示）
+            if settings.ASR_ENABLE_REALTIME_PUNC and self.punc_realtime_model:
+                logger.info(f"正在加载实时标点模型: {self.punc_realtime_model}")
+                self.punc_realtime_model_instance = AutoModel(
+                    model=self.punc_realtime_model,
+                    model_revision=self.punc_model_revision,
+                    device=self._device,
+                    **FUNASR_AUTOMODEL_KWARGS,
+                )
+                logger.info("实时标点模型加载成功")
 
         except Exception as e:
             raise DefaultServerErrorException(f"实时FunASR模型加载失败: {str(e)}")
@@ -278,21 +283,30 @@ class FunASREngine(RealTimeASREngine):
         is_final: bool = False,
         **kwargs,
     ) -> str:
-        """WebSocket流式语音识别（为未来的WebSocket ASR接口准备）"""
+        """WebSocket流式语音识别（未实现）"""
         if not self.realtime_model:
             raise DefaultServerErrorException(
                 "实时模型未加载，无法进行WebSocket流式识别。"
                 "请将 ASR_MODEL_MODE 设置为 realtime 或 all"
             )
 
-        # 为未来的WebSocket ASR接口预留实现
-        # 实际实现时需要根据FunASR的流式API进行调整，类似TTS的websocket实现
         logger.warning("WebSocket流式识别功能尚未实现")
         return ""
 
     def is_model_loaded(self) -> bool:
         """检查模型是否已加载"""
         return self.offline_model is not None or self.realtime_model is not None
+
+    def get_punc_model(self):
+        """获取用于句子级标点恢复的离线标点模型
+
+        优先返回独立加载的离线标点模型，如果没有则返回offline_model（内置标点能力）
+        """
+        if self.punc_model_instance is not None:
+            return self.punc_model_instance
+        if self.offline_model is not None:
+            return self.offline_model
+        return None
 
     @property
     def device(self) -> str:
@@ -301,7 +315,7 @@ class FunASREngine(RealTimeASREngine):
 
 
 class DolphinEngine(BaseASREngine):
-    """Dolphin语音识别引擎，不支持实时识别"""
+    """Dolphin语音识别引擎"""
 
     def __init__(
         self,
@@ -327,7 +341,6 @@ class DolphinEngine(BaseASREngine):
                 return "cuda"
             else:
                 return "cpu"
-        # 转换设备格式，Dolphin使用 "cuda" 而不是 "cuda:0"
         if device.startswith("cuda:"):
             return "cuda"
         return device
@@ -343,7 +356,6 @@ class DolphinEngine(BaseASREngine):
             model_path = os.path.join(settings.MODELSCOPE_PATH, self.model_path)
             logger.info(f"模型路径: {model_path}")
 
-            # 使用dolphin库加载模型
             self.model = dolphin.load_model(self.size, model_path, self._device)
 
             logger.info("Dolphin模型加载成功")
@@ -352,19 +364,14 @@ class DolphinEngine(BaseASREngine):
             raise DefaultServerErrorException(f"Dolphin模型加载失败: {str(e)}")
 
     def _clean_dolphin_text(self, text: str) -> str:
-        """清理dolphin输出的特殊标记和时间戳"""
+        """清理dolphin输出的特殊标记"""
         import re
 
         if not text:
             return ""
 
-        # 移除语言和区域标记，如: <zh><SHANGHAI><asr>
         text = re.sub(r"<[^>]*>", "", text)
-
-        # 移除时间戳，如: <0.00> 和 <12.80>
         text = re.sub(r"<[\d.]+>", "", text)
-
-        # 清理多余的空格
         text = re.sub(r"\s+", " ", text).strip()
 
         return text
@@ -375,13 +382,11 @@ class DolphinEngine(BaseASREngine):
             return text
 
         try:
-            # 使用全局标点符号模型缓存
             punc_model = get_global_punc_model(self._device)
             if punc_model is None:
                 logger.warning("标点符号模型未加载，返回原文本")
                 return text
 
-            # 调用标点符号模型
             result = punc_model.generate(text)
 
             if result and len(result) > 0:
@@ -416,15 +421,13 @@ class DolphinEngine(BaseASREngine):
             if self.model is None:
                 raise DefaultServerErrorException("模型未加载")
 
-            logger.info(f"开始Dolphin语音识别，文件: {audio_path}")
+            logger.debug(f"开始Dolphin语音识别，文件: {audio_path}")
             logger.debug(
                 f"识别参数: 语言={dolphin_lang_sym}, 区域={dolphin_region_sym}"
             )
 
-            # 使用dolphin加载音频
             waveform = dolphin.load_audio(audio_path)
 
-            # 执行语音识别
             if dolphin_lang_sym and dolphin_region_sym:
                 result = self.model(
                     waveform,
@@ -434,28 +437,23 @@ class DolphinEngine(BaseASREngine):
             else:
                 result = self.model(waveform)
 
-            # 提取识别文本
             recognition_text = result.text if hasattr(result, "text") else str(result)
-
             logger.debug(f"Dolphin原始识别结果: {recognition_text}")
 
-            # 清理dolphin特殊标记
             cleaned_text = self._clean_dolphin_text(recognition_text)
             logger.debug(f"清理后文本: {cleaned_text}")
 
-            # 如果启用标点符号，则添加标点
             if enable_punctuation and cleaned_text.strip():
                 final_text = self._add_punctuation(cleaned_text)
             else:
                 final_text = cleaned_text
 
-            # 应用ITN处理
             if enable_itn and final_text:
                 logger.debug(f"应用ITN处理前: {final_text}")
                 final_text = apply_itn_to_text(final_text)
                 logger.debug(f"应用ITN处理后: {final_text}")
 
-            logger.info(f"Dolphin识别完成: {final_text}")
+            logger.debug(f"Dolphin识别完成: {final_text}")
 
             return final_text
 
@@ -491,19 +489,19 @@ _punc_model_lock = threading.Lock()
 
 
 def get_global_punc_model(device: str):
-    """获取全局标点符号模型实例，避免重复加载"""
+    """获取全局标点符号模型实例"""
     global _global_punc_model
 
     with _punc_model_lock:
         if _global_punc_model is None:
             try:
-                from funasr import AutoModel
-
                 logger.info("正在加载全局标点符号模型...")
+
                 _global_punc_model = AutoModel(
                     model=settings.PUNC_MODEL,
                     model_revision=settings.PUNC_MODEL_REVISION,
                     device=device,
+                    **FUNASR_AUTOMODEL_KWARGS,
                 )
                 logger.info("全局标点符号模型加载成功")
             except Exception as e:
@@ -528,10 +526,9 @@ def clear_global_punc_model():
 
 
 def get_asr_engine() -> BaseASREngine:
-    """获取全局ASR引擎实例（默认模型）"""
+    """获取全局ASR引擎实例"""
     global _asr_engine
     if _asr_engine is None:
-        # 使用模型管理器获取默认引擎
         from .manager import get_model_manager
 
         model_manager = get_model_manager()
