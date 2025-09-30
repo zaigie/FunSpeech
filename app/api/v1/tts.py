@@ -235,7 +235,7 @@ async def synthesize_speech(
         if not result:
             raise AuthenticationException(content, task_id)
 
-        logger.info(
+        logger.debug(
             f"[{task_id}] 开始语音合成: 文本='{tts_request.text}', 音色={tts_request.voice}, 语速={tts_request.speech_rate}, 音量={tts_request.volume}, 格式={tts_request.format}, 采样率={tts_request.sample_rate}"
         )
 
@@ -262,7 +262,7 @@ async def synthesize_speech(
 
         # 将speech_rate转换为内部speed参数
         speed = convert_speech_rate_to_speed(tts_request.speech_rate)
-        logger.info(
+        logger.debug(
             f"[{task_id}] speech_rate={tts_request.speech_rate} 转换为 speed={speed}"
         )
 
@@ -281,7 +281,7 @@ async def synthesize_speech(
             tts_request.prompt or "",
         )
 
-        logger.info(f"[{task_id}] 语音合成完成: {output_path}")
+        logger.debug(f"[{task_id}] 语音合成完成: {output_path}")
 
         # 统一使用audio/mpeg作为Content-Type，客户端根据format参数自行保存对应格式
         # 直接返回音频文件

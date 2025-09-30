@@ -73,14 +73,19 @@ def setup_logging(
         force=True,  # 强制重新配置
     )
 
-    # 设置第三方库的日志级别
-    logging.getLogger("uvicorn").setLevel(logging.INFO)
-    logging.getLogger("uvicorn.access").setLevel(logging.INFO)
-    logging.getLogger("fastapi").setLevel(logging.INFO)
+    # 设置第三方库的日志级别（由LOG_LEVEL控制）
+    third_party_level = getattr(logging, log_level.upper())
+    logging.getLogger("urllib3").setLevel(third_party_level)
+    logging.getLogger("requests").setLevel(third_party_level)
+    logging.getLogger("httpx").setLevel(third_party_level)
+    logging.getLogger("httpcore").setLevel(third_party_level)
 
-    # 降低一些噪音大的日志级别
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
-    logging.getLogger("requests").setLevel(logging.WARNING)
+    # 始终禁用噪音特别大的库
+    logging.getLogger("numba").setLevel(logging.WARNING)
+    logging.getLogger("numba.core").setLevel(logging.WARNING)
+    logging.getLogger("numba.core.ssa").setLevel(logging.WARNING)
+
+    # uvicorn日志级别由启动时的参数控制，不在此设置
 
 
 def get_logger(name: str) -> logging.Logger:

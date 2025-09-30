@@ -162,9 +162,16 @@ class CosyVoiceTTSEngine:
                 # 检查是否在零样本克隆音色列表中
                 if voice in self._voice_manager.list_clone_voices():
                     sample_rate = 24000
-                    logger.info(f"使用零样本克隆音色模型合成: {voice}")
+                    logger.debug(f"使用零样本克隆音色模型合成: {voice}")
                     return self._synthesize_with_saved_voice(
-                        text, voice, speed, format, sample_rate, volume, prompt, return_timestamps
+                        text,
+                        voice,
+                        speed,
+                        format,
+                        sample_rate,
+                        volume,
+                        prompt,
+                        return_timestamps,
                     )
 
             # 使用预训练音色合成
@@ -198,7 +205,7 @@ class CosyVoiceTTSEngine:
                 raise DefaultServerErrorException("SFT模型未加载")
 
         # 使用CosyVoice SFT模型进行预设音色合成
-        logger.info(
+        logger.debug(
             f"使用预训练音色模型合成: {voice}, 格式: {format}, 采样率: {sample_rate}"
         )
 
@@ -211,7 +218,7 @@ class CosyVoiceTTSEngine:
             normalized_texts = self.cosyvoice_sft.frontend.text_normalize(
                 text, split=True, text_frontend=True
             )
-            logger.info(f"CosyVoice分句结果: {len(normalized_texts)} 个句子")
+            logger.debug(f"CosyVoice分句结果: {len(normalized_texts)} 个句子")
 
             # 为每个句子生成音频并记录时间戳
             for sentence_text in normalized_texts:
@@ -225,20 +232,25 @@ class CosyVoiceTTSEngine:
                     # 拼接当前句子的音频片段
                     if len(sentence_audio_segments) > 1:
                         import numpy as np
+
                         sentence_audio = np.concatenate(sentence_audio_segments, axis=1)
                     else:
                         sentence_audio = sentence_audio_segments[0]
 
                     # 计算当前句子的时长
-                    sentence_duration = sentence_audio.shape[1] / self.cosyvoice_sft.sample_rate
+                    sentence_duration = (
+                        sentence_audio.shape[1] / self.cosyvoice_sft.sample_rate
+                    )
                     sentence_duration_ms = sentence_duration * 1000
 
                     # 记录句子信息
-                    sentences_info.append({
-                        "text": sentence_text,
-                        "begin_time": str(int(current_time)),
-                        "end_time": str(int(current_time + sentence_duration_ms))
-                    })
+                    sentences_info.append(
+                        {
+                            "text": sentence_text,
+                            "begin_time": str(int(current_time)),
+                            "end_time": str(int(current_time + sentence_duration_ms)),
+                        }
+                    )
 
                     # 添加到总音频
                     all_audio_segments.append(sentence_audio)
@@ -257,8 +269,9 @@ class CosyVoiceTTSEngine:
         # 拼接所有音频片段
         if len(all_audio_segments) > 1:
             import numpy as np
+
             combined_audio = np.concatenate(all_audio_segments, axis=1)
-            logger.info(f"合并了 {len(all_audio_segments)} 个音频片段")
+            logger.debug(f"合并了 {len(all_audio_segments)} 个音频片段")
         else:
             combined_audio = all_audio_segments[0]
 
@@ -310,7 +323,7 @@ class CosyVoiceTTSEngine:
                 normalized_texts = self.cosyvoice_clone.frontend.text_normalize(
                     text, split=True, text_frontend=True
                 )
-                logger.info(f"CosyVoice分句结果: {len(normalized_texts)} 个句子")
+                logger.debug(f"CosyVoice分句结果: {len(normalized_texts)} 个句子")
 
                 # 为每个句子生成音频并记录时间戳
                 for sentence_text in normalized_texts:
@@ -329,20 +342,29 @@ class CosyVoiceTTSEngine:
                         # 拼接当前句子的音频片段
                         if len(sentence_audio_segments) > 1:
                             import numpy as np
-                            sentence_audio = np.concatenate(sentence_audio_segments, axis=1)
+
+                            sentence_audio = np.concatenate(
+                                sentence_audio_segments, axis=1
+                            )
                         else:
                             sentence_audio = sentence_audio_segments[0]
 
                         # 计算当前句子的时长
-                        sentence_duration = sentence_audio.shape[1] / self.cosyvoice_clone.sample_rate
+                        sentence_duration = (
+                            sentence_audio.shape[1] / self.cosyvoice_clone.sample_rate
+                        )
                         sentence_duration_ms = sentence_duration * 1000
 
                         # 记录句子信息
-                        sentences_info.append({
-                            "text": sentence_text,
-                            "begin_time": str(int(current_time)),
-                            "end_time": str(int(current_time + sentence_duration_ms))
-                        })
+                        sentences_info.append(
+                            {
+                                "text": sentence_text,
+                                "begin_time": str(int(current_time)),
+                                "end_time": str(
+                                    int(current_time + sentence_duration_ms)
+                                ),
+                            }
+                        )
 
                         # 添加到总音频
                         all_audio_segments.append(sentence_audio)
@@ -366,8 +388,9 @@ class CosyVoiceTTSEngine:
             # 拼接所有音频片段
             if len(all_audio_segments) > 1:
                 import numpy as np
+
                 combined_audio = np.concatenate(all_audio_segments, axis=1)
-                logger.info(f"合并了 {len(all_audio_segments)} 个音频片段")
+                logger.debug(f"合并了 {len(all_audio_segments)} 个音频片段")
             else:
                 combined_audio = all_audio_segments[0]
 
@@ -511,7 +534,7 @@ class CosyVoiceTTSEngine:
         if model_mode == "cosyvoice1":
             # 仅使用预设音色
             self._preset_voices = settings.PRESET_VOICES.copy()
-            logger.info(
+            logger.debug(
                 f"音色配置已刷新（cosyvoice1模式），当前有 {len(self._preset_voices)} 个预设音色"
             )
         elif model_mode == "cosyvoice2":
@@ -519,12 +542,12 @@ class CosyVoiceTTSEngine:
             if self._voice_manager:
                 clone_voices = self._voice_manager.list_clone_voices()
                 self._preset_voices = clone_voices.copy()
-                logger.info(
+                logger.debug(
                     f"音色配置已刷新（cosyvoice2模式），当前有 {len(clone_voices)} 个零样本克隆音色"
                 )
             else:
                 self._preset_voices = []
-                logger.info("音色配置已刷新（cosyvoice2模式），当前没有可用音色")
+                logger.debug("音色配置已刷新（cosyvoice2模式），当前没有可用音色")
         else:
             # all模式：包含所有音色
             self._preset_voices = settings.PRESET_VOICES.copy()
@@ -534,7 +557,7 @@ class CosyVoiceTTSEngine:
                 for voice in clone_voices:
                     if voice not in self._preset_voices:
                         self._preset_voices.append(voice)
-            logger.info(
+            logger.debug(
                 f"音色配置已刷新（all模式），当前有 {len(self._preset_voices)} 个音色"
             )
 

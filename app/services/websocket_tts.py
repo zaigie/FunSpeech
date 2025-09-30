@@ -91,7 +91,7 @@ class AliyunWebSocketTTSService:
         session_id = f"session_{task_id}"
         synthesis_params = None
 
-        logger.info(f"[{task_id}] 阿里云WebSocket连接开始处理")
+        logger.debug(f"[{task_id}] 阿里云WebSocket连接开始处理")
 
         try:
             # 检查WebSocket头部是否有token
@@ -117,7 +117,7 @@ class AliyunWebSocketTTSService:
                 try:
                     # 解析消息
                     data = json.loads(message)
-                    logger.info(f"[{task_id}] 收到消息: {data}")
+                    logger.debug(f"[{task_id}] 收到消息: {data}")
 
                     header = data.get("header", {})
                     message_name = header.get("name", "")
@@ -197,7 +197,7 @@ class AliyunWebSocketTTSService:
                                 websocket, task_id, session_id
                             )
                             state = ConnectionState.COMPLETED
-                            logger.info(f"[{task_id}] 阿里云WebSocket合成完成")
+                            logger.debug(f"[{task_id}] 阿里云WebSocket合成完成")
                             break
                         else:
                             await self._send_task_failed(
@@ -260,7 +260,7 @@ class AliyunWebSocketTTSService:
         self, websocket, task_id: str, session_id: str, text: str, params: dict
     ):
         """执行流式合成"""
-        logger.info(f"[{task_id}] 开始流式合成文本: '{text}'")
+        logger.debug(f"[{task_id}] 开始流式合成文本: '{text}'")
 
         try:
             # 发送句子开始
@@ -357,7 +357,7 @@ class AliyunWebSocketTTSService:
         self, text: str, voice: str, speed: float, format: str, task_id: str
     ) -> AsyncGenerator[bytes, None]:
         """使用CosyVoice1进行流式合成（预设音色）"""
-        logger.info(f"[{task_id}] 使用CosyVoice1流式合成预设音色: {voice}")
+        logger.debug(f"[{task_id}] 使用CosyVoice1流式合成预设音色: {voice}")
 
         tts_engine = self._ensure_tts_engine()
 
@@ -389,7 +389,7 @@ class AliyunWebSocketTTSService:
         self, text: str, voice: str, speed: float, format: str, task_id: str
     ) -> AsyncGenerator[bytes, None]:
         """使用CosyVoice2进行流式合成（零样本克隆音色）"""
-        logger.info(f"[{task_id}] 使用CosyVoice2流式合成零样本克隆音色: {voice}")
+        logger.debug(f"[{task_id}] 使用CosyVoice2流式合成零样本克隆音色: {voice}")
 
         tts_engine = self._ensure_tts_engine()
 
@@ -480,7 +480,7 @@ class AliyunWebSocketTTSService:
             },
         }
         await websocket.send_text(json.dumps(response))
-        logger.info(f"[{task_id}] 发送SynthesisStarted")
+        logger.debug(f"[{task_id}] 发送SynthesisStarted")
 
     async def _send_sentence_begin(self, websocket, task_id: str, session_id: str):
         """发送SentenceBegin响应"""
@@ -499,7 +499,7 @@ class AliyunWebSocketTTSService:
             },
         }
         await websocket.send_text(json.dumps(response, ensure_ascii=False))
-        logger.info(f"[{task_id}] 发送SentenceBegin")
+        logger.debug(f"[{task_id}] 发送SentenceBegin")
 
     async def _send_sentence_synthesis(
         self, websocket, task_id: str, session_id: str, text: str
@@ -559,7 +559,7 @@ class AliyunWebSocketTTSService:
             },
         }
         await websocket.send_text(json.dumps(response, ensure_ascii=False))
-        logger.info(f"[{task_id}] 发送SentenceEnd")
+        logger.debug(f"[{task_id}] 发送SentenceEnd")
 
     async def _send_synthesis_completed(self, websocket, task_id: str, session_id: str):
         """发送SynthesisCompleted响应"""
@@ -578,7 +578,7 @@ class AliyunWebSocketTTSService:
             },
         }
         await websocket.send_text(json.dumps(response))
-        logger.info(f"[{task_id}] 发送SynthesisCompleted")
+        logger.debug(f"[{task_id}] 发送SynthesisCompleted")
 
     async def _send_task_failed(self, websocket, task_id: str, reason: str):
         """发送TaskFailed响应"""

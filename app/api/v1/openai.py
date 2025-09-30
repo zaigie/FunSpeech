@@ -82,7 +82,7 @@ async def openai_compatible_tts(request_body: OpenAITTSRequest, request: Request
             f"[{task_id}] Bearer Token验证通过, token: {mask_sensitive_data(token) if token != 'optional' else 'optional'}"
         )
 
-        logger.info(
+        logger.debug(
             f"[{task_id}] OpenAI兼容接口: 文本='{request_body.input}', 音色={request_body.voice}, 语速={request_body.speed}"
         )
 
@@ -114,7 +114,7 @@ async def openai_compatible_tts(request_body: OpenAITTSRequest, request: Request
             request_body.instructions or "",  # 将instructions映射到prompt
         )
 
-        logger.info(f"[{task_id}] OpenAI兼容接口合成完成: {output_path}")
+        logger.debug(f"[{task_id}] OpenAI兼容接口合成完成: {output_path}")
 
         # 统一使用audio/mpeg作为Content-Type，客户端根据response_format参数自行保存对应格式
         return FileResponse(

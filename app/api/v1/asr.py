@@ -267,19 +267,19 @@ async def asr_transcribe(
         # 获取音频数据
         if params.audio_address:
             # 方式1: 从URL下载音频
-            logger.info(f"[{task_id}] 从URL下载音频: {params.audio_address}")
+            logger.debug(f"[{task_id}] 从URL下载音频: {params.audio_address}")
             audio_data = download_audio_from_url(params.audio_address)
 
             # 使用format参数指定的格式保存文件
             file_suffix = get_audio_file_suffix(params.audio_address, params.format)
-            logger.info(
+            logger.debug(
                 f"[{task_id}] 使用audio_address，format参数生效: {params.format}，文件后缀: {file_suffix}"
             )
             audio_path = save_audio_to_temp_file(audio_data, file_suffix)
 
         else:
             # 方式2: 从请求体读取二进制音频数据
-            logger.info(f"[{task_id}] 从请求体读取音频数据")
+            logger.debug(f"[{task_id}] 从请求体读取音频数据")
 
             # 读取请求体
             audio_data = await request.body()
@@ -295,16 +295,16 @@ async def asr_transcribe(
 
             # 使用二进制音频流时，format参数不生效，默认为wav格式
             file_suffix = get_audio_file_suffix(None, None)
-            logger.info(
+            logger.debug(
                 f"[{task_id}] 使用二进制音频流，format参数不生效，默认使用wav格式，文件后缀: {file_suffix}"
             )
             audio_path = save_audio_to_temp_file(audio_data, file_suffix)
 
-        logger.info(f"[{task_id}] 音频文件已保存: {audio_path}")
+        logger.debug(f"[{task_id}] 音频文件已保存: {audio_path}")
 
         # 将音频标准化为ASR模型所需的格式（统一转换为WAV格式，指定采样率）
         normalized_audio_path = normalize_audio_for_asr(audio_path, params.sample_rate)
-        logger.info(f"[{task_id}] 音频已标准化: {normalized_audio_path}")
+        logger.debug(f"[{task_id}] 音频已标准化: {normalized_audio_path}")
 
         # 执行语音识别
         model_manager = get_model_manager()
@@ -324,7 +324,7 @@ async def asr_transcribe(
             dolphin_region_sym=params.dolphin_region_sym,
         )
 
-        logger.info(f"[{task_id}] 识别完成: {result_text}")
+        logger.debug(f"[{task_id}] 识别完成: {result_text}")
 
         # 返回成功响应
         response_data = {
@@ -414,7 +414,9 @@ async def health_check(request: Request):
             ),
             "loaded_models": memory_info["model_list"],
             "memory_usage": memory_info.get("gpu_memory"),
-            "asr_model_mode": memory_info.get("asr_model_mode", settings.ASR_MODEL_MODE),
+            "asr_model_mode": memory_info.get(
+                "asr_model_mode", settings.ASR_MODEL_MODE
+            ),
         }
     except Exception as e:
         return {
