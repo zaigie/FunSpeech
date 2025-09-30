@@ -106,7 +106,6 @@ class FunASREngine(RealTimeASREngine):
         punc_model: str = None,
         punc_model_revision: str = "v2.0.4",
         punc_realtime_model: str = None,
-        spk_model: str = None,
     ):
         self.offline_model: Optional[AutoModel] = None
         self.realtime_model: Optional[AutoModel] = None
@@ -124,7 +123,6 @@ class FunASREngine(RealTimeASREngine):
         self.punc_model = punc_model or settings.PUNC_MODEL
         self.punc_model_revision = punc_model_revision
         self.punc_realtime_model = punc_realtime_model or settings.PUNC_REALTIME_MODEL
-        self.spk_model = spk_model or settings.SPK_MODEL
 
         self._load_models_based_on_mode()
 
@@ -164,12 +162,6 @@ class FunASREngine(RealTimeASREngine):
                 **settings.FUNASR_AUTOMODEL_KWARGS,
             }
 
-            # 不再传递vad_model和punc_model参数给AutoModel
-            # VAD和PUNC将通过全局实例在需要时单独调用
-
-            if self.spk_model:
-                model_kwargs["spk_model"] = self.spk_model
-
             self.offline_model = AutoModel(**model_kwargs)
             logger.info("离线FunASR模型加载成功（VAD/PUNC将按需使用全局实例）")
 
@@ -187,14 +179,8 @@ class FunASREngine(RealTimeASREngine):
                 **settings.FUNASR_AUTOMODEL_KWARGS,
             }
 
-            if self.spk_model:
-                model_kwargs["spk_model"] = self.spk_model
-
             self.realtime_model = AutoModel(**model_kwargs)
             logger.info("实时FunASR模型加载成功（PUNC将按需使用全局实例）")
-
-            # 注意：不再单独加载punc_model_instance和punc_realtime_model_instance
-            # 这些将通过全局实例在需要时调用
 
         except Exception as e:
             raise DefaultServerErrorException(f"实时FunASR模型加载失败: {str(e)}")
@@ -240,7 +226,7 @@ class FunASREngine(RealTimeASREngine):
                     punc_model_instance = get_global_punc_model(self._device)
 
                 # 创建临时AutoModel（直接赋值已加载的模型，而不是重新构建）
-                temp_automodel = type('TempAutoModel', (), {})()
+                temp_automodel = type("TempAutoModel", (), {})()
                 temp_automodel.model = self.offline_model.model
                 temp_automodel.kwargs = self.offline_model.kwargs
                 temp_automodel.model_path = self.offline_model.model_path
@@ -257,11 +243,9 @@ class FunASREngine(RealTimeASREngine):
                     temp_automodel.punc_model = None
                     temp_automodel.punc_kwargs = {}
 
-                temp_automodel.spk_model = None
-                temp_automodel.spk_kwargs = {}
-
                 # 绑定方法（使用types.MethodType更可靠）
                 import types
+
                 temp_automodel.inference = types.MethodType(
                     AutoModel.inference, temp_automodel
                 )

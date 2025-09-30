@@ -108,11 +108,15 @@ class ModelManager:
             realtime_path_exists = False
 
             if config.offline_model_path:
-                offline_model_path = Path(settings.MODELSCOPE_PATH) / config.offline_model_path
+                offline_model_path = (
+                    Path(settings.MODELSCOPE_PATH) / config.offline_model_path
+                )
                 offline_path_exists = offline_model_path.exists()
 
             if config.realtime_model_path:
-                realtime_model_path = Path(settings.MODELSCOPE_PATH) / config.realtime_model_path
+                realtime_model_path = (
+                    Path(settings.MODELSCOPE_PATH) / config.realtime_model_path
+                )
                 realtime_path_exists = realtime_model_path.exists()
 
             # 检查模型是否已加载
@@ -128,14 +132,22 @@ class ModelManager:
                     "default": config.is_default,
                     "loaded": loaded,
                     "supports_realtime": config.supports_realtime,
-                    "offline_model": {
-                        "path": config.offline_model_path,
-                        "exists": offline_path_exists,
-                    } if config.offline_model_path else None,
-                    "realtime_model": {
-                        "path": config.realtime_model_path,
-                        "exists": realtime_path_exists,
-                    } if config.realtime_model_path else None,
+                    "offline_model": (
+                        {
+                            "path": config.offline_model_path,
+                            "exists": offline_path_exists,
+                        }
+                        if config.offline_model_path
+                        else None
+                    ),
+                    "realtime_model": (
+                        {
+                            "path": config.realtime_model_path,
+                            "exists": realtime_path_exists,
+                        }
+                        if config.realtime_model_path
+                        else None
+                    ),
                     "asr_model_mode": settings.ASR_MODEL_MODE,
                 }
             )
@@ -175,7 +187,6 @@ class ModelManager:
                 punc_model=settings.PUNC_MODEL,
                 punc_model_revision=settings.PUNC_MODEL_REVISION,
                 punc_realtime_model=settings.PUNC_REALTIME_MODEL,
-                spk_model=settings.SPK_MODEL,
             )
         elif config.engine.lower() == "dolphin":
             return DolphinEngine(
@@ -227,9 +238,13 @@ class ModelManager:
         errors = []
 
         if mode == "offline" and not config.has_offline_model:
-            errors.append(f"模型 {model_id} 没有离线版本，但 ASR_MODEL_MODE 设置为 offline")
+            errors.append(
+                f"模型 {model_id} 没有离线版本，但 ASR_MODEL_MODE 设置为 offline"
+            )
         elif mode == "realtime" and not config.has_realtime_model:
-            errors.append(f"模型 {model_id} 没有实时版本，但 ASR_MODEL_MODE 设置为 realtime")
+            errors.append(
+                f"模型 {model_id} 没有实时版本，但 ASR_MODEL_MODE 设置为 realtime"
+            )
         elif mode == "all":
             if not config.has_offline_model and not config.has_realtime_model:
                 errors.append(f"模型 {model_id} 既没有离线版本也没有实时版本")
@@ -238,7 +253,7 @@ class ModelManager:
             "model_id": model_id,
             "mode": mode,
             "errors": errors,
-            "compatible": len(errors) == 0
+            "compatible": len(errors) == 0,
         }
 
 
