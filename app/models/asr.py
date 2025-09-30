@@ -179,6 +179,7 @@ class ASRHealthCheckResponse(HealthCheckResponse):
                     "gpu_memory_used": "2.1GB",
                     "gpu_memory_total": "8.0GB",
                 },
+                "asr_model_mode": "realtime",
             },
         },
     }
@@ -187,22 +188,26 @@ class ASRHealthCheckResponse(HealthCheckResponse):
     device: str = Field(..., description="推理设备")
     loaded_models: Optional[List[str]] = Field([], description="已加载的模型列表")
     memory_usage: Optional[dict] = Field(None, description="内存使用情况")
+    asr_model_mode: Optional[str] = Field(None, description="当前ASR模型加载模式")
 
 
 # ============= 模型相关 =============
 
 
 class ASRModelInfo(BaseModel):
-    """ASR模型信息模型"""
+    """新的ASR模型信息模型，支持离线和实时模型分离"""
 
-    id: str = Field(..., description="模型ID")
+    id: str = Field(..., description="模型id")
     name: str = Field(..., description="模型名称")
     engine: str = Field(..., description="引擎类型", example="funasr")
     description: str = Field(..., description="模型描述")
     languages: List[str] = Field(..., description="支持的语言列表")
     default: bool = Field(False, description="是否为默认模型")
     loaded: bool = Field(False, description="是否已加载")
-    path_exists: bool = Field(False, description="模型文件是否存在")
+    supports_realtime: bool = Field(False, description="是否支持实时识别")
+    offline_model: Optional[dict] = Field(None, description="离线模型信息")
+    realtime_model: Optional[dict] = Field(None, description="实时模型信息")
+    asr_model_mode: str = Field(..., description="当前ASR模型加载模式")
 
     class Config:
         json_schema_extra = {
@@ -210,11 +215,20 @@ class ASRModelInfo(BaseModel):
                 "id": "paraformer-large",
                 "name": "Paraformer Large",
                 "engine": "funasr",
-                "description": "高精度中文语音识别模型",
+                "description": "高精度中文语音识别模型（ONNX量化版本）",
                 "languages": ["zh"],
                 "default": True,
                 "loaded": True,
-                "path_exists": True,
+                "supports_realtime": True,
+                "offline_model": {
+                    "path": "iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-onnx",
+                    "exists": True,
+                },
+                "realtime_model": {
+                    "path": "iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online-onnx",
+                    "exists": True,
+                },
+                "asr_model_mode": "realtime",
             }
         }
 
@@ -225,6 +239,7 @@ class ASRModelsResponse(BaseModel):
     models: List[ASRModelInfo] = Field(..., description="模型列表")
     total: int = Field(..., description="模型总数")
     loaded_count: int = Field(..., description="已加载模型数量")
+    asr_model_mode: str = Field(..., description="当前ASR模型加载模式")
 
     class Config:
         json_schema_extra = {
@@ -234,15 +249,25 @@ class ASRModelsResponse(BaseModel):
                         "id": "paraformer-large",
                         "name": "Paraformer Large",
                         "engine": "funasr",
-                        "description": "高精度中文语音识别模型",
+                        "description": "高精度中文语音识别模型（ONNX量化版本）",
                         "languages": ["zh"],
                         "default": True,
                         "loaded": True,
-                        "path_exists": True,
+                        "supports_realtime": True,
+                        "offline_model": {
+                            "path": "iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-onnx",
+                            "exists": True,
+                        },
+                        "realtime_model": {
+                            "path": "iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online-onnx",
+                            "exists": True,
+                        },
+                        "asr_model_mode": "realtime",
                     }
                 ],
-                "total": 6,
+                "total": 3,
                 "loaded_count": 1,
+                "asr_model_mode": "realtime",
             }
         }
 

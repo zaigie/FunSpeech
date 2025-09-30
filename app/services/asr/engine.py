@@ -2,14 +2,16 @@
 """
 ASR引擎模块
 封装ASR模型的加载和推理功能，支持多种ASR引擎
+重构为BaseASREngine和RealTimeASREngine的继承结构
 """
 
 import torch
 import numpy as np
 import logging
 import threading
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from abc import ABC, abstractmethod
+from enum import Enum
 
 from ...core.config import settings
 from ...core.exceptions import DefaultServerErrorException
@@ -19,8 +21,15 @@ from ...utils.text_processing import apply_itn_to_text
 logger = logging.getLogger(__name__)
 
 
-class ASREngine(ABC):
-    """ASR引擎抽象基类"""
+class ModelType(Enum):
+    """模型类型枚举"""
+
+    OFFLINE = "offline"
+    REALTIME = "realtime"
+
+
+class BaseASREngine(ABC):
+    """基础ASR引擎抽象基类，提供基础的文件识别能力"""
 
     @abstractmethod
     def transcribe_file(
@@ -48,34 +57,11 @@ class ASREngine(ABC):
         """获取设备信息"""
         pass
 
-
-class FunASREngine(ASREngine):
-    """FunASR语音识别引擎"""
-
-    def __init__(
-        self,
-        model_path: str = None,
-        device: str = "auto",
-        vad_model: str = None,
-        vad_model_revision: str = "v2.0.4",
-        punc_model: str = None,
-        punc_model_revision: str = "v2.0.4",
-        spk_model: str = None,
-    ):
-        from funasr import AutoModel
-
-        self.model: Optional[AutoModel] = None
-        self._device: str = self._detect_device(device)
-        self.model_path = (
-            model_path
-            or "iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch"
-        )
-        self.vad_model = vad_model or settings.VAD_MODEL
-        self.vad_model_revision = vad_model_revision
-        self.punc_model = punc_model or settings.PUNC_MODEL
-        self.punc_model_revision = punc_model_revision
-        self.spk_model = spk_model or settings.SPK_MODEL
-        self._load_model()
+    @property
+    @abstractmethod
+    def supports_realtime(self) -> bool:
+        """是否支持实时识别"""
+        pass
 
     def _detect_device(self, device: str = "auto") -> str:
         """检测可用设备"""
@@ -86,40 +72,159 @@ class FunASREngine(ASREngine):
                 return "cpu"
         return device
 
-    def _load_model(self) -> None:
-        """加载FunASR模型"""
+
+class RealTimeASREngine(BaseASREngine):
+    """实时ASR引擎抽象基类，继承基础能力并添加实时识别功能"""
+
+    @property
+    def supports_realtime(self) -> bool:
+        """支持实时识别"""
+        return True
+
+    @abstractmethod
+    def transcribe_websocket(
+        self,
+        audio_chunk: bytes,
+        cache: Optional[Dict] = None,
+        is_final: bool = False,
+        **kwargs,
+    ) -> str:
+        """WebSocket流式语音识别"""
+        pass
+
+
+class FunASREngine(RealTimeASREngine):
+    """FunASR语音识别引擎，支持离线和实时模型"""
+
+    def __init__(
+        self,
+        offline_model_path: Optional[str] = None,
+        realtime_model_path: Optional[str] = None,
+        device: str = "auto",
+        vad_model: str = None,
+        vad_model_revision: str = "v2.0.4",
+        punc_model: str = None,
+        punc_model_revision: str = "v2.0.4",
+        punc_realtime_model: str = None,
+        spk_model: str = None,
+    ):
+        from funasr import AutoModel
+
+        self.offline_model: Optional[AutoModel] = None
+        self.realtime_model: Optional[AutoModel] = None
+        self._device: str = self._detect_device(device)
+
+        # 模型路径配置
+        self.offline_model_path = offline_model_path
+        self.realtime_model_path = realtime_model_path
+
+        # 辅助模型配置
+        self.vad_model = vad_model or settings.VAD_MODEL
+        self.vad_model_revision = vad_model_revision
+        self.punc_model = punc_model or settings.PUNC_MODEL
+        self.punc_model_revision = punc_model_revision
+        self.punc_realtime_model = punc_realtime_model or settings.PUNC_REALTIME_MODEL
+        self.spk_model = spk_model or settings.SPK_MODEL
+
+        # 根据ASR_MODEL_MODE决定加载哪些模型
+        self._load_models_based_on_mode()
+
+    def _load_models_based_on_mode(self) -> None:
+        """根据ASR_MODEL_MODE加载对应的模型"""
+        mode = settings.ASR_MODEL_MODE.lower()
+
+        if mode == "all":
+            # 加载所有可用模型
+            if self.offline_model_path:
+                self._load_offline_model()
+            if self.realtime_model_path:
+                self._load_realtime_model()
+        elif mode == "offline":
+            # 只加载离线模型
+            if self.offline_model_path:
+                self._load_offline_model()
+            else:
+                logger.warning("ASR_MODEL_MODE设置为offline，但未提供离线模型路径")
+        elif mode == "realtime":
+            # 只加载实时模型
+            if self.realtime_model_path:
+                self._load_realtime_model()
+            else:
+                logger.warning("ASR_MODEL_MODE设置为realtime，但未提供实时模型路径")
+        else:
+            raise DefaultServerErrorException(f"不支持的ASR_MODEL_MODE: {mode}")
+
+    def _load_offline_model(self) -> None:
+        """加载离线FunASR模型"""
         try:
             from funasr import AutoModel
 
-            # 构建模型参数
+            logger.info(f"正在加载离线FunASR模型: {self.offline_model_path}")
+
+            # 构建离线模型参数
             model_kwargs = {
-                "model": self.model_path,
+                "model": self.offline_model_path,
                 "trust_remote_code": True,
                 "device": self._device,
             }
 
             # 添加VAD模型
-            if self.vad_model and isinstance(self.vad_model, str):
+            if self.vad_model:
                 model_kwargs["vad_model"] = self.vad_model
-                if self.vad_model_revision and isinstance(self.vad_model_revision, str):
+                if self.vad_model_revision:
                     model_kwargs["vad_model_revision"] = self.vad_model_revision
 
-            # 添加标点模型
-            if self.punc_model and isinstance(self.punc_model, str):
+            # 添加离线标点模型
+            if self.punc_model:
                 model_kwargs["punc_model"] = self.punc_model
-                if self.punc_model_revision and isinstance(
-                    self.punc_model_revision, str
-                ):
+                if self.punc_model_revision:
                     model_kwargs["punc_model_revision"] = self.punc_model_revision
 
             # 添加说话人分离模型（如果启用）
-            if self.spk_model and isinstance(self.spk_model, str):
+            if self.spk_model:
                 model_kwargs["spk_model"] = self.spk_model
 
-            self.model = AutoModel(**model_kwargs)
+            self.offline_model = AutoModel(**model_kwargs)
+            logger.info("离线FunASR模型加载成功")
 
         except Exception as e:
-            raise DefaultServerErrorException(f"FunASR模型加载失败: {str(e)}")
+            raise DefaultServerErrorException(f"离线FunASR模型加载失败: {str(e)}")
+
+    def _load_realtime_model(self) -> None:
+        """加载实时FunASR模型"""
+        try:
+            from funasr import AutoModel
+
+            logger.info(f"正在加载实时FunASR模型: {self.realtime_model_path}")
+
+            # 构建实时模型参数
+            model_kwargs = {
+                "model": self.realtime_model_path,
+                "trust_remote_code": True,
+                "device": self._device,
+            }
+
+            # 添加VAD模型
+            if self.vad_model:
+                model_kwargs["vad_model"] = self.vad_model
+                if self.vad_model_revision:
+                    model_kwargs["vad_model_revision"] = self.vad_model_revision
+
+            # 添加实时标点模型
+            if self.punc_realtime_model:
+                model_kwargs["punc_model"] = self.punc_realtime_model
+                if self.punc_model_revision:
+                    model_kwargs["punc_model_revision"] = self.punc_model_revision
+
+            # 添加说话人分离模型（如果启用）
+            if self.spk_model:
+                model_kwargs["spk_model"] = self.spk_model
+
+            self.realtime_model = AutoModel(**model_kwargs)
+            logger.info("实时FunASR模型加载成功")
+
+        except Exception as e:
+            raise DefaultServerErrorException(f"实时FunASR模型加载失败: {str(e)}")
 
     def transcribe_file(
         self,
@@ -133,12 +238,16 @@ class FunASREngine(ASREngine):
         dolphin_region_sym: str = "SHANGHAI",
     ) -> str:
         """使用FunASR转录音频文件"""
-        if not self.model:
-            raise DefaultServerErrorException("模型未加载")
+        # 优先使用离线模型进行文件识别
+        if not self.offline_model:
+            raise DefaultServerErrorException(
+                "离线模型未加载，无法进行文件识别。"
+                "请将 ASR_MODEL_MODE 设置为 offline 或 all"
+            )
 
         try:
             # FunASR的generate方法可以直接接受文件路径
-            result = self.model.generate(
+            result = self.offline_model.generate(
                 input=audio_path,
                 hotword=hotwords if hotwords else None,
                 cache={} if not hasattr(self, "_cache") else getattr(self, "_cache"),
@@ -162,9 +271,28 @@ class FunASREngine(ASREngine):
         except Exception as e:
             raise DefaultServerErrorException(f"语音识别失败: {str(e)}")
 
+    def transcribe_websocket(
+        self,
+        audio_chunk: bytes,
+        cache: Optional[Dict] = None,
+        is_final: bool = False,
+        **kwargs,
+    ) -> str:
+        """WebSocket流式语音识别（为未来的WebSocket ASR接口准备）"""
+        if not self.realtime_model:
+            raise DefaultServerErrorException(
+                "实时模型未加载，无法进行WebSocket流式识别。"
+                "请将 ASR_MODEL_MODE 设置为 realtime 或 all"
+            )
+
+        # 为未来的WebSocket ASR接口预留实现
+        # 实际实现时需要根据FunASR的流式API进行调整，类似TTS的websocket实现
+        logger.warning("WebSocket流式识别功能尚未实现")
+        return ""
+
     def is_model_loaded(self) -> bool:
         """检查模型是否已加载"""
-        return self.model is not None
+        return self.offline_model is not None or self.realtime_model is not None
 
     @property
     def device(self) -> str:
@@ -172,8 +300,8 @@ class FunASREngine(ASREngine):
         return self._device
 
 
-class DolphinEngine(ASREngine):
-    """Dolphin语音识别引擎"""
+class DolphinEngine(BaseASREngine):
+    """Dolphin语音识别引擎，不支持实时识别"""
 
     def __init__(
         self,
@@ -186,6 +314,11 @@ class DolphinEngine(ASREngine):
         self.model_path = model_path or "DataoceanAI/dolphin-small"
         self.size = size
         self._load_model()
+
+    @property
+    def supports_realtime(self) -> bool:
+        """Dolphin不支持实时识别"""
+        return False
 
     def _detect_device(self, device: str = "auto") -> str:
         """检测可用设备"""
@@ -329,6 +462,16 @@ class DolphinEngine(ASREngine):
         except Exception as e:
             raise DefaultServerErrorException(f"语音识别失败: {str(e)}")
 
+    def transcribe_websocket(
+        self,
+        audio_chunk: bytes,
+        cache: Optional[Dict] = None,
+        is_final: bool = False,
+        **kwargs,
+    ) -> str:
+        """WebSocket流式语音识别（Dolphin不支持）"""
+        raise DefaultServerErrorException("Dolphin引擎不支持WebSocket流式识别")
+
     def is_model_loaded(self) -> bool:
         """检查模型是否已加载"""
         return self.model is not None
@@ -340,7 +483,7 @@ class DolphinEngine(ASREngine):
 
 
 # 全局ASR引擎实例缓存
-_asr_engine: Optional[ASREngine] = None
+_asr_engine: Optional[BaseASREngine] = None
 
 # 全局标点符号模型缓存（避免重复加载）
 _global_punc_model = None
@@ -384,7 +527,7 @@ def clear_global_punc_model():
             logger.info("全局标点符号模型缓存已清理")
 
 
-def get_asr_engine() -> ASREngine:
+def get_asr_engine() -> BaseASREngine:
     """获取全局ASR引擎实例（默认模型）"""
     global _asr_engine
     if _asr_engine is None:

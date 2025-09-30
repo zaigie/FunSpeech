@@ -44,10 +44,14 @@ class Settings:
 
     # ASR模型配置
     ASR_MODELS_CONFIG: str = BASE_DIR / "app/services/asr/models.json"
+    ASR_MODEL_MODE: str = "realtime"  # ASR模型加载模式: realtime, offline, all
     VAD_MODEL: str = "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch"
     VAD_MODEL_REVISION: str = "v2.0.4"
     PUNC_MODEL: str = "iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch"
     PUNC_MODEL_REVISION: str = "v2.0.4"
+    PUNC_REALTIME_MODEL: str = (
+        "iic/punc_ct-transformer_zh-cn-common-vad_realtime-vocab272727"
+    )
     SPK_MODEL: Optional[str] = None  # 禁用说话人分离功能
 
     # TTS模型配置
@@ -111,6 +115,9 @@ class Settings:
         # 设备配置
         self.DEVICE = os.getenv("DEVICE", self.DEVICE)
         self.TTS_DEVICE = os.getenv("TTS_DEVICE", self.TTS_DEVICE)
+
+        # ASR模型配置
+        self.ASR_MODEL_MODE = os.getenv("ASR_MODEL_MODE", self.ASR_MODEL_MODE)
 
         # TTS模型配置
         self.TTS_MODEL_MODE = os.getenv("TTS_MODEL_MODE", self.TTS_MODEL_MODE)

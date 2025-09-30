@@ -2,34 +2,44 @@
     "models": {
         "paraformer-large": {
             "name": "Paraformer Large",
-            "path": "iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
             "engine": "funasr",
             "description": "高精度中文语音识别模型",
             "languages": [
                 "zh"
             ],
-            "default": true
+            "default": true,
+            "supports_realtime": true,
+            "models": {
+                "offline": "iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
+                "realtime": "iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online"
+            }
         },
         "sensevoice-small": {
             "name": "SenseVoice Small",
-            "path": "iic/SenseVoiceSmall",
             "engine": "funasr",
             "description": "通用语音识别模型，支持中英文混合识别",
             "languages": [
                 "zh",
                 "en"
-            ]
+            ],
+            "supports_realtime": false,
+            "models": {
+                "offline": "iic/SenseVoiceSmall"
+            }
         },
         "dolphin-small": {
             "name": "Dolphin Small",
-            "path": "DataoceanAI/dolphin-small",
             "engine": "dolphin",
             "size": "small",
             "description": "轻量级语音识别模型",
             "languages": [
                 "zh",
                 "en"
-            ]
+            ],
+            "supports_realtime": false,
+            "models": {
+                "offline": "DataoceanAI/dolphin-small"
+            }
         }
     }
 }
