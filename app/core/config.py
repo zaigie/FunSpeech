@@ -43,6 +43,12 @@ class Settings:
     LOG_BACKUP_COUNT: int = 50  # 保留50个备份文件
 
     # ASR模型配置
+    FUNASR_AUTOMODEL_KWARGS = {
+        "trust_remote_code": False,
+        "disable_update": True,
+        "disable_pbar": True,
+        "disable_log": False,
+    }
     ASR_MODELS_CONFIG: str = BASE_DIR / "app/services/asr/models.json"
     ASR_MODEL_MODE: str = "all"  # ASR模型加载模式: realtime, offline, all
     ASR_ENABLE_REALTIME_PUNC: bool = False  # 是否启用实时标点模型（用于中间结果展示）

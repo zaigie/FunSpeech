@@ -20,12 +20,6 @@ from ...utils.text_processing import apply_itn_to_text
 
 logger = logging.getLogger(__name__)
 
-FUNASR_AUTOMODEL_KWARGS = {
-    "trust_remote_code": False,
-    "disable_update": True,
-    "disable_pbar": True,
-}
-
 
 class ModelType(Enum):
     """模型类型枚举"""
@@ -166,8 +160,8 @@ class FunASREngine(RealTimeASREngine):
 
             model_kwargs = {
                 "model": self.offline_model_path,
-                "trust_remote_code": True,
                 "device": self._device,
+                **settings.FUNASR_AUTOMODEL_KWARGS,
             }
 
             if self.vad_model:
@@ -197,7 +191,7 @@ class FunASREngine(RealTimeASREngine):
             model_kwargs = {
                 "model": self.realtime_model_path,
                 "device": self._device,
-                **FUNASR_AUTOMODEL_KWARGS,
+                **settings.FUNASR_AUTOMODEL_KWARGS,
             }
 
             if self.spk_model:
@@ -213,7 +207,7 @@ class FunASREngine(RealTimeASREngine):
                     model=self.punc_model,
                     model_revision=self.punc_model_revision,
                     device=self._device,
-                    **FUNASR_AUTOMODEL_KWARGS,
+                    **settings.FUNASR_AUTOMODEL_KWARGS,
                 )
                 logger.info("离线标点模型加载成功")
 
@@ -224,7 +218,7 @@ class FunASREngine(RealTimeASREngine):
                     model=self.punc_realtime_model,
                     model_revision=self.punc_model_revision,
                     device=self._device,
-                    **FUNASR_AUTOMODEL_KWARGS,
+                    **settings.FUNASR_AUTOMODEL_KWARGS,
                 )
                 logger.info("实时标点模型加载成功")
 
@@ -501,7 +495,7 @@ def get_global_punc_model(device: str):
                     model=settings.PUNC_MODEL,
                     model_revision=settings.PUNC_MODEL_REVISION,
                     device=device,
-                    **FUNASR_AUTOMODEL_KWARGS,
+                    **settings.FUNASR_AUTOMODEL_KWARGS,
                 )
                 logger.info("全局标点符号模型加载成功")
             except Exception as e:
