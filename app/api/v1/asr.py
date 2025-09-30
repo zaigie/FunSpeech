@@ -50,6 +50,7 @@ from ...utils.audio import (
     cleanup_temp_file,
     get_audio_file_suffix,
     normalize_audio_for_asr,
+    get_audio_duration,
 )
 from ...services.asr.manager import get_model_manager
 
@@ -305,6 +306,15 @@ async def asr_transcribe(
         # 将音频标准化为ASR模型所需的格式（统一转换为WAV格式，指定采样率）
         normalized_audio_path = normalize_audio_for_asr(audio_path, params.sample_rate)
         logger.debug(f"[{task_id}] 音频已标准化: {normalized_audio_path}")
+
+        # 验证音频时长，一句话识别不支持超过60秒的音频
+        audio_duration = get_audio_duration(normalized_audio_path)
+        if audio_duration > 60:
+            raise InvalidParameterException(
+                f"音频时长超过限制，一句话识别最大支持60秒，当前音频时长: {audio_duration:.1f}秒",
+                task_id,
+            )
+        logger.debug(f"[{task_id}] 音频时长验证通过: {audio_duration:.1f}秒")
 
         # 执行语音识别
         model_manager = get_model_manager()
