@@ -154,7 +154,7 @@ class FunASREngine(RealTimeASREngine):
             raise DefaultServerErrorException(f"不支持的ASR_MODEL_MODE: {mode}")
 
     def _load_offline_model(self) -> None:
-        """加载离线FunASR模型（内置标点模型）"""
+        """加载离线FunASR模型（不再内嵌VAD/PUNC，改用全局实例）"""
         try:
             logger.info(f"正在加载离线FunASR模型: {self.offline_model_path}")
 
@@ -164,27 +164,20 @@ class FunASREngine(RealTimeASREngine):
                 **settings.FUNASR_AUTOMODEL_KWARGS,
             }
 
-            if self.vad_model:
-                model_kwargs["vad_model"] = self.vad_model
-                if self.vad_model_revision:
-                    model_kwargs["vad_model_revision"] = self.vad_model_revision
-
-            if self.punc_model:
-                model_kwargs["punc_model"] = self.punc_model
-                if self.punc_model_revision:
-                    model_kwargs["punc_model_revision"] = self.punc_model_revision
+            # 不再传递vad_model和punc_model参数给AutoModel
+            # VAD和PUNC将通过全局实例在需要时单独调用
 
             if self.spk_model:
                 model_kwargs["spk_model"] = self.spk_model
 
             self.offline_model = AutoModel(**model_kwargs)
-            logger.info("离线FunASR模型加载成功")
+            logger.info("离线FunASR模型加载成功（VAD/PUNC将按需使用全局实例）")
 
         except Exception as e:
             raise DefaultServerErrorException(f"离线FunASR模型加载失败: {str(e)}")
 
     def _load_realtime_model(self) -> None:
-        """加载实时FunASR模型及其配套的标点模型"""
+        """加载实时FunASR模型（不再内嵌PUNC，改用全局实例）"""
         try:
             logger.info(f"正在加载实时FunASR模型: {self.realtime_model_path}")
 
@@ -198,29 +191,10 @@ class FunASREngine(RealTimeASREngine):
                 model_kwargs["spk_model"] = self.spk_model
 
             self.realtime_model = AutoModel(**model_kwargs)
-            logger.info("实时FunASR模型加载成功")
+            logger.info("实时FunASR模型加载成功（PUNC将按需使用全局实例）")
 
-            # 始终加载离线标点模型（用于句子结束时的完整标点处理）
-            if self.punc_model:
-                logger.info(f"正在加载离线标点模型: {self.punc_model}")
-                self.punc_model_instance = AutoModel(
-                    model=self.punc_model,
-                    model_revision=self.punc_model_revision,
-                    device=self._device,
-                    **settings.FUNASR_AUTOMODEL_KWARGS,
-                )
-                logger.info("离线标点模型加载成功")
-
-            # 根据配置决定是否加载实时标点模型（用于流式中间结果展示）
-            if settings.ASR_ENABLE_REALTIME_PUNC and self.punc_realtime_model:
-                logger.info(f"正在加载实时标点模型: {self.punc_realtime_model}")
-                self.punc_realtime_model_instance = AutoModel(
-                    model=self.punc_realtime_model,
-                    model_revision=self.punc_model_revision,
-                    device=self._device,
-                    **settings.FUNASR_AUTOMODEL_KWARGS,
-                )
-                logger.info("实时标点模型加载成功")
+            # 注意：不再单独加载punc_model_instance和punc_realtime_model_instance
+            # 这些将通过全局实例在需要时调用
 
         except Exception as e:
             raise DefaultServerErrorException(f"实时FunASR模型加载失败: {str(e)}")
@@ -236,7 +210,12 @@ class FunASREngine(RealTimeASREngine):
         dolphin_lang_sym: str = "zh",
         dolphin_region_sym: str = "SHANGHAI",
     ) -> str:
-        """使用FunASR转录音频文件"""
+        """使用FunASR转录音频文件（支持动态启用VAD和PUNC）
+
+        根据参数组合采用不同策略：
+        1. 只PUNC：手动后处理
+        2. 有VAD：利用全局实例直接构造临时AutoModel（复用已加载模型）
+        """
         # 优先使用离线模型进行文件识别
         if not self.offline_model:
             raise DefaultServerErrorException(
@@ -245,12 +224,81 @@ class FunASREngine(RealTimeASREngine):
             )
 
         try:
-            # FunASR的generate方法可以直接接受文件路径
-            result = self.offline_model.generate(
-                input=audio_path,
-                hotword=hotwords if hotwords else None,
-                cache={} if not hasattr(self, "_cache") else getattr(self, "_cache"),
-            )
+            # 根据参数决定是否需要VAD/PUNC
+            need_vad = enable_vad
+            need_punc = enable_punctuation
+
+            if need_vad:
+                # 使用VAD时，需要构建临时AutoModel
+                # 预加载全局VAD和PUNC实例
+                logger.debug("启用VAD，预加载全局VAD模型")
+                vad_model_instance = get_global_vad_model(self._device)
+
+                punc_model_instance = None
+                if need_punc:
+                    logger.debug("预加载全局PUNC模型")
+                    punc_model_instance = get_global_punc_model(self._device)
+
+                # 创建临时AutoModel（直接赋值已加载的模型，而不是重新构建）
+                temp_automodel = type('TempAutoModel', (), {})()
+                temp_automodel.model = self.offline_model.model
+                temp_automodel.kwargs = self.offline_model.kwargs
+                temp_automodel.model_path = self.offline_model.model_path
+
+                # 设置VAD（使用全局实例）
+                temp_automodel.vad_model = vad_model_instance.model
+                temp_automodel.vad_kwargs = vad_model_instance.kwargs
+
+                # 设置PUNC（使用全局实例）
+                if punc_model_instance:
+                    temp_automodel.punc_model = punc_model_instance.model
+                    temp_automodel.punc_kwargs = punc_model_instance.kwargs
+                else:
+                    temp_automodel.punc_model = None
+                    temp_automodel.punc_kwargs = {}
+
+                temp_automodel.spk_model = None
+                temp_automodel.spk_kwargs = {}
+
+                # 绑定方法（使用types.MethodType更可靠）
+                import types
+                temp_automodel.inference = types.MethodType(
+                    AutoModel.inference, temp_automodel
+                )
+                temp_automodel.inference_with_vad = types.MethodType(
+                    AutoModel.inference_with_vad, temp_automodel
+                )
+                temp_automodel.generate = types.MethodType(
+                    AutoModel.generate, temp_automodel
+                )
+
+                logger.debug("临时AutoModel构建完成，调用generate")
+                result = temp_automodel.generate(
+                    input=audio_path,
+                    hotword=hotwords if hotwords else None,
+                    cache={},
+                )
+            else:
+                # 不使用VAD，直接识别
+                result = self.offline_model.generate(
+                    input=audio_path,
+                    hotword=hotwords if hotwords else None,
+                    cache={},
+                )
+
+                # 如果启用了PUNC但没有VAD，需要手动应用PUNC
+                if need_punc and result and len(result) > 0:
+                    text = result[0].get("text", "").strip()
+                    if text:
+                        logger.debug("手动应用PUNC模型（因为未启用VAD）")
+                        punc_model_instance = get_global_punc_model(self._device)
+                        punc_result = punc_model_instance.generate(
+                            input=text,
+                            cache={},
+                        )
+                        if punc_result and len(punc_result) > 0:
+                            result[0]["text"] = punc_result[0].get("text", text)
+                            logger.debug(f"标点符号添加完成")
 
             # 提取识别结果
             if result and len(result) > 0:
@@ -290,17 +338,6 @@ class FunASREngine(RealTimeASREngine):
     def is_model_loaded(self) -> bool:
         """检查模型是否已加载"""
         return self.offline_model is not None or self.realtime_model is not None
-
-    def get_punc_model(self):
-        """获取用于句子级标点恢复的离线标点模型
-
-        优先返回独立加载的离线标点模型，如果没有则返回offline_model（内置标点能力）
-        """
-        if self.punc_model_instance is not None:
-            return self.punc_model_instance
-        if self.offline_model is not None:
-            return self.offline_model
-        return None
 
     @property
     def device(self) -> str:
@@ -477,19 +514,64 @@ class DolphinEngine(BaseASREngine):
 # 全局ASR引擎实例缓存
 _asr_engine: Optional[BaseASREngine] = None
 
+# 全局VAD模型缓存（避免重复加载）
+_global_vad_model = None
+_vad_model_lock = threading.Lock()
+
 # 全局标点符号模型缓存（避免重复加载）
 _global_punc_model = None
 _punc_model_lock = threading.Lock()
 
+# 全局实时标点符号模型缓存（避免重复加载）
+_global_punc_realtime_model = None
+_punc_realtime_model_lock = threading.Lock()
+
+
+def get_global_vad_model(device: str):
+    """获取全局VAD模型实例"""
+    global _global_vad_model
+
+    with _vad_model_lock:
+        if _global_vad_model is None:
+            try:
+                logger.info("正在加载全局VAD模型...")
+
+                _global_vad_model = AutoModel(
+                    model=settings.VAD_MODEL,
+                    model_revision=settings.VAD_MODEL_REVISION,
+                    device=device,
+                    **settings.FUNASR_AUTOMODEL_KWARGS,
+                )
+                logger.info("全局VAD模型加载成功")
+            except Exception as e:
+                logger.error(f"全局VAD模型加载失败: {str(e)}")
+                _global_vad_model = None
+                raise
+
+    return _global_vad_model
+
+
+def clear_global_vad_model():
+    """清理全局VAD模型缓存"""
+    global _global_vad_model
+
+    with _vad_model_lock:
+        if _global_vad_model is not None:
+            del _global_vad_model
+            _global_vad_model = None
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            logger.info("全局VAD模型缓存已清理")
+
 
 def get_global_punc_model(device: str):
-    """获取全局标点符号模型实例"""
+    """获取全局标点符号模型实例（离线版）"""
     global _global_punc_model
 
     with _punc_model_lock:
         if _global_punc_model is None:
             try:
-                logger.info("正在加载全局标点符号模型...")
+                logger.info("正在加载全局标点符号模型（离线）...")
 
                 _global_punc_model = AutoModel(
                     model=settings.PUNC_MODEL,
@@ -497,9 +579,9 @@ def get_global_punc_model(device: str):
                     device=device,
                     **settings.FUNASR_AUTOMODEL_KWARGS,
                 )
-                logger.info("全局标点符号模型加载成功")
+                logger.info("全局标点符号模型（离线）加载成功")
             except Exception as e:
-                logger.error(f"全局标点符号模型加载失败: {str(e)}")
+                logger.error(f"全局标点符号模型（离线）加载失败: {str(e)}")
                 _global_punc_model = None
                 raise
 
@@ -516,7 +598,44 @@ def clear_global_punc_model():
             _global_punc_model = None
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-            logger.info("全局标点符号模型缓存已清理")
+            logger.info("全局标点符号模型（离线）缓存已清理")
+
+
+def get_global_punc_realtime_model(device: str):
+    """获取全局实时标点符号模型实例"""
+    global _global_punc_realtime_model
+
+    with _punc_realtime_model_lock:
+        if _global_punc_realtime_model is None:
+            try:
+                logger.info("正在加载全局标点符号模型（实时）...")
+
+                _global_punc_realtime_model = AutoModel(
+                    model=settings.PUNC_REALTIME_MODEL,
+                    model_revision=settings.PUNC_MODEL_REVISION,
+                    device=device,
+                    **settings.FUNASR_AUTOMODEL_KWARGS,
+                )
+                logger.info("全局标点符号模型（实时）加载成功")
+            except Exception as e:
+                logger.error(f"全局标点符号模型（实时）加载失败: {str(e)}")
+                _global_punc_realtime_model = None
+                raise
+
+    return _global_punc_realtime_model
+
+
+def clear_global_punc_realtime_model():
+    """清理全局实时标点符号模型缓存"""
+    global _global_punc_realtime_model
+
+    with _punc_realtime_model_lock:
+        if _global_punc_realtime_model is not None:
+            del _global_punc_realtime_model
+            _global_punc_realtime_model = None
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            logger.info("全局标点符号模型（实时）缓存已清理")
 
 
 def get_asr_engine() -> BaseASREngine:

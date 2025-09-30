@@ -433,7 +433,7 @@ def normalize_audio_for_asr(audio_path: str, target_sr: int = 16000) -> str:
 
         # 转换为标准WAV格式
         normalized_path = convert_audio_to_wav(audio_path, target_sr=target_sr)
-        logger.info(f"音频文件已标准化: {audio_path} -> {normalized_path}")
+        logger.debug(f"音频文件已标准化: {audio_path} -> {normalized_path}")
         return normalized_path
 
     except Exception as e:

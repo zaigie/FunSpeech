@@ -511,17 +511,22 @@ class AliyunWebSocketASRService:
                     result_text_raw
                     and settings.ASR_ENABLE_REALTIME_PUNC
                     and params.get("enable_punctuation_prediction", True)
-                    and hasattr(asr_engine, "punc_realtime_model_instance")
-                    and asr_engine.punc_realtime_model_instance
                 ):
                     try:
-                        punc_result = asr_engine.punc_realtime_model_instance.generate(
-                            input=result_text_raw, cache=punc_cache
+                        from .asr.engine import get_global_punc_realtime_model
+
+                        # 使用全局实时PUNC模型
+                        punc_realtime_model = get_global_punc_realtime_model(
+                            asr_engine.device
                         )
-                        if punc_result and len(punc_result) > 0:
-                            result_text_with_punc = (
-                                punc_result[0].get("text", result_text_raw).strip()
+                        if punc_realtime_model:
+                            punc_result = punc_realtime_model.generate(
+                                input=result_text_raw, cache=punc_cache
                             )
+                            if punc_result and len(punc_result) > 0:
+                                result_text_with_punc = (
+                                    punc_result[0].get("text", result_text_raw).strip()
+                                )
                     except Exception as e:
                         logger.warning(f"[{task_id}] 实时标点恢复失败: {e}")
 
@@ -553,8 +558,12 @@ class AliyunWebSocketASRService:
             return text
 
         try:
+            from .asr.engine import get_global_punc_model
+
             asr_engine = self._ensure_asr_engine()
-            punc_model = asr_engine.get_punc_model()
+
+            # 使用全局PUNC模型
+            punc_model = get_global_punc_model(asr_engine.device)
 
             if punc_model is None:
                 logger.info(f"[{task_id}] 标点模型未加载，返回原文本")
