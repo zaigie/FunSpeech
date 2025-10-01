@@ -4,7 +4,7 @@
 
   <h3>开箱即用的本地私有化部署语音服务</h3>
 
-基于 FunASR 和 CosyVoice 的语音处理 API 服务,提供语音识别(ASR)和语音合成(TTS)功能,与阿里云语音 API 完全兼容,且支持 Websocket 流式 TTS 协议。
+基于 FunASR 和 CosyVoice 的语音处理 API 服务,提供语音识别(ASR)和语音合成(TTS)功能,与阿里云语音 API 完全兼容,且支持 Websocket 流式 ASR/TTS 协议。
 
 ---
 
@@ -23,7 +23,7 @@
 ## ✨ 主要特性
 
 - **🚀 多模型支持** - 集成 FunASR、Dolphin、CosyVoice 等多种高质量模型
-- **🌐 完全 API 兼容** - 支持阿里云语音 API 和 OpenAI TTS API 格式,及 Websocket 流式 TTS 协议
+- **🌐 完全 API 兼容** - 支持阿里云语音 API 和 OpenAI TTS API 格式,及 Websocket 流式 ASR/TTS 协议
 - **🎭 智能音色管理** - 支持预训练音色和零样本克隆音色
 - **🔧 灵活配置** - 统一的配置系统,支持环境变量和文件配置
 - **🛡️ 安全鉴权** - 完善的身份认证和权限控制
