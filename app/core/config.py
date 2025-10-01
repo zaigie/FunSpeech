@@ -59,7 +59,6 @@ class Settings:
     PUNC_REALTIME_MODEL: str = (
         "iic/punc_ct-transformer_zh-cn-common-vad_realtime-vocab272727"
     )
-    SPK_MODEL: Optional[str] = None  # 禁用说话人分离功能
 
     # TTS模型配置
     SFT_MODEL_ID: str = "iic/CosyVoice-300M-SFT"  # 预训练音色模型（CosyVoice）

@@ -231,6 +231,9 @@ class FunASREngine(RealTimeASREngine):
                 temp_automodel.kwargs = self.offline_model.kwargs
                 temp_automodel.model_path = self.offline_model.model_path
 
+                # HACK: 不设置的话，会导致临时AutoModel的spk_model属性不存在而报错
+                temp_automodel.spk_model = None
+
                 # 设置VAD（使用全局实例）
                 temp_automodel.vad_model = vad_model_instance.model
                 temp_automodel.vad_kwargs = vad_model_instance.kwargs
