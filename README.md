@@ -4,7 +4,7 @@
 
   <h3>开箱即用的本地私有化部署语音服务</h3>
 
-基于 FunASR 和 CosyVoice 的语音处理 API 服务，提供语音识别（ASR）和语音合成（TTS）功能，与阿里云语音 API 完全兼容，且支持 Websocket 流式 TTS 协议。
+基于 FunASR 和 CosyVoice 的语音处理 API 服务,提供语音识别(ASR)和语音合成(TTS)功能,与阿里云语音 API 完全兼容,且支持 Websocket 流式 TTS 协议。
 
 ---
 
@@ -23,15 +23,15 @@
 ## ✨ 主要特性
 
 - **🚀 多模型支持** - 集成 FunASR、Dolphin、CosyVoice 等多种高质量模型
-- **🌐 完全 API 兼容** - 支持阿里云语音 API 和 OpenAI TTS API 格式，及 Websocket 流式 TTS 协议
+- **🌐 完全 API 兼容** - 支持阿里云语音 API 和 OpenAI TTS API 格式,及 Websocket 流式 TTS 协议
 - **🎭 智能音色管理** - 支持预训练音色和零样本克隆音色
-- **🔧 灵活配置** - 统一的配置系统，支持环境变量和文件配置
+- **🔧 灵活配置** - 统一的配置系统,支持环境变量和文件配置
 - **🛡️ 安全鉴权** - 完善的身份认证和权限控制
 - **💾 性能优化** - 智能模型缓存和动态加载机制
 
 ## 📦 快速部署
 
-### Docker 部署（推荐）
+### Docker 部署(推荐)
 
 ```bash
 # 下载配置文件
@@ -43,32 +43,32 @@ docker-compose up -d
 
 服务将在 `http://localhost:8000` 启动
 
-GPU 部署请将 docker-compose.yml 文件中的 image 替换为 **docker.cnb.cool/nexa/funspeech:gpu-latest**
+**GPU 部署**请将 docker-compose.yml 文件中的 image 替换为 **docker.cnb.cool/nexa/funspeech:gpu-latest**
+
+> 💡 详细部署说明(包括 CPU/GPU 版本区别、环境变量配置)请查看 [部署指南](./docs/deployment.md)
 
 ### 数据持久化
 
-FunSpeech 会在以下目录存储持久化数据：
+FunSpeech 会在以下目录存储持久化数据:
 
-- **`./data`** - 数据库文件（异步 TTS 任务记录等）
-- **`./temp`** - 临时文件（音频缓存等）
+- **`./data`** - 数据库文件(异步 TTS 任务记录等)
+- **`./temp`** - 临时文件(音频缓存等)
 - **`./logs`** - 日志文件
 - **`./voices`** - 零样本音色文件
 
-Docker Compose 已自动配置数据卷映射，确保容器重启后数据不丢失。
+Docker Compose 已自动配置数据卷映射,确保容器重启后数据不丢失。
 
-> 💡 详细部署说明请查看 [部署指南](./docs/deployment.md)
-
-对于要使用和下载的模型，您可以在运行中动态下载，也可以提前从 ModelScope 下载后映射，需要的模型在 [支持的模型](#-支持的模型) ，同时注意提前规划好存储空间以免存储空间不足无法下载～
+对于要使用和下载的模型,您可以在运行中动态下载,也可以提前从 ModelScope 下载后映射,需要的模型在 [支持的模型](#-支持的模型),同时注意提前规划好存储空间以免存储空间不足无法下载～
 
 ### 本地开发
 
-**系统要求：**
+**系统要求:**
 
 - Python 3.10+
-- CUDA 12.1+（可选，用于 GPU 加速）
-- FFmpeg（音频格式转换）
+- CUDA 12.1+(可选,用于 GPU 加速)
+- FFmpeg(音频格式转换)
 
-**安装步骤：**
+**安装步骤:**
 
 ```bash
 # 克隆项目
@@ -83,62 +83,27 @@ pip install -r requirements.txt
 python main.py
 ```
 
-## 🔧 环境配置
-
-### 鉴权配置
-
-```bash
-# 启用身份验证
-export APPTOKEN=your_secret_token    # Token 验证
-export APPKEY=your_app_key           # AppKey 验证
-
-# 开发模式（禁用验证）
-# 不设置以上环境变量即可
-```
-
-### TTS 模型按需加载配置
-
-```bash
-# 加载所有模型（默认）
-export TTS_MODEL_MODE=all
-
-# 仅加载SFT模型（CosyVoice1），用于预设音色
-export TTS_MODEL_MODE=cosyvoice1
-
-# 仅加载零样本克隆模型（CosyVoice2），用于音色克隆
-export TTS_MODEL_MODE=cosyvoice2
-```
-
-### 配置说明
-
-- **未设置 APPTOKEN/APPKEY**：验证可选，开发模式
-- **设置了 APPTOKEN/APPKEY**：验证必需，生产模式
-
-### TTS 模型模式说明
-
-| 模式           | 功能       | 优势           | 限制         |
-| -------------- | ---------- | -------------- | ------------ |
-| **all**        | 完整功能   | 预设+克隆音色  | 需要更多资源 |
-| **cosyvoice1** | 仅预设音色 | 节省空间和内存 | 无音色克隆   |
-| **cosyvoice2** | 仅音色克隆 | 节省空间和内存 | 无预设音色   |
-
-**典型使用场景：**
-
-- 🎯 **仅需预设音色**：`TTS_MODEL_MODE=cosyvoice1` - 适合标准语音合成需求
-- 🔊 **仅需音色克隆**：`TTS_MODEL_MODE=cosyvoice2` - 适合个性化语音定制
-- 🌟 **完整功能**：`TTS_MODEL_MODE=all` - 适合需要所有语音功能的场景
-
 ## 📚 API 接口
 
-### ASR（语音识别）
+### ASR(语音识别)
 
-| 端点                    | 方法 | 功能     |
-| ----------------------- | ---- | -------- |
-| `/stream/v1/asr`        | POST | 语音识别 |
-| `/stream/v1/asr/models` | GET  | 模型列表 |
-| `/stream/v1/asr/health` | GET  | 健康检查 |
+| 端点                    | 方法 | 功能           |
+| ----------------------- | ---- | -------------- |
+| `/stream/v1/asr`        | POST | 一句话语音识别 |
+| `/stream/v1/asr/models` | GET  | 模型列表       |
+| `/stream/v1/asr/health` | GET  | 健康检查       |
 
-### TTS（语音合成）
+**完整接口文档:**
+
+- 一句话 ASR：[阿里云一句话语音识别 API](https://help.aliyun.com/zh/isi/developer-reference/restful-api-2)
+- 流式 ASR：[Websocket 协议说明](https://help.aliyun.com/zh/isi/developer-reference/websocket)
+
+**特殊说明:**
+
+- 一句话识别限制音频时长 60 秒
+- 热词功能待实现
+
+### TTS(语音合成)
 
 | 端点                            | 方法      | 功能                        |
 | ------------------------------- | --------- | --------------------------- |
@@ -153,11 +118,19 @@ export TTS_MODEL_MODE=cosyvoice2
 | **`/ws/v1/tts`**                | WebSocket | **双向流式语音合成** 🚀     |
 | `/ws/v1/tts/test`               | GET       | WebSocket 测试页面          |
 
-## 🎯 使用示例
+**完整接口文档:**
 
-### ASR 语音识别
+- 基础 TTS: [语音合成 RESTful API](https://help.aliyun.com/zh/isi/developer-reference/restful-api-3)
+- 流式 TTS: [Websocket 协议说明](https://help.aliyun.com/zh/isi/developer-reference/websocket-protocol-description)
+- 异步 TTS: [阿里云异步长文本语音合成 RESTful API](https://help.aliyun.com/zh/isi/developer-reference/restful-api)
 
-**基础识别（开发模式）：**
+**特殊说明:**
+
+- 合成传入采样率中，CosyVoice1 采样率固定（默认）为 22050，CosyVoice2 采样率固定（默认）为 24000
+
+## 🎯 快速开始
+
+**ASR 语音识别:**
 
 ```bash
 curl -X POST "http://localhost:8000/stream/v1/asr?format=wav&sample_rate=16000" \
@@ -165,231 +138,30 @@ curl -X POST "http://localhost:8000/stream/v1/asr?format=wav&sample_rate=16000" 
   --data-binary @audio.wav
 ```
 
-**指定模型识别：**
+**WebSocket 流式识别测试:** 访问 `http://localhost:8000/ws/v1/asr/test`
 
-```bash
-curl -X POST "http://localhost:8000/stream/v1/asr?customization_id=sensevoice-small&format=wav" \
-  -H "X-NLS-Token: your_token" \
-  -H "Content-Type: application/octet-stream" \
-  --data-binary @audio.wav
-```
-
-**使用音频链接：**
-
-```bash
-curl -X POST "http://localhost:8000/stream/v1/asr?audio_address=https://example.com/audio.wav" \
-  -H "X-NLS-Token: your_token"
-```
-
-### TTS 语音合成
-
-**标准 TTS 接口：**
+**TTS 语音合成:**
 
 ```bash
 curl -X POST "http://localhost:8000/stream/v1/tts" \
   -H "Content-Type: application/json" \
-  -d '{
-    "text": "你好，这是语音合成测试。",
-    "voice": "中文女",
-    "speech_rate": 0,
-    "volume": 50
-  }' \
+  -d '{"text": "你好，这是语音合成测试。", "voice": "中文女"}' \
   --output speech.wav
 ```
 
-**OpenAI 兼容接口：**
+**WebSocket 流式合成测试:** 访问 `http://localhost:8000/ws/v1/tts/test`
 
-```bash
-curl -X POST "http://localhost:8000/openai/v1/audio/speech" \
-  -H "Authorization: Bearer your_token" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "tts-1",
-    "input": "你好，这是 OpenAI 兼容接口测试。",
-    "voice": "中文女",
-    "speed": 1.0
-  }' \
-  --output speech.wav
-```
-
-**Python 示例：**
-
-```python
-import requests
-
-def text_to_speech(text, voice="中文女", output_file="output.wav"):
-    url = "http://localhost:8000/stream/v1/tts"
-
-    data = {
-        "text": text,
-        "voice": voice,
-        "format": "wav",
-        "sample_rate": 22050,
-        "volume": 50
-    }
-
-    response = requests.post(url, json=data)
-
-    if response.headers.get('Content-Type') == 'audio/mpeg':
-        with open(output_file, 'wb') as f:
-            f.write(response.content)
-        print(f"音频已保存至: {output_file}")
-    else:
-        print("请求失败:", response.json())
-
-# 使用示例
-text_to_speech("你好，这是语音合成测试！")
-```
-
-### WebSocket 双向流式语音合成 🚀
-
-**特别适用于 LLM 逐词输出场景**，支持在同一连接中连续发送多个文本片段进行实时合成。
-
-**在线测试：** 访问 `http://localhost:8000/ws/v1/tts/test`
-
-**核心特性：**
-
-- 🔄 **双向流模式**：StartSynthesis → 多次 RunSynthesis → StopSynthesis
-- 🎯 **真实流式**：基于 CosyVoice 的`stream=True`功能，音频实时生成
-- 🚀 **低延迟**：音频数据立即传输，无需等待完整合成
-- 🎪 **完全兼容**：严格遵循阿里云流式语音合成 WebSocket 协议
-
-**JavaScript 快速示例：**
-
-```javascript
-const ws = new WebSocket("ws://localhost:8000/ws/v1/tts");
-ws.binaryType = "arraybuffer";
-
-let taskId = "uuid_task_id";
-let audioChunks = [];
-
-ws.onopen = () => {
-  // 1. 开始合成会话
-  ws.send(
-    JSON.stringify({
-      header: {
-        message_id: "uuid_msg_id",
-        task_id: taskId,
-        namespace: "FlowingSpeechSynthesizer",
-        name: "StartSynthesis",
-      },
-      payload: {
-        voice: "中文女",
-        format: "PCM",
-        sample_rate: 22050,
-      },
-    })
-  );
-};
-
-ws.onmessage = (event) => {
-  if (event.data instanceof ArrayBuffer) {
-    // 音频数据
-    audioChunks.push(new Uint8Array(event.data));
-  } else {
-    // JSON消息
-    const response = JSON.parse(event.data);
-    if (response.header.name === "SynthesisStarted") {
-      // 2. 发送文本片段（可多次调用）
-      sendText("你好，这是第一段文本。");
-      sendText("这是第二段文本。");
-      // 3. 结束合成
-      stopSynthesis();
-    }
-  }
-};
-
-function sendText(text) {
-  ws.send(
-    JSON.stringify({
-      header: {
-        message_id: "uuid_msg_id",
-        task_id: taskId,
-        namespace: "FlowingSpeechSynthesizer",
-        name: "RunSynthesis",
-      },
-      payload: { text },
-    })
-  );
-}
-
-function stopSynthesis() {
-  ws.send(
-    JSON.stringify({
-      header: {
-        message_id: "uuid_msg_id",
-        task_id: taskId,
-        namespace: "FlowingSpeechSynthesizer",
-        name: "StopSynthesis",
-      },
-    })
-  );
-}
-```
-
-### 异步 TTS（长文本语音合成）🚀
-
-**特别适用于长文本处理**，避免超时问题，支持句子级时间戳返回。
-
-**提交异步合成任务：**
-
-```bash
-curl -X POST "http://localhost:8000/rest/v1/tts/async" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "payload": {
-      "tts_request": {
-        "voice": "中文女",
-        "sample_rate": 16000,
-        "format": "wav",
-        "text": "这是一个长文本语音合成测试。支持异步处理，避免超时问题。",
-        "enable_subtitle": true
-      },
-      "enable_notify": false
-    },
-    "header": {
-      "appkey": "your_appkey",
-      "token": "your_token"
-    }
-  }'
-```
-
-**查询合成结果：**
-
-```bash
-curl "http://localhost:8000/rest/v1/tts/async?appkey=your_appkey&token=your_token&task_id=your_task_id"
-```
-
-**Python 测试示例：**
-
-```bash
-# 运行完整的异步TTS测试
-python tests/test_async_tts.py
-```
-
-> 📖 **详细 API 格式参考**：[阿里云异步语音合成 RESTful API](https://help.aliyun.com/zh/isi/developer-reference/restful-api)
-
-**Python 交互式示例：**
-
-```bash
-# 交互式双向流测试
-python tests/test_aliyun_websocket.py
-
-# 指定参数测试
-python tests/test_aliyun_websocket.py --voice "中文女" --format PCM
-```
-
-> 📖 **完整协议文档：** [WebSocket 流式语音合成接口](./docs/websocket_tts_api.md)
+> 💡 更多示例请查看 `tests/` 目录或访问 `http://localhost:8000/docs`(开发模式)
 
 ## 🎵 音色系统
 
 ### 智能音色列表
 
-音色列表 API (`/stream/v1/tts/voices`) 会根据当前的模型模式智能返回对应的音色：
+音色列表 API (`/stream/v1/tts/voices`) 会根据当前的模型模式智能返回对应的音色:
 
-- **cosyvoice1 模式**：仅返回预设音色列表（7 个）
-- **cosyvoice2 模式**：仅返回零样本克隆音色列表（允许为空）
-- **all 模式**：返回所有音色列表（预设+零样本克隆）
+- **cosyvoice1 模式**: 仅返回预设音色列表(7 个)
+- **cosyvoice2 模式**: 仅返回零样本克隆音色列表(允许为空)
+- **all 模式**: 返回所有音色列表(预设+零样本克隆)
 
 ### 预训练音色
 
@@ -403,19 +175,30 @@ python tests/test_aliyun_websocket.py --voice "中文女" --format PCM
 
 ### 零样本克隆音色
 
-**添加新音色：**
+**准备音色文件:**
+
+克隆音色需要准备一对文件:
+
+- **音频文件** (`*.wav`): 3-30 秒,清晰无噪音,建议 16kHz+ 采样率
+- **文本文件** (`*.txt`): 音频对应的文字内容,需完全匹配
+
+文件命名必须一致,例如: `张三.wav` 和 `张三.txt`
+
+**添加新音色:**
 
 ```bash
-# 1. 将音频文件 (*.wav) 和文本文件 (*.txt) 放入 voices 目录
+# 1. 将音频和文本文件放入 voices 目录
 mkdir -p ./voices
-# 2. 运行音色管理工具
+cp 张三.wav 张三.txt ./voices/
+
+# 2. 运行音色管理工具添加
 python -m app.services.tts.clone.voice_manager --add
 
 # 3. 验证音色
 curl "http://localhost:8000/stream/v1/tts/voices"
 ```
 
-**音色管理命令：**
+**音色管理命令:**
 
 ```bash
 python -m app.services.tts.clone.voice_manager --list           # 列出所有音色
@@ -424,170 +207,152 @@ python -m app.services.tts.clone.voice_manager --info <名称>    # 查看音色
 python -m app.services.tts.clone.voice_manager --refresh        # 刷新音色列表
 ```
 
-**音色指导功能：**
+**使用克隆音色:**
 
-```json
-{
-  "text": "欢迎使用语音服务",
-  "voice": "中文女",
-  "prompt": "说话温柔一些，像客服一样亲切"
-}
+```bash
+curl -X POST "http://localhost:8000/stream/v1/tts" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "你好，这是使用克隆音色的测试。",
+    "voice": "张三"
+  }' \
+  --output cloned_voice.wav
 ```
 
-> ⚠️ 注意：音色指导功能目前仅适用于零样本克隆音色（CosyVoice2）
+**音色指导功能:**
 
-## ⚙️ 参数配置
+对于零样本克隆音色,可以使用 `prompt` 参数进行音色指导:
 
-### ASR 主要参数
+```bash
+curl -X POST "http://localhost:8000/stream/v1/tts" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "text": "欢迎使用语音服务",
+    "voice": "张三",
+    "prompt": "说话温柔一些，像客服一样亲切"
+  }' \
+  --output guided_voice.wav
+```
 
-| 参数                                | 类型    | 默认值           | 说明                        |
-| ----------------------------------- | ------- | ---------------- | --------------------------- |
-| `customization_id`                  | String  | paraformer-large | ASR 模型 ID                 |
-| `format`                            | String  | -                | 音频格式 (wav, mp3, aac 等) |
-| `sample_rate`                       | Integer | 16000            | 采样率 (8000-24000)         |
-| `enable_punctuation_prediction`     | Boolean | false            | 是否添加标点                |
-| `enable_inverse_text_normalization` | Boolean | false            | 中文数字转换                |
-| `audio_address`                     | String  | -                | 音频文件链接                |
-
-### TTS 主要参数
-
-| 参数          | 类型    | 默认值 | 说明               |
-| ------------- | ------- | ------ | ------------------ |
-| `text`        | String  | -      | 待合成文本（必需） |
-| `voice`       | String  | -      | 音色名称           |
-| `format`      | String  | wav    | 音频格式           |
-| `sample_rate` | Integer | 22050  | 采样率             |
-| `speech_rate` | Float   | 0      | 语速 (-500~500)    |
-| `volume`      | Integer | 50     | 音量 (0~100)       |
-| `prompt`      | String  | -      | 音色指导文本       |
+> ⚠️ 注意: 音色指导功能仅适用于零样本克隆音色(CosyVoice2 模型)
 
 ## 🤖 支持的模型
 
-### ASR 模型
+服务会在首次使用时自动从 ModelScope 下载模型,也可以提前手动下载以加快启动速度。
 
-**FunASR 系列：**
+### TTS 模型 (语音合成)
 
-- **Paraformer Large** - 高精度中文识别（默认）
-  - [ModelScope](https://www.modelscope.cn/models/iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch)
-  - 占用大小：**约 850MB**
-- **SenseVoice Small** - 高精度多语言混合识别、情感辨识和音频事件检测
-  - [ModelScope](https://www.modelscope.cn/models/iic/SenseVoiceSmall)
-  - 占用大小：**约 900MB**
+通过环境变量 `TTS_MODEL_MODE` 控制加载模式。
 
-**Dolphin 系列：**
+| 模型名称               | 加载模式             | 大小  | 说明                              | ModelScope 链接                                         |
+| ---------------------- | -------------------- | ----- | --------------------------------- | ------------------------------------------------------- |
+| **CosyVoice-300M-SFT** | `cosyvoice1` / `all` | 5.4GB | 预训练音色模型,支持 7 种预设音色  | https://www.modelscope.cn/models/iic/CosyVoice-300M-SFT |
+| **CosyVoice2-0.5B**    | `cosyvoice2` / `all` | 5.5GB | 零样本克隆模型,支持音色克隆和指导 | https://www.modelscope.cn/models/iic/CosyVoice2-0.5B    |
 
-- **Dolphin Small** - 多语言、多方言识别模型
-  - [ModelScope](https://www.modelscope.cn/models/DataoceanAI/dolphin-small)
-  - 占用大小：**约 1.4GB**
+**模式说明:**
 
-### TTS 模型
+- `TTS_MODEL_MODE=cosyvoice1` - 仅加载预设音色模型 (~5.4GB)
+- `TTS_MODEL_MODE=cosyvoice2` - 仅加载音色克隆模型 (~5.5GB)
+- `TTS_MODEL_MODE=all` - 加载全部模型 (~11GB,默认)
 
-- **CosyVoice-300M-SFT** - CosyVoice1 预训练音色模型
-  - [ModelScope](https://www.modelscope.cn/models/iic/CosyVoice-300M-SFT)
-  - 占用大小：**约 5.4GB**
-- **CosyVoice2-0.5B** - CosyVoice2 音色克隆模型
-  - [ModelScope](https://www.modelscope.cn/models/iic/CosyVoice2-0.5B)
-  - 占用大小：**约 5.5GB**
+### ASR 模型 (语音识别)
 
-### PUNC 模型
+通过环境变量 `ASR_MODEL_MODE` 控制加载模式。
 
-**标点符号预测模型**用于为语音识别结果自动添加标点符号，提高文本的可读性。
+| 模型名称                    | 加载模式           | 大小  | 说明                               | ModelScope 链接                                                                                         |
+| --------------------------- | ------------------ | ----- | ---------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| **Paraformer Large (离线)** | `offline` / `all`  | 848MB | 高精度中文离线识别,默认模型        | https://www.modelscope.cn/models/iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch |
+| **Paraformer Large (流式)** | `realtime` / `all` | 848MB | 高精度中文实时流式识别             | https://www.modelscope.cn/models/iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online  |
+| **SenseVoice Small**        | `offline` / `all`  | 897MB | 多语言识别、情感辨识、音频事件检测 | https://www.modelscope.cn/models/iic/SenseVoiceSmall                                                    |
 
-[ModelScope](https://www.modelscope.cn/models/iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch)
+**模式说明:**
 
-占用大小：**约 290MB**
+- `ASR_MODEL_MODE=realtime` - 仅加载实时流式模型 (~848MB)
+- `ASR_MODEL_MODE=offline` - 仅加载离线模型 (~1.7GB,含多个模型)
+- `ASR_MODEL_MODE=all` - 加载全部模型 (~2.6GB,默认)
 
-### VAD 模型
+### 辅助模型
 
-**语音活动检测模型**用于检测音频中的语音片段，过滤静音和噪音，提高识别准确率。
+| 模型名称             | 类型       | 大小  | 说明                                                                    | ModelScope 链接                                                                                |
+| -------------------- | ---------- | ----- | ----------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| **PUNC Transformer** | 标点预测   | 283MB | 为离线识别结果添加标点符号                                              | https://www.modelscope.cn/models/iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch      |
+| **PUNC Realtime**    | 实时标点   | 279MB | 为实时识别中间结果添加标点(可选,需设置 `ASR_ENABLE_REALTIME_PUNC=true`) | https://www.modelscope.cn/models/iic/punc_ct-transformer_zh-cn-common-vad_realtime-vocab272727 |
+| **FSMN VAD**         | 语音检测   | 3.9MB | 检测语音片段,过滤静音和噪音                                             | https://www.modelscope.cn/models/iic/speech_fsmn_vad_zh-cn-16k-common-pytorch                  |
+| **CAM++ Speaker**    | 说话人识别 | 28MB  | 说话人特征提取(未启用)                                                  | https://www.modelscope.cn/models/iic/speech_campplus_sv_zh-cn_16k-common                       |
 
-[ModelScope](https://www.modelscope.cn/models/iic/speech_fsmn_vad_zh-cn-16k-common-pytorch)
+### 提前下载模型
 
-占用大小：**约 4MB**
+**安装 ModelScope CLI:**
 
-## 📋 响应格式
-
-### ASR 成功响应
-
-```json
-{
-  "task_id": "cf7b0c5339244ee29cd4e43fb97f****",
-  "result": "识别出的文本内容",
-  "status": 20000000,
-  "message": "SUCCESS"
-}
+```bash
+pip install modelscope
 ```
 
-### TTS 成功响应
+**下载 TTS 模型:**
 
-- **Content-Type**: `audio/mpeg`
-- **Headers**: `task_id: tts_1640995200000_12345678`
-- **Body**: 音频文件二进制数据
+```bash
+# 预设音色模型 (TTS_MODEL_MODE=cosyvoice1 或 all)
+modelscope download --model iic/CosyVoice-300M-SFT
 
-### 错误响应
-
-```json
-{
-  "task_id": "8bae3613dfc54ebfa811a17d8a7a****",
-  "result": "",
-  "status": 40000001,
-  "message": "Gateway:ACCESS_DENIED:Invalid token"
-}
+# 音色克隆模型 (TTS_MODEL_MODE=cosyvoice2 或 all)
+modelscope download --model iic/CosyVoice2-0.5B
 ```
 
-## 📊 状态码说明
+**下载 ASR 模型:**
 
-| 状态码   | 说明         | 解决方案            |
-| -------- | ------------ | ------------------- |
-| 20000000 | 请求成功     | -                   |
-| 40000001 | 身份认证失败 | 检查 token 是否正确 |
-| 40000002 | 无效消息     | 检查请求格式        |
-| 40000003 | 无效参数     | 检查参数设置        |
-| 40000004 | 空闲超时     | 检查网络连接        |
-| 40000005 | 请求过多     | 控制并发数量        |
-| 50000000 | 服务端错误   | 重试请求            |
+```bash
+# 离线模型 (ASR_MODEL_MODE=offline 或 all)
+modelscope download --model iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch
+modelscope download --model iic/SenseVoiceSmall
 
-## 🛠️ 开发指南
-
-### 模型配置
-
-项目根目录的 `models.json` 文件配置可用的 ASR 模型：
-
-```json
-{
-  "models": {
-    "paraformer-large": {
-      "name": "Paraformer Large",
-      "path": "iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
-      "engine": "funasr",
-      "description": "高精度中文语音识别模型",
-      "languages": ["zh"],
-      "default": true
-    }
-  }
-}
+# 流式模型 (ASR_MODEL_MODE=realtime 或 all)
+modelscope download --model iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online
 ```
+
+**下载辅助模型(按需):**
+
+```bash
+# 标点预测模型(离线识别使用)
+modelscope download --model iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch
+
+# 实时标点模型(实时识别使用,可选)
+modelscope download --model iic/punc_ct-transformer_zh-cn-common-vad_realtime-vocab272727
+
+# VAD 模型
+modelscope download --model iic/speech_fsmn_vad_zh-cn-16k-common-pytorch
+```
+
+> 💡 **提示**: 模型默认下载到 `~/.cache/modelscope/hub`,Docker 部署时需映射此目录以复用模型文件。
+
+### 存储空间规划
+
+根据使用场景规划所需存储空间:
+
+| 场景           | 环境变量配置                                             | 所需模型                   | 总大小 |
+| -------------- | -------------------------------------------------------- | -------------------------- | ------ |
+| **最小部署**   | `TTS_MODEL_MODE=cosyvoice1`<br>`ASR_MODEL_MODE=offline`  | 1 个 TTS + 离线 ASR + 辅助 | ~7GB   |
+| **实时流式**   | `TTS_MODEL_MODE=cosyvoice1`<br>`ASR_MODEL_MODE=realtime` | 1 个 TTS + 流式 ASR + 辅助 | ~7GB   |
+| **完整 TTS**   | `TTS_MODEL_MODE=all`<br>`ASR_MODEL_MODE=offline`         | 2 个 TTS + 离线 ASR + 辅助 | ~12GB  |
+| **全功能部署** | `TTS_MODEL_MODE=all`<br>`ASR_MODEL_MODE=all`             | 全部模型                   | ~14GB  |
 
 ### API 文档
 
-- **开发模式**：访问 `http://localhost:8000/docs` 查看完整 API 文档
-- **生产模式**：API 文档自动隐藏
-- **WebSocket 流式合成**：查看 [详细协议文档](./docs/websocket_tts_api.md)
+- **开发模式**: 访问 `http://localhost:8000/docs` 查看完整 API 文档
+- **生产模式**: API 文档自动隐藏
 
 ## 🌐 相关链接
 
-- **WebSocket 流式合成协议**: [详细文档](./docs/websocket_tts_api.md)
-- **阿里云官方协议**: [流式语音合成 WebSocket 协议](https://help.aliyun.com/zh/isi/developer-reference/websocket-protocol-description)
+- **部署指南**: [详细文档](./docs/deployment.md)
 - **CosyVoice 模型**: [CosyVoice GitHub](https://github.com/FunAudioLLM/CosyVoice)
-- **FunASR 模型**: [FunASR GitHub](https://github.com/alibaba-damo-academy/FunASR)
-- **在线测试**: `http://localhost:8000/ws/v1/tts/test`
+- **Dolphin 模型**: [DataoceanAI/Dolphin](https://github.com/DataoceanAI/Dolphin)
+- **FunASR**: [FunASR GitHub](https://github.com/alibaba-damo-academy/FunASR)
 
 ## 📋 TODO
 
 - [ ] 实现 ASR 热词功能 (vocabulary_id)
 - [ ] 实现过滤语气词功能 (disfluency)
 - [ ] 实现 TTS 语调控制 (pitch_rate)
-- [ ] 优化多模型配置架构
+- [ ] 实现长录音文件异步识别接口
 
 ## 📄 许可证
 
@@ -595,4 +360,4 @@ python -m app.services.tts.clone.voice_manager --refresh        # 刷新音色�
 
 ## 🤝 贡献
 
-欢迎提交 Issue 和 Pull Request 来改进项目！
+欢迎提交 Issue 和 Pull Request 来改进项目!
