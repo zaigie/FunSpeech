@@ -18,6 +18,7 @@ WebSocket ASR 服务 - 阿里云实时语音识别协议实现
    - 收到StopTranscription指令
 4. 中间结果去重: 自动去除FunASR流式识别中的重复文本
 5. 缓存刷新: 句子结束时强制flush模型缓存，确保获取完整内容
+6. TranscriptionResultChanged结果: 返回当前句子从开始到现在的累计完整文本（去重拼接后的结果）
 
 【标点恢复机制】
 1. 流式识别中间结果：
@@ -383,12 +384,14 @@ class AliyunWebSocketASRService:
                                     if transcription_params.get(
                                         "enable_intermediate_result", True
                                     ):
+                                        # 发送当前句子的累计完整文本（去重拼接）
+                                        accumulated_text = "".join(sentence_texts)
                                         await self._send_transcription_result_changed(
                                             websocket,
                                             task_id,
                                             sentence_index + 1,
                                             audio_time,
-                                            result_text,
+                                            accumulated_text,
                                         )
 
                         except Exception as e:

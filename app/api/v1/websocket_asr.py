@@ -290,7 +290,7 @@ async def websocket_asr_test_page():
                         // 已完成的句子：黑色
                         displayHtml += sentence.text;
                     } else {
-                        // 中间结果：灰色斜体
+                        // 中间结果：灰色斜体（现在text已经是累计的完整句子）
                         displayHtml += `<span style="color: #999; font-style: italic;">${sentence.text}</span>`;
                     }
                 }
