@@ -13,8 +13,8 @@ WebSocket ASR 服务 - 阿里云实时语音识别协议实现
 1. VAD机制: 完全依赖FunASR模型内置的VAD能力
 2. SentenceBegin触发: 首次收到非空识别结果时
 3. SentenceEnd触发:
-   - 检测到句末标点符号(。！？.!?…)
    - 连续N次收到空识别结果(基于max_sentence_silence参数)
+   - 接收到静音帧（仅在正在识别的句子过程中）
    - 收到StopTranscription指令
 4. 中间结果去重: 自动去除FunASR流式识别中的重复文本
 5. 缓存刷新: 句子结束时强制flush模型缓存，确保获取完整内容
@@ -254,6 +254,7 @@ class AliyunWebSocketASRService:
                                 result_text,
                                 result_text_raw,
                                 is_sentence_end,
+                                is_silence_frame,
                                 audio_cache,
                                 audio_time,
                             ) = await self._process_audio_chunk(
@@ -290,10 +291,20 @@ class AliyunWebSocketASRService:
                             else:
                                 empty_result_count = 0
 
+                            # 检测到静音帧且当前有正在识别的句子，触发SentenceEnd
+                            if (
+                                is_silence_frame
+                                and sentence_active
+                                and sentence_texts_raw
+                            ):
+                                is_sentence_end = True
+                                logger.debug(f"[{task_id}] 检测到静音帧，判断句子结束")
+
                             if is_sentence_end and sentence_active:
                                 (
-                                    flush_result_text,
+                                    _,
                                     flush_result_text_raw,
+                                    _,
                                     _,
                                     audio_cache,
                                     audio_time,
@@ -441,6 +452,27 @@ class AliyunWebSocketASRService:
             logger.error(f"[{task_id}] 解析StartTranscription失败: {e}")
             return None
 
+    def _is_silence_frame(
+        self, audio_array: np.ndarray, threshold: float = 0.001
+    ) -> bool:
+        """检测音频帧是否为静音（优化版）
+
+        Args:
+            audio_array: 音频数据数组（float32，范围-1.0到1.0）
+            threshold: 静音阈值，低于此值视为静音
+
+        Returns:
+            True表示静音帧，False表示有效语音
+        """
+        if len(audio_array) == 0:
+            return True
+
+        # 使用更快的最大振幅检测，避免计算RMS
+        max_amplitude = np.max(np.abs(audio_array))
+
+        # 如果最大振幅都很低，直接判定为静音，无需进一步计算
+        return max_amplitude < threshold * 2
+
     async def _process_audio_chunk(
         self,
         audio_bytes: bytes,
@@ -450,8 +482,8 @@ class AliyunWebSocketASRService:
         current_audio_time: int,
         task_id: str,
         is_final: bool = False,
-    ) -> tuple[str, str, bool, Dict, int]:
-        """处理音频块，返回带标点文本、无标点文本、是否句子结束、缓存、音频时长"""
+    ) -> tuple[str, str, bool, bool, Dict, int]:
+        """处理音频块，返回带标点文本、无标点文本、是否句子结束、是否静音帧、缓存、音频时长"""
         try:
             asr_engine = self._ensure_asr_engine()
 
@@ -487,6 +519,12 @@ class AliyunWebSocketASRService:
 
             chunk_duration_ms = int(len(audio_array) / sample_rate * 1000)
             new_audio_time = current_audio_time + chunk_duration_ms
+
+            # 只在音频块足够大（>=400ms）时才检测静音帧，避免对小块音频进行检测增加延迟
+            # 静音帧检测主要用于主动结束句子，不需要对每个小块都检测
+            is_silence = False
+            if chunk_duration_ms >= 400:
+                is_silence = self._is_silence_frame(audio_array)
 
             chunk_size = [0, 10, 5]
             encoder_chunk_look_back = 4
@@ -533,10 +571,11 @@ class AliyunWebSocketASRService:
                     except Exception as e:
                         logger.warning(f"[{task_id}] 实时标点恢复失败: {e}")
 
-                if result_text_with_punc and self._is_sentence_boundary(
-                    result_text_with_punc
-                ):
-                    is_sentence_end = True
+                # 注释掉句末标点符号触发句子结束的逻辑，避免与静音帧检测冲突
+                # if result_text_with_punc and self._is_sentence_boundary(
+                #     result_text_with_punc
+                # ):
+                #     is_sentence_end = True
 
             if result_text_with_punc:
                 logger.debug(f"[{task_id}] 识别: '{result_text_with_punc}'")
@@ -545,6 +584,7 @@ class AliyunWebSocketASRService:
                 result_text_with_punc,
                 result_text_raw,
                 is_sentence_end,
+                is_silence,
                 cache,
                 new_audio_time,
             )
