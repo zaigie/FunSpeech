@@ -20,6 +20,9 @@ if __name__ == "__main__":
     print("=" * 60)
     print(f"📍 服务地址: http://{settings.HOST}:{settings.PORT}")
     print(f"🔧 设备配置: {settings.DEVICE}")
+    print(f"🔧 TTS设备配置: {settings.TTS_DEVICE}")
+    print(f"🧠 ASR模型模式: {settings.ASR_MODEL_MODE}")
+    print(f"🧠 TTS模型模式: {settings.TTS_MODEL_MODE}")
     print(
         f"📖 API文档: http://{settings.HOST}:{settings.PORT}/docs"
         if settings.DEBUG
@@ -31,6 +34,25 @@ if __name__ == "__main__":
     print(
         f"🩺 TTS健康检查: http://{settings.HOST}:{settings.PORT}/stream/v1/tts/health"
     )
+    print("=" * 60)
+
+    # 预加载所有模型
+    try:
+        from app.utils.model_loader import preload_models, print_model_statistics
+
+        preload_result = preload_models()
+
+        # 打印详细的加载统计到控制台
+        print()
+        print_model_statistics(preload_result, use_logger=False)
+        print()
+
+    except Exception as e:
+        print(f"\n❌ 模型预加载失败: {e}")
+        print("⚠️  服务将继续启动，模型将在首次使用时加载\n")
+
+    print("=" * 60)
+    print("🌐 正在启动API服务器...")
     print("=" * 60)
 
     try:

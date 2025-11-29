@@ -263,13 +263,28 @@ curl -X POST "http://localhost:8000/stream/v1/tts" \
 | --------------------------- | ------------------ | ----- | ---------------------------------- | ------------------------------------------------------------------------------------------------------- |
 | **Paraformer Large (离线)** | `offline` / `all`  | 848MB | 高精度中文离线识别,默认模型        | https://www.modelscope.cn/models/iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch |
 | **Paraformer Large (流式)** | `realtime` / `all` | 848MB | 高精度中文实时流式识别             | https://www.modelscope.cn/models/iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online  |
-| **SenseVoice Small**        | `offline` / `all`  | 897MB | 多语言识别、情感辨识、音频事件检测 | https://www.modelscope.cn/models/iic/SenseVoiceSmall                                                    |
+| **SenseVoice Small**        | 按需加载           | 897MB | 多语言识别、情感辨识、音频事件检测 | https://www.modelscope.cn/models/iic/SenseVoiceSmall                                                    |
+| **Dolphin Small**           | 按需加载           | 600MB | 轻量级多语言识别模型               | https://www.modelscope.cn/models/DataoceanAI/dolphin-small                                              |
 
 **模式说明:**
 
 - `ASR_MODEL_MODE=realtime` - 仅加载实时流式模型 (~848MB)
-- `ASR_MODEL_MODE=offline` - 仅加载离线模型 (~1.7GB,含多个模型)
-- `ASR_MODEL_MODE=all` - 加载全部模型 (~2.6GB,默认)
+- `ASR_MODEL_MODE=offline` - 仅加载离线模型 (~848MB,默认 Paraformer Large)
+- `ASR_MODEL_MODE=all` - 加载全部模型 (~1.7GB,包含离线+流式)
+
+**自定义模型预加载:**
+
+默认情况下，Paraformer Large 会在启动时自动加载。如果需要在启动时预加载其他模型（如 SenseVoice、Dolphin），可以使用 `AUTO_LOAD_CUSTOM_ASR_MODELS` 环境变量：
+
+```bash
+# 预加载单个自定义模型
+export AUTO_LOAD_CUSTOM_ASR_MODELS="sensevoice-small"
+
+# 预加载多个自定义模型（逗号分隔）
+export AUTO_LOAD_CUSTOM_ASR_MODELS="sensevoice-small,dolphin-small"
+```
+
+这样在启动时就会自动下载并加载指定的模型，避免首次调用时的等待时间。模型配置详见 `app/services/asr/models.json`。
 
 ### 辅助模型
 

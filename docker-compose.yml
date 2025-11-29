@@ -21,10 +21,26 @@ services:
       - LOG_LEVEL=INFO
       - DEVICE=auto
       - TTS_DEVICE=auto
+
+      # ASR 模型按需加载配置（可选，默认为 all）
+      # - ASR_MODEL_MODE=all          # 加载默认模型的离线和实时版本（默认）
+      # - ASR_MODEL_MODE=offline      # 仅加载离线模型
+      # - ASR_MODEL_MODE=realtime     # 仅加载实时流式模型
+
+      # ASR 自定义模型预加载（可选，默认为空）
+      # 配置后在启动时自动加载指定的自定义模型，避免首次调用时的等待
+      # 可用模型: sensevoice-small, dolphin-small
+      # - AUTO_LOAD_CUSTOM_ASR_MODELS=sensevoice-small              # 单个模型
+      # - AUTO_LOAD_CUSTOM_ASR_MODELS=sensevoice-small,dolphin-small  # 多个模型（逗号分隔）
+
+      # ASR 实时标点符号模型（可选，默认为 false）
+      # - ASR_ENABLE_REALTIME_PUNC=true  # 启用实时标点符号模型（用于流式识别中间结果）
+
       # TTS 模型按需加载配置（可选，默认为 all）
       # - TTS_MODEL_MODE=all          # 加载所有模型（默认）
       # - TTS_MODEL_MODE=cosyvoice1   # 仅加载SFT模型，用于预设音色
       # - TTS_MODEL_MODE=cosyvoice2   # 仅加载零样本克隆模型，用于音色克隆
+
       # 鉴权配置（可选，不设置则鉴权为可选）
       # - APPTOKEN=your_secret_token
       # - APPKEY=your_app_key
