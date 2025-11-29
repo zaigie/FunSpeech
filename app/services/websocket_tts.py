@@ -213,19 +213,28 @@ class AliyunWebSocketTTSService:
                     await self._send_task_failed(
                         websocket, task_id, f"Message Not Json: {message}"
                     )
+                except WebSocketDisconnect:
+                    # 客户端断开，向外层抛出
+                    logger.debug(f"[{task_id}] 处理消息时检测到客户端断开")
+                    raise
                 except Exception as e:
                     logger.error(f"[{task_id}] 处理消息异常: {e}")
                     await self._send_task_failed(websocket, task_id, str(e))
                     break
 
         except WebSocketDisconnect:
-            logger.info(f"[{task_id}] 阿里云WebSocket客户端断开连接")
+            logger.warning(f"[{task_id}] 客户端主动断开WebSocket连接")
         except Exception as e:
-            logger.error(f"[{task_id}] 阿里云WebSocket连接处理异常: {e}")
-            try:
-                await self._send_task_failed(websocket, task_id, str(e))
-            except:
-                pass
+            # 检查是否是WebSocket连接相关的异常
+            error_msg = str(e)
+            if "WebSocket is not connected" in error_msg or "Need to call \"accept\" first" in error_msg:
+                logger.warning(f"[{task_id}] WebSocket连接已断开: {e}")
+            else:
+                logger.error(f"[{task_id}] WebSocket连接处理异常: {e}")
+                try:
+                    await self._send_task_failed(websocket, task_id, str(e))
+                except:
+                    pass
 
     def _parse_start_synthesis(self, data: dict, task_id: str) -> Optional[dict]:
         """解析StartSynthesis消息"""
@@ -283,8 +292,16 @@ class AliyunWebSocketTTSService:
                 params["sample_rate"],
                 params["volume"],
                 task_id,
+                websocket,  # 传入websocket用于检测连接状态
             ):
                 if audio_chunk and len(audio_chunk) > 0:
+                    # 检查WebSocket连接状态
+                    if websocket.client_state.name != "CONNECTED":
+                        logger.warning(
+                            f"[{task_id}] 检测到客户端已断开，停止合成"
+                        )
+                        return
+
                     # 发送音频数据（二进制）
                     await websocket.send_bytes(audio_chunk)
                     audio_sent = True
@@ -303,11 +320,19 @@ class AliyunWebSocketTTSService:
             # 发送句子结束
             await self._send_sentence_end(websocket, task_id, session_id, text)
 
+        except WebSocketDisconnect:
+            logger.warning(f"[{task_id}] 客户端在合成过程中断开连接")
+            raise
         except Exception as e:
-            logger.error(f"[{task_id}] 流式合成失败: {e}")
-            await self._send_task_failed(
-                websocket, task_id, f"Synthesis failed: {str(e)}"
-            )
+            # 检查是否是因为WebSocket断开导致的异常
+            if "WebSocket is not connected" in str(e) or "Need to call \"accept\" first" in str(e):
+                logger.warning(f"[{task_id}] 客户端已断开连接: {e}")
+                raise WebSocketDisconnect()
+            else:
+                logger.error(f"[{task_id}] 流式合成失败: {e}")
+                await self._send_task_failed(
+                    websocket, task_id, f"Synthesis failed: {str(e)}"
+                )
 
     def _map_aliyun_voice_to_local(self, aliyun_voice: str) -> str:
         """直接返回音色名称，不进行映射"""
@@ -322,6 +347,7 @@ class AliyunWebSocketTTSService:
         sample_rate: int,
         volume: int,
         task_id: str,
+        websocket,  # 添加websocket参数用于检测连接状态
     ) -> AsyncGenerator[Optional[bytes], None]:
         """生成流式音频数据"""
         try:
@@ -335,7 +361,7 @@ class AliyunWebSocketTTSService:
                 if voice in tts_engine._voice_manager.list_clone_voices():
                     # 使用CosyVoice2流式合成（零样本克隆音色）
                     async for chunk in self._stream_clone_voice(
-                        text, voice, speed, format, task_id
+                        text, voice, speed, format, task_id, websocket
                     ):
                         yield chunk
                     return
@@ -343,18 +369,21 @@ class AliyunWebSocketTTSService:
             # 使用CosyVoice1流式合成（预设音色）
             if tts_engine.cosyvoice_sft:
                 async for chunk in self._stream_preset_voice(
-                    text, voice, speed, format, task_id
+                    text, voice, speed, format, task_id, websocket
                 ):
                     yield chunk
             else:
                 raise Exception("预设音色模型未加载")
 
+        except WebSocketDisconnect:
+            logger.warning(f"[{task_id}] 客户端断开，停止音频生成")
+            raise
         except Exception as e:
             logger.error(f"[{task_id}] 流式合成失败: {e}")
             raise e
 
     async def _stream_preset_voice(
-        self, text: str, voice: str, speed: float, format: str, task_id: str
+        self, text: str, voice: str, speed: float, format: str, task_id: str, websocket
     ) -> AsyncGenerator[bytes, None]:
         """使用CosyVoice1进行流式合成（预设音色）"""
         logger.debug(f"[{task_id}] 使用CosyVoice1流式合成预设音色: {voice}")
@@ -365,6 +394,11 @@ class AliyunWebSocketTTSService:
         for audio_data in tts_engine.cosyvoice_sft.inference_sft(
             text, voice, stream=True, speed=speed
         ):
+            # 检查连接状态，如果断开则立即停止
+            if websocket.client_state.name != "CONNECTED":
+                logger.warning(f"[{task_id}] 客户端已断开，停止预设音色合成")
+                return
+
             # 将tensor转换为numpy数组
             audio_array = audio_data["tts_speech"].numpy()
 
@@ -386,7 +420,7 @@ class AliyunWebSocketTTSService:
             await asyncio.sleep(0.01)
 
     async def _stream_clone_voice(
-        self, text: str, voice: str, speed: float, format: str, task_id: str
+        self, text: str, voice: str, speed: float, format: str, task_id: str, websocket
     ) -> AsyncGenerator[bytes, None]:
         """使用CosyVoice2进行流式合成（零样本克隆音色）"""
         logger.debug(f"[{task_id}] 使用CosyVoice2流式合成零样本克隆音色: {voice}")
@@ -402,6 +436,11 @@ class AliyunWebSocketTTSService:
             stream=True,  # 关键：启用流式模式
             speed=speed,
         ):
+            # 检查连接状态，如果断开则立即停止
+            if websocket.client_state.name != "CONNECTED":
+                logger.warning(f"[{task_id}] 客户端已断开，停止克隆音色合成")
+                return
+
             # 将tensor转换为numpy数组
             audio_array = audio_data["tts_speech"].numpy()
 
