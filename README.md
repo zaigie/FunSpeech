@@ -28,6 +28,7 @@
 - **🔧 灵活配置** - 统一的配置系统,支持环境变量和文件配置
 - **🛡️ 安全鉴权** - 完善的身份认证和权限控制
 - **💾 性能优化** - 智能模型缓存和动态加载机制
+- **🎯 智能过滤** - 流式ASR远场声音过滤，减少环境音误触发
 
 ## 📦 快速部署
 
@@ -102,6 +103,13 @@ python main.py
 
 - 一句话识别限制音频时长 60 秒
 - 热词功能待实现
+
+**流式ASR高级功能:**
+
+- **远场声音过滤** 🆕 - 自动过滤远场声音和环境音，减少误触发
+  - 基于RMS能量阈值检测
+  - 零性能开销（<0.1ms），完全可配置
+  - 默认启用，详见 [远场过滤文档](./docs/nearfield_filter.md)
 
 ### TTS(语音合成)
 
@@ -358,6 +366,7 @@ modelscope download --model iic/speech_fsmn_vad_zh-cn-16k-common-pytorch
 ## 🌐 相关链接
 
 - **部署指南**: [详细文档](./docs/deployment.md)
+- **远场过滤配置**: [配置指南](./docs/nearfield_filter.md)
 - **CosyVoice 模型**: [CosyVoice GitHub](https://github.com/FunAudioLLM/CosyVoice)
 - **Dolphin 模型**: [DataoceanAI/Dolphin](https://github.com/DataoceanAI/Dolphin)
 - **FunASR**: [FunASR GitHub](https://github.com/alibaba-damo-academy/FunASR)

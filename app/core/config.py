@@ -52,7 +52,9 @@ class Settings:
     ASR_MODELS_CONFIG: str = BASE_DIR / "app/services/asr/models.json"
     ASR_MODEL_MODE: str = "all"  # ASR模型加载模式: realtime, offline, all
     ASR_ENABLE_REALTIME_PUNC: bool = False  # 是否启用实时标点模型（用于中间结果展示）
-    AUTO_LOAD_CUSTOM_ASR_MODELS: str = ""  # 启动时自动加载的自定义ASR模型列表（逗号分隔，如: dolphin-small,sensevoice-small）
+    AUTO_LOAD_CUSTOM_ASR_MODELS: str = (
+        ""  # 启动时自动加载的自定义ASR模型列表（逗号分隔，如: dolphin-small,sensevoice-small）
+    )
     VAD_MODEL: str = "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch"
     VAD_MODEL_REVISION: str = "v2.0.4"
     PUNC_MODEL: str = "iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch"
@@ -60,6 +62,11 @@ class Settings:
     PUNC_REALTIME_MODEL: str = (
         "iic/punc_ct-transformer_zh-cn-common-vad_realtime-vocab272727"
     )
+
+    # 流式ASR远场过滤配置
+    ASR_ENABLE_NEARFIELD_FILTER: bool = True  # 是否启用远场声音过滤
+    ASR_NEARFIELD_RMS_THRESHOLD: float = 0.01  # RMS能量阈值（宽松模式，适合大多数场景）
+    ASR_NEARFIELD_FILTER_LOG_ENABLED: bool = True  # 是否记录过滤日志（默认启用）
 
     # TTS模型配置
     SFT_MODEL_ID: str = "iic/CosyVoice-300M-SFT"  # 预训练音色模型（CosyVoice）
@@ -134,6 +141,19 @@ class Settings:
 
         # TTS模型配置
         self.TTS_MODEL_MODE = os.getenv("TTS_MODEL_MODE", self.TTS_MODEL_MODE)
+
+        # 远场过滤配置
+        self.ASR_ENABLE_NEARFIELD_FILTER = (
+            os.getenv("ASR_ENABLE_NEARFIELD_FILTER", "true").lower() == "true"
+        )
+        self.ASR_NEARFIELD_RMS_THRESHOLD = float(
+            os.getenv(
+                "ASR_NEARFIELD_RMS_THRESHOLD", str(self.ASR_NEARFIELD_RMS_THRESHOLD)
+            )
+        )
+        self.ASR_NEARFIELD_FILTER_LOG_ENABLED = (
+            os.getenv("ASR_NEARFIELD_FILTER_LOG_ENABLED", "true").lower() == "true"
+        )
 
     def _ensure_directories(self):
         """确保必需的目录存在"""

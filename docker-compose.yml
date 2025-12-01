@@ -36,6 +36,12 @@ services:
       # ASR 实时标点符号模型（可选，默认为 false）
       # - ASR_ENABLE_REALTIME_PUNC=true  # 启用实时标点符号模型（用于流式识别中间结果）
 
+      # 流式ASR远场声音过滤配置（可选，默认已启用）
+      # 自动过滤远场声音和环境音，减少误触发，详见 docs/nearfield_filter.md
+      # - ASR_ENABLE_NEARFIELD_FILTER=true              # 总开关（默认启用）
+      # - ASR_NEARFIELD_RMS_THRESHOLD=0.01              # RMS能量阈值（默认宽松模式）
+      # - ASR_NEARFIELD_FILTER_LOG_ENABLED=true         # 调试日志（默认启用，调优后可关闭）
+
       # TTS 模型按需加载配置（可选，默认为 all）
       # - TTS_MODEL_MODE=all          # 加载所有模型（默认）
       # - TTS_MODEL_MODE=cosyvoice1   # 仅加载SFT模型，用于预设音色

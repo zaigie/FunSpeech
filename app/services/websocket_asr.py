@@ -41,6 +41,7 @@ from fastapi import WebSocketDisconnect
 from ..core.config import settings
 from ..core.security import validate_token_websocket
 from ..utils.text_processing import apply_itn_to_text
+from ..utils.audio_filter import is_nearfield_voice
 from ..models.websocket_asr import (
     AliyunASRWSHeader,
     AliyunASRNamespace,
@@ -296,26 +297,73 @@ class AliyunWebSocketASRService:
                                 audio_chunk = audio_buffer[:selected_chunk_size]
                                 audio_buffer = audio_buffer[selected_chunk_size:]
 
-                                # 将float32数组转换为PCM bytes (int16)
-                                audio_chunk_int16 = (audio_chunk * 32768.0).astype(np.int16)
-                                audio_bytes_chunk = audio_chunk_int16.tobytes()
+                                # ========== 远场声音过滤 ==========
+                                # 动态阈值：句子活跃时降低阈值，避免句子中间音量波动导致丢帧
+                                effective_rms_threshold = settings.ASR_NEARFIELD_RMS_THRESHOLD
+                                if sentence_active:
+                                    # 句子进行中，降低阈值容忍音量波动
+                                    effective_rms_threshold = settings.ASR_NEARFIELD_RMS_THRESHOLD * 0.6
 
-                                (
-                                    result_text,
-                                    result_text_raw,
-                                    is_sentence_end,
-                                    is_silence_frame,
-                                    audio_cache,
-                                    audio_time,
-                                ) = await self._process_audio_chunk(
-                                    audio_bytes_chunk,
-                                    audio_cache,
-                                    punc_cache,
-                                    transcription_params,
-                                    audio_time,
-                                    task_id,
-                                    is_final=False,
+                                is_nearfield, filter_metrics = is_nearfield_voice(
+                                    audio_chunk,
+                                    sample_rate=sample_rate,
+                                    rms_threshold=effective_rms_threshold,
+                                    enable_filter=settings.ASR_ENABLE_NEARFIELD_FILTER,
                                 )
+
+                                # 判断是否需要送入ASR处理
+                                if not is_nearfield:
+                                    # 远场声音：跳过ASR，但如果当前有活跃句子，需要继续计数以触发句子结束
+                                    if settings.ASR_NEARFIELD_FILTER_LOG_ENABLED:
+                                        logger.debug(
+                                            f"[{task_id}] 远场声音已过滤 - "
+                                            f"RMS: {filter_metrics['rms_energy']:.6f} (阈值: {effective_rms_threshold:.6f})"
+                                        )
+
+                                    # 更新音频时间
+                                    chunk_duration_ms = int(len(audio_chunk) / sample_rate * 1000)
+                                    audio_time += chunk_duration_ms
+
+                                    # 如果当前有活跃句子，将远场音频视为空结果进行计数
+                                    if sentence_active:
+                                        result_text = ""
+                                        result_text_raw = ""
+                                        is_sentence_end = False
+                                        is_silence_frame = False
+                                        # 不跳过，继续后续的句子结束判断
+                                    else:
+                                        # 没有活跃句子，直接跳过
+                                        continue
+
+                                else:
+                                    # 近场声音，正常送入ASR处理
+                                    if settings.ASR_NEARFIELD_FILTER_LOG_ENABLED and filter_metrics.get('enabled', True):
+                                        logger.debug(
+                                            f"[{task_id}] 近场声音检测通过 - "
+                                            f"RMS: {filter_metrics['rms_energy']:.6f} (阈值: {effective_rms_threshold:.6f})"
+                                        )
+
+                                    # 将float32数组转换为PCM bytes (int16)
+                                    audio_chunk_int16 = (audio_chunk * 32768.0).astype(np.int16)
+                                    audio_bytes_chunk = audio_chunk_int16.tobytes()
+
+                                    (
+                                        result_text,
+                                        result_text_raw,
+                                        is_sentence_end,
+                                        is_silence_frame,
+                                        audio_cache,
+                                        audio_time,
+                                    ) = await self._process_audio_chunk(
+                                        audio_bytes_chunk,
+                                        audio_cache,
+                                        punc_cache,
+                                        transcription_params,
+                                        audio_time,
+                                        task_id,
+                                        is_final=False,
+                                    )
+                                # ========== 远场过滤结束 ==========
 
                                 max_empty_count = max(
                                     3,

@@ -255,6 +255,37 @@ export ASR_ENABLE_REALTIME_PUNC=true
 - `ASR_MODEL_MODE` 控制加载哪些 ASR 模型
 - `ASR_ENABLE_REALTIME_PUNC=true` 会为实时识别中间结果添加标点(增加内存占用)
 
+### 流式ASR远场声音过滤配置
+
+| 环境变量                          | 默认值  | 说明                          | 可选值          |
+| --------------------------------- | ------- | ----------------------------- | --------------- |
+| `ASR_ENABLE_NEARFIELD_FILTER`     | `true`  | 总开关，是否启用远场声音过滤  | `true`, `false` |
+| `ASR_NEARFIELD_RMS_THRESHOLD`     | `0.01`  | RMS能量阈值（宽松模式）       | `0.005`~`0.05`  |
+| `ASR_NEARFIELD_FILTER_LOG_ENABLED` | `true`  | 是否记录过滤日志（便于调优）  | `true`, `false` |
+
+**功能说明:**
+
+流式ASR远场声音过滤是一个自动过滤远场声音（如远处说话声、电视人声等环境音）的功能，基于RMS能量阈值检测，零性能开销（<0.1ms），完全可配置。
+
+**使用示例:**
+
+```bash
+# 启用远场过滤（默认已启用）
+export ASR_ENABLE_NEARFIELD_FILTER=true
+export ASR_NEARFIELD_RMS_THRESHOLD=0.01
+
+# 启用调试日志，便于观察过滤效果
+export ASR_NEARFIELD_FILTER_LOG_ENABLED=true
+
+# 禁用远场过滤（恢复旧版本行为）
+export ASR_ENABLE_NEARFIELD_FILTER=false
+```
+
+**影响:**
+- 有效减少远场声音和环境音的误触发
+- 提升流式识别的准确性和用户体验
+- 详细配置和调优指南请参考 [远场过滤文档](./nearfield_filter.md)
+
 ### 完整配置示例
 
 **开发环境 (.env.dev):**
@@ -303,6 +334,11 @@ TTS_MODEL_MODE=all
 # 启用鉴权
 APPTOKEN=your_production_token_here
 APPKEY=your_production_appkey_here
+
+# 远场声音过滤（生产环境建议关闭调试日志）
+ASR_ENABLE_NEARFIELD_FILTER=true
+ASR_NEARFIELD_RMS_THRESHOLD=0.01
+ASR_NEARFIELD_FILTER_LOG_ENABLED=false
 ```
 
 ### 使用配置文件
