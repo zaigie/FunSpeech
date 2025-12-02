@@ -19,6 +19,7 @@ from typing import Optional, Dict, Any, Annotated
 import logging
 
 from ...core.config import settings
+from ...core.executor import run_sync
 from ...core.exceptions import (
     AuthenticationException,
     InvalidParameterException,
@@ -323,7 +324,9 @@ async def asr_transcribe(
         # 准备热词（如果有vocabulary_id，这里可以根据ID查询热词）
         hotwords = ""  # 实际项目中可以根据vocabulary_id查询对应的热词
 
-        result_text = asr_engine.transcribe_file(
+        # 使用线程池执行模型推理，避免阻塞事件循环
+        result_text = await run_sync(
+            asr_engine.transcribe_file,
             audio_path=normalized_audio_path,
             hotwords=hotwords,
             enable_punctuation=params.enable_punctuation_prediction,

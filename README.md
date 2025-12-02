@@ -61,6 +61,26 @@ Docker Compose 已自动配置数据卷映射,确保容器重启后数据不丢�
 
 对于要使用和下载的模型,您可以在运行中动态下载,也可以提前从 ModelScope 下载后映射,需要的模型在 [支持的模型](#-支持的模型),同时注意提前规划好存储空间以免存储空间不足无法下载～
 
+### 并发配置
+
+FunSpeech 支持多路并发处理,通过以下环境变量配置:
+
+| 环境变量 | 默认值 | 说明 |
+|----------|--------|------|
+| `WORKERS` | `1` | Worker进程数,每个进程加载独立模型(内存×N) |
+| `INFERENCE_THREAD_POOL_SIZE` | `auto` | 推理线程池大小,确保事件循环不阻塞 |
+
+**配置示例:**
+
+```yaml
+# docker-compose.yml
+environment:
+  - WORKERS=2                        # 2个Worker进程
+  - INFERENCE_THREAD_POOL_SIZE=4     # 每个Worker 4个推理线程
+```
+
+> 💡 详细配置说明和资源规划请查看 [部署指南 - 并发配置](./docs/deployment.md#并发配置)
+
 ### 本地开发
 
 **系统要求:**

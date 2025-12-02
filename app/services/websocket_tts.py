@@ -14,6 +14,7 @@ import numpy as np
 from fastapi import WebSocketDisconnect
 
 from ..core.config import settings
+from ..core.executor import run_sync_generator
 from ..core.security import validate_token_websocket, validate_request_appkey
 from ..models.websocket_tts import (
     AliyunWSMessage,
@@ -390,8 +391,9 @@ class AliyunWebSocketTTSService:
 
         tts_engine = self._ensure_tts_engine()
 
-        # 使用CosyVoice1的stream=True功能
-        for audio_data in tts_engine.cosyvoice_sft.inference_sft(
+        # 使用线程池执行流式推理，避免阻塞事件循环
+        async for audio_data in run_sync_generator(
+            tts_engine.cosyvoice_sft.inference_sft,
             text, voice, stream=True, speed=speed
         ):
             # 检查连接状态，如果断开则立即停止
@@ -427,8 +429,9 @@ class AliyunWebSocketTTSService:
 
         tts_engine = self._ensure_tts_engine()
 
-        # 使用CosyVoice2的stream=True功能进行零样本合成
-        for audio_data in tts_engine.cosyvoice_clone.inference_zero_shot(
+        # 使用线程池执行流式推理，避免阻塞事件循环
+        async for audio_data in run_sync_generator(
+            tts_engine.cosyvoice_clone.inference_zero_shot,
             text,
             "",  # prompt_text - 使用空字符串，由于我们使用保存的音色
             None,  # prompt_speech_16k - 不需要，因为使用保存的音色

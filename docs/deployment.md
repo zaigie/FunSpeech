@@ -501,6 +501,85 @@ docker-compose logs -f | grep -E "(ERROR|WARNING|DEBUG)"
 - GPU: NVIDIA GPU (6GB+ 显存)
 - 磁盘: 50GB
 
+### 并发配置
+
+FunSpeech 支持通过环境变量配置并发能力，包括多进程(Worker)和线程池两个维度。
+
+#### 配置参数
+
+| 环境变量 | 默认值 | 说明 |
+|----------|--------|------|
+| `WORKERS` | `1` | Uvicorn Worker 进程数，每个进程独立加载模型 |
+| `INFERENCE_THREAD_POOL_SIZE` | `max(4, CPU核心数)` | ���理线程池大小，用于异步执行模型推理 |
+
+#### 两个参数的作用
+
+| 参数 | 作用 | 资源影响 |
+|------|------|----------|
+| `WORKERS` | 多进程真正并行计算 | 内存/显存 × N 倍 |
+| `INFERENCE_THREAD_POOL_SIZE` | 事件循环不阻塞，I/O并发 | 几乎无额外开销 |
+
+#### 配置建议
+
+**GPU 服务器（显存有限）：**
+
+```bash
+# 24GB 显存，单模型约占 8GB
+WORKERS=2
+INFERENCE_THREAD_POOL_SIZE=4
+```
+
+**CPU 服务器（内存充足）：**
+
+```bash
+# 64GB 内存，16核CPU
+WORKERS=4
+INFERENCE_THREAD_POOL_SIZE=2
+```
+
+**资源紧张（单GPU刚够）：**
+
+```bash
+# 显存只够一个模型
+WORKERS=1
+INFERENCE_THREAD_POOL_SIZE=8
+```
+
+#### 计算公式
+
+```
+WORKERS = min(显存GB / 8, CPU核心数 / 2)
+INFERENCE_THREAD_POOL_SIZE = max(4, 8 / WORKERS)
+```
+
+#### Docker Compose 配置示例
+
+```yaml
+services:
+  funspeech:
+    image: docker.cnb.cool/nexa/funspeech:gpu-latest
+    environment:
+      - WORKERS=2
+      - INFERENCE_THREAD_POOL_SIZE=4
+      - DEVICE=cuda:0
+      - TTS_DEVICE=cuda:0
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+```
+
+#### 并发效果说明
+
+| 场景 | 单Worker无线程池 | 单Worker+线程池 | 多Worker+线程池 |
+|------|------------------|-----------------|-----------------|
+| 10路WebSocket同时请求 | 串行排队 | I/O不阻塞，推理串行 | 真正并行 |
+| 心跳检测 | 可能超时 | 正常 | 正常 |
+| HTTP请求响应 | 阻塞 | 及时响应 | 及时响应 |
+
 ### 性能优化建议
 
 1. **使用 GPU**: 推理速度提升 5-10 倍

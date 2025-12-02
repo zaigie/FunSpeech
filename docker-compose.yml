@@ -47,6 +47,15 @@ services:
       # - TTS_MODEL_MODE=cosyvoice1   # 仅加载SFT模型，用于预设音色
       # - TTS_MODEL_MODE=cosyvoice2   # 仅加载零样本克隆模型，用于音色克隆
 
+      # 推理线程池配置（可选，默认为 max(4, CPU核心数)）
+      # 用于实现多路并发推理，每个请求的模型推理在独���线程中执行
+      # - INFERENCE_THREAD_POOL_SIZE=8
+
+      # Worker 进程数配置（可选，默认为 1）
+      # 多 Worker 可实现真正的并行计算，但每个 Worker 都会加载独立的模型副本
+      # 注意：会成倍增加内存/显存占用，请确保资源充足
+      # - WORKERS=2
+
       # 鉴权配置（可选，不设置则鉴权为可选）
       # - APPTOKEN=your_secret_token
       # - APPKEY=your_app_key

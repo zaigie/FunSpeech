@@ -11,6 +11,7 @@ from typing import Optional
 import logging
 
 from ...core.config import settings
+from ...core.executor import run_sync
 from ...core.exceptions import (
     InvalidParameterException,
     DefaultServerErrorException,
@@ -269,9 +270,10 @@ async def synthesize_speech(
         # 清理文本
         clean_text = clean_text_for_tts(tts_request.text)
 
-        # 获取TTS引擎并合成
+        # 获取TTS引擎并合成（使用线程池执行，避免阻塞事件循环）
         tts_engine = get_tts_engine()
-        output_path = tts_engine.synthesize_speech(
+        output_path = await run_sync(
+            tts_engine.synthesize_speech,
             clean_text,
             tts_request.voice,
             speed,

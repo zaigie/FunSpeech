@@ -5,6 +5,8 @@ FastAPI应用创建和配置
 
 import warnings
 import os
+import logging
+from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -15,13 +17,52 @@ from .core.exceptions import (
     api_exception_handler,
     general_exception_handler,
 )
-from .core.logging import setup_logging
+from .core.logging import setup_logging, get_worker_id
+from .core.executor import shutdown_executor
 from .api.v1 import api_router
 
 # 忽略 Pydantic V2 兼容性警告
 warnings.filterwarnings("ignore", message="Valid config keys have changed in V2")
 warnings.filterwarnings("ignore", message=".*has conflict with protected namespace.*")
 warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
+
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """应用生命周期管理"""
+    workers = int(os.getenv("WORKERS", "1"))
+    worker_id = get_worker_id()
+
+    # 启动时
+    logger.info(f"Worker [{worker_id}] 启动中...")
+
+    # 多 Worker 模式下，每个 Worker 需要自己加载模型
+    if workers > 1:
+        try:
+            from .utils.model_loader import preload_models
+
+            logger.info(f"Worker [{worker_id}] 正在加载模型...")
+            preload_result = preload_models()
+
+            # 记录加载结果
+            loaded_count = sum(1 for r in preload_result.values() if r.get("loaded"))
+            total_count = len(preload_result)
+            logger.info(f"Worker [{worker_id}] 模型加载完成: {loaded_count}/{total_count}")
+
+        except Exception as e:
+            logger.error(f"Worker [{worker_id}] 模型预加载失败: {e}")
+            logger.warning(f"Worker [{worker_id}] 模型将在首次使用时加载")
+
+    logger.info(f"Worker [{worker_id}] 已就绪")
+
+    yield
+
+    # 关闭时
+    logger.info(f"Worker [{worker_id}] 正在关闭推理线程池...")
+    shutdown_executor()
+    logger.info(f"Worker [{worker_id}] 已关闭")
 
 
 def create_app() -> FastAPI:
@@ -36,6 +77,7 @@ def create_app() -> FastAPI:
         version=settings.APP_VERSION,
         docs_url=settings.docs_url,
         redoc_url=settings.redoc_url,
+        lifespan=lifespan,  # 添加生命周期管理
     )
 
     # 添加CORS中间件

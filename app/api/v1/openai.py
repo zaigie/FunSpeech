@@ -9,6 +9,7 @@ from fastapi.responses import FileResponse, JSONResponse
 import logging
 
 from ...core.config import settings
+from ...core.executor import run_sync
 from ...core.exceptions import InvalidParameterException, DefaultServerErrorException
 from ...core.security import validate_bearer_token, mask_sensitive_data
 from ...models.tts import OpenAITTSRequest
@@ -103,8 +104,9 @@ async def openai_compatible_tts(request_body: OpenAITTSRequest, request: Request
 
         sample_rate = 22050  # 默认采样率
 
-        # 统一语音合成（Engine层自动判断音色类型）
-        output_path = tts_engine.synthesize_speech(
+        # 统一语音合成（使用线程池执行，避免阻塞事件循环）
+        output_path = await run_sync(
+            tts_engine.synthesize_speech,
             clean_text,
             request_body.voice,
             request_body.speed,

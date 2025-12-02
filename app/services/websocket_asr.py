@@ -39,6 +39,7 @@ from enum import IntEnum
 from fastapi import WebSocketDisconnect
 
 from ..core.config import settings
+from ..core.executor import run_sync
 from ..core.security import validate_token_websocket
 from ..utils.text_processing import apply_itn_to_text
 from ..utils.audio_filter import is_nearfield_voice
@@ -670,7 +671,9 @@ class AliyunWebSocketASRService:
                 f"stride={chunk_stride}, expected={chunk_stride * 960})"
             )
 
-            result = asr_engine.realtime_model.generate(
+            # 使用线程池执行模型推理，避免阻塞事件循环
+            result = await run_sync(
+                asr_engine.realtime_model.generate,
                 input=audio_array,
                 cache=cache,
                 is_final=is_final,
@@ -703,8 +706,11 @@ class AliyunWebSocketASRService:
                             asr_engine.device
                         )
                         if punc_realtime_model:
-                            punc_result = punc_realtime_model.generate(
-                                input=result_text_raw, cache=punc_cache
+                            # 使用线程池执行标点模型推理
+                            punc_result = await run_sync(
+                                punc_realtime_model.generate,
+                                input=result_text_raw,
+                                cache=punc_cache,
                             )
                             if punc_result and len(punc_result) > 0:
                                 result_text_with_punc = (
@@ -755,7 +761,8 @@ class AliyunWebSocketASRService:
                 return text
 
             logger.debug(f"[{task_id}] 应用标点恢复: '{text}'")
-            result = punc_model.generate(input=text)
+            # 使用线程池执行标点模型推理
+            result = await run_sync(punc_model.generate, input=text)
 
             if result and len(result) > 0:
                 punctuated_text = result[0].get("text", text).strip()
