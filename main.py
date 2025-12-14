@@ -20,7 +20,7 @@ if __name__ == "__main__":
     logger.info(
         f"服务器配置: Host={settings.HOST}, Port={settings.PORT}, Debug={settings.DEBUG}"
     )
-    logger.info(f"设备配置: {settings.DEVICE}")
+    logger.info(f"GPU配置: ASR_GPUS={settings.ASR_GPUS or '(auto)'}, TTS_GPUS={settings.TTS_GPUS or '(auto)'}")
 
     uvicorn.run(
         "main:app",

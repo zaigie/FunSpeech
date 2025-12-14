@@ -9,6 +9,14 @@ import logging
 logger = logging.getLogger(__name__)
 
 
+def _get_default_asr_device() -> str:
+    """获取默认ASR设备"""
+    from ..services.asr.engine import parse_gpu_config
+    from ..core.config import settings
+    _, device = parse_gpu_config(settings.ASR_GPUS)
+    return device
+
+
 def print_model_statistics(result: dict, use_logger: bool = True):
     """
     打印模型加载统计信息
@@ -243,7 +251,7 @@ def preload_models() -> dict:
             logger.info("📥 正在加载VAD模型...")
             from ..services.asr.engine import get_global_vad_model
 
-            device = asr_engine.device if "asr_engine" in locals() else settings.DEVICE
+            device = asr_engine.device if "asr_engine" in locals() else _get_default_asr_device()
             vad_model = get_global_vad_model(device)
 
             if vad_model:
@@ -264,7 +272,7 @@ def preload_models() -> dict:
         logger.info("📥 正在加载标点符号模型(离线)...")
         from ..services.asr.engine import get_global_punc_model
 
-        device = asr_engine.device if "asr_engine" in locals() else settings.DEVICE
+        device = asr_engine.device if "asr_engine" in locals() else _get_default_asr_device()
         punc_model = get_global_punc_model(device)
 
         if punc_model:
@@ -284,7 +292,7 @@ def preload_models() -> dict:
             logger.info("📥 正在加载实时标点符号模型...")
             from ..services.asr.engine import get_global_punc_realtime_model
 
-            device = asr_engine.device if "asr_engine" in locals() else settings.DEVICE
+            device = asr_engine.device if "asr_engine" in locals() else _get_default_asr_device()
             punc_realtime_model = get_global_punc_realtime_model(device)
 
             if punc_realtime_model:

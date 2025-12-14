@@ -178,29 +178,38 @@ curl -H "X-NLS-Token: my_secret_token_2024" \
 curl "http://localhost:8000/rest/v1/tts/async?appkey=my_app_key_2024"
 ```
 
-### 设备配置
+### GPU配置
 
-| 环境变量     | 默认值 | 说明             | 可选值                  |
-| ------------ | ------ | ---------------- | ----------------------- |
-| `DEVICE`     | `auto` | ASR 模型设备选择 | `auto`, `cpu`, `cuda:0` |
-| `TTS_DEVICE` | `auto` | TTS 模型设备选择 | `auto`, `cpu`, `cuda:0` |
+| 环境变量    | 默认值 | 说明             | 可选值                              |
+| ----------- | ------ | ---------------- | ----------------------------------- |
+| `TTS_GPUS`  | `""`   | TTS使用的GPU配置 | `""` (自动), `cpu`, `0`, `0,1,2`    |
+| `ASR_GPUS`  | `""`   | ASR使用的GPU配置 | `""` (自动), `cpu`, `0`, `0,1,2`    |
+
+**配置格式说明:**
+- `""` 或 `auto`: 自动检测，有GPU用GPU，无GPU用CPU
+- `cpu`: 强制使用CPU
+- `0`: 使用单卡GPU 0
+- `0,1,2`: 使用多卡负载均衡，在每个GPU上创建独立模型副本
 
 **使用示例:**
 
 ```bash
 # 强制使用 CPU
-export DEVICE=cpu
-export TTS_DEVICE=cpu
+export TTS_GPUS=cpu
+export ASR_GPUS=cpu
 
-# 指定 GPU 设备
-export DEVICE=cuda:0
-export TTS_DEVICE=cuda:1  # 使用第二块 GPU
+# 指定单张 GPU
+export TTS_GPUS=0
+export ASR_GPUS=1  # 使用第二块 GPU
+
+# 多GPU负载均衡
+export TTS_GPUS=0,1
+export ASR_GPUS=0,1
 ```
 
 **影响:**
-- `auto`: 自动检测,优先使用 GPU(如果可用)
-- `cpu`: 强制使用 CPU,降低内存占用但推理较慢
-- `cuda:N`: 使用指定的 GPU 设备
+- 单设备模式（`""`, `cpu`, `0`）：创建单个模型实例
+- 多GPU模式（`0,1,2`）：在每个GPU上创建模型副本，通过最少连接数策略负载均衡
 
 ### TTS 模型按需加载
 
@@ -299,9 +308,9 @@ DEBUG=true
 # 日志配置
 LOG_LEVEL=DEBUG
 
-# 设备配置(使用 CPU 节省资源)
-DEVICE=cpu
-TTS_DEVICE=cpu
+# GPU配置(使用 CPU 节省资源)
+TTS_GPUS=cpu
+ASR_GPUS=cpu
 
 # TTS 模式(仅预设音色)
 TTS_MODEL_MODE=cosyvoice1
@@ -324,9 +333,9 @@ LOG_LEVEL=WARNING
 LOG_MAX_BYTES=52428800
 LOG_BACKUP_COUNT=30
 
-# 设备配置(使用 GPU)
-DEVICE=cuda:0
-TTS_DEVICE=cuda:0
+# GPU配置(使用 GPU)
+TTS_GPUS=0
+ASR_GPUS=0
 
 # TTS 模式(完整功能)
 TTS_MODEL_MODE=all
@@ -458,7 +467,7 @@ docker-compose up -d
 | 问题             | 症状               | 解决方案                                            |
 | ---------------- | ------------------ | --------------------------------------------------- |
 | **模型下载失败** | 启动超时、网络错误 | 检查网络,重启容器: `docker-compose restart`        |
-| **GPU 内存不足** | CUDA OOM 错误      | 切换 CPU 模式: 设置 `DEVICE=cpu TTS_DEVICE=cpu`     |
+| **GPU 内存不足** | CUDA OOM 错误      | 切换 CPU 模式: 设置 `TTS_GPUS=cpu ASR_GPUS=cpu`     |
 | **端口被占用**   | 端口冲突错误       | 修改端口映射: `"8080:8000"`                         |
 | **权限错误**     | 文件访问被拒绝     | 修复权限: `sudo chown -R $USER:$USER ./data ./logs` |
 | **音色添加失败** | 音色不可用         | 检查文件格式和命名是否正确                          |
@@ -561,8 +570,8 @@ services:
     environment:
       - WORKERS=2
       - INFERENCE_THREAD_POOL_SIZE=4
-      - DEVICE=cuda:0
-      - TTS_DEVICE=cuda:0
+      - TTS_GPUS=0
+      - ASR_GPUS=0
     deploy:
       resources:
         reservations:
@@ -579,6 +588,83 @@ services:
 | 10路WebSocket同时请求 | 串行排队 | I/O不阻塞，推理串行 | 真正并行 |
 | 心跳检测 | 可能超时 | 正常 | 正常 |
 | HTTP请求响应 | 阻塞 | 及时响应 | 及时响应 |
+
+### 多GPU多副本配置
+
+`TTS_GPUS` 和 `ASR_GPUS` 除了支持单设备配置外，还支持多GPU负载均衡，进一步提升并发吞吐量。
+
+#### 配置格式
+
+| 配置值 | 说明 |
+|--------|------|
+| `""` 或 `auto` | 自动检测，有GPU用GPU，无GPU用CPU |
+| `cpu` | 强制使用CPU |
+| `0` | 使用单卡GPU 0 |
+| `0,1,2` | 多GPU负载均衡，在每个GPU上创建独立模型副本 |
+
+#### 工作原理
+
+- **模型副本**: 在每个指定的 GPU 上创建独立的模型副本
+- **负载均衡**: 使用最少连接数策略分配请求
+- **会话亲和**: WebSocket 流式会话绑定到同一个 GPU 副本直到结束
+- **CUDA Stream 隔离**: 每个请求使用独立的 CUDA Stream，支持并发推理
+- **TensorRT 支持**: 完全兼容 TensorRT 加速
+
+#### 配置示例
+
+**双 GPU 配置:**
+
+```yaml
+services:
+  funspeech:
+    image: docker.cnb.cool/nexa/funspeech:gpu-latest
+    environment:
+      - TTS_GPUS=0,1        # TTS 在 GPU 0 和 GPU 1 上各创建一个副本
+      - ASR_GPUS=0,1        # ASR 在 GPU 0 和 GPU 1 上各创建一个副本
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+```
+
+**ASR/TTS 分离部署（4 GPU）:**
+
+```yaml
+services:
+  funspeech:
+    image: docker.cnb.cool/nexa/funspeech:gpu-latest
+    environment:
+      - TTS_GPUS=0,1        # TTS 使用 GPU 0, 1
+      - ASR_GPUS=2,3        # ASR 使用 GPU 2, 3
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+```
+
+#### 资源规划
+
+| GPU 配置 | 环境变量 | 预计显存占用 | 适用场景 |
+|---------|----------|-------------|----------|
+| 单 GPU | 不配置 `TTS_GPUS`/`ASR_GPUS` | ~16GB | 低并发 |
+| 双 GPU | `TTS_GPUS=0,1` | ~16GB × 2 | 中等并发 |
+| 四 GPU | `TTS_GPUS=0,1` + `ASR_GPUS=2,3` | ~16GB × 4 | 高并发/分离部署 |
+
+> 💡 **提示**: 多 GPU 配置与 WORKERS 配置可以同时使用。例如 `WORKERS=2` + `TTS_GPUS=0,1` 会创建 2 × 2 = 4 个 TTS 模型副本。
+
+#### 与 WORKERS 配置的区别
+
+| 配置方式 | 内存/显存 | 并发效果 | 适用场景 |
+|---------|----------|---------|---------|
+| `WORKERS=N` | 内存 × N | 多进程真正并行 | CPU 密集型 |
+| `TTS_GPUS/ASR_GPUS` | 显存 × GPU数 | 多 GPU 负载均衡 | GPU 密集型 |
+| 两者结合 | 显存 × GPU数 × WORKERS | 最大并行度 | 大规模部署 |
 
 ### 性能优化建议
 

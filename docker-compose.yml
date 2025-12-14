@@ -19,8 +19,11 @@ services:
       # 服务器配置
       - DEBUG=false
       - LOG_LEVEL=INFO
-      - DEVICE=auto
-      - TTS_DEVICE=auto
+
+      # GPU配置（统一格式）
+      # 支持: "" (自动检测), "cpu" (使用CPU), "0" (单卡), "0,1,2" (多卡负载均衡)
+      # - TTS_GPUS=0          # TTS使用的GPU（默认自动检测）
+      # - ASR_GPUS=0          # ASR使用的GPU（默认自动检测）
 
       # ASR 模型按需加载配置（可选，默认为 all）
       # - ASR_MODEL_MODE=all          # 加载默认模型的离线和实时版本（默认）

@@ -7,7 +7,7 @@ import torch
 import numpy as np
 import logging
 import threading
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple, Union
 from abc import ABC, abstractmethod
 from enum import Enum
 
@@ -19,6 +19,49 @@ from ...utils.audio import cleanup_temp_file
 from ...utils.text_processing import apply_itn_to_text
 
 logger = logging.getLogger(__name__)
+
+
+def parse_gpu_config(gpu_str: str) -> Tuple[List[str], str]:
+    """解析GPU配置字符串
+
+    Args:
+        gpu_str: GPU配置字符串
+            - "" 或 "auto": 自动检测，返回单个设备
+            - "cpu": 使用CPU
+            - "0": 使用单卡 cuda:0
+            - "0,1,2": 使用多卡
+
+    Returns:
+        (设备列表, 单设备字符串) - 多卡时设备列表有多个元素，单卡/CPU时只有一个
+    """
+    gpu_str = gpu_str.strip().lower() if gpu_str else ""
+
+    # 空值或auto: 自动检测
+    if not gpu_str or gpu_str == "auto":
+        if torch.cuda.is_available():
+            return ["cuda:0"], "cuda:0"
+        else:
+            return ["cpu"], "cpu"
+
+    # CPU模式
+    if gpu_str == "cpu":
+        return ["cpu"], "cpu"
+
+    # GPU列表模式
+    devices = []
+    for gpu_id in gpu_str.split(","):
+        gpu_id = gpu_id.strip()
+        if gpu_id and gpu_id.isdigit():
+            devices.append(f"cuda:{gpu_id}")
+
+    if not devices:
+        # 无效配置，回退到自动检测
+        if torch.cuda.is_available():
+            return ["cuda:0"], "cuda:0"
+        else:
+            return ["cpu"], "cpu"
+
+    return devices, devices[0]
 
 
 class ModelType(Enum):
@@ -63,14 +106,12 @@ class BaseASREngine(ABC):
         """是否支持实时识别"""
         pass
 
-    def _detect_device(self, device: str = "auto") -> str:
+    def _detect_device(self, device: str = None) -> str:
         """检测可用设备"""
-        if device == "auto":
-            if torch.cuda.is_available():
-                return "cuda:0"
-            else:
-                return "cpu"
-        return device
+        if device and device != "auto":
+            return device
+        _, single_device = parse_gpu_config(settings.ASR_GPUS)
+        return single_device
 
 
 class RealTimeASREngine(BaseASREngine):
@@ -355,10 +396,11 @@ class DolphinEngine(BaseASREngine):
     def _detect_device(self, device: str = "auto") -> str:
         """检测可用设备"""
         if device == "auto":
-            if torch.cuda.is_available():
+            _, single_device = parse_gpu_config(settings.ASR_GPUS)
+            # Dolphin 使用 "cuda" 而不是 "cuda:0"
+            if single_device.startswith("cuda:"):
                 return "cuda"
-            else:
-                return "cpu"
+            return single_device
         if device.startswith("cuda:"):
             return "cuda"
         return device
@@ -634,3 +676,197 @@ def get_asr_engine() -> BaseASREngine:
         model_manager = get_model_manager()
         _asr_engine = model_manager.get_asr_engine()
     return _asr_engine
+
+
+class MultiGPUASREngine(RealTimeASREngine):
+    """多GPU多副本ASR引擎，支持负载均衡"""
+
+    def __init__(
+        self,
+        engine_factory,
+        engine_kwargs: Dict[str, Any],
+    ):
+        """
+        初始化多GPU ASR引擎
+
+        Args:
+            engine_factory: 引擎工厂函数，用于创建单个引擎实例
+            engine_kwargs: 创建引擎时的基础参数（不含device）
+        """
+        self._engine_factory = engine_factory
+        self._engine_kwargs = engine_kwargs
+        self._engines: List[BaseASREngine] = []
+        self._devices: List[str] = []
+        self._lock = threading.Lock()
+        self._current_index = 0
+        self._engine_active_count: List[int] = []
+
+        self._init_engines()
+
+    def _init_engines(self):
+        """初始化所有GPU上的引擎实例"""
+        # 解析GPU配置
+        gpu_devices, single_device = parse_gpu_config(settings.ASR_GPUS)
+
+        # 单设备模式（包括CPU、单卡GPU、自动检测）
+        if len(gpu_devices) == 1:
+            logger.info(f"ASR使用单设备模式: {single_device}")
+            kwargs = self._engine_kwargs.copy()
+            kwargs["device"] = single_device
+            engine = self._engine_factory(**kwargs)
+            self._engines.append(engine)
+            self._devices.append(engine.device)
+            self._engine_active_count.append(0)
+            return
+
+        # 多GPU模式
+        if not torch.cuda.is_available():
+            raise DefaultServerErrorException("配置了多GPU但CUDA不可用")
+
+        available_gpus = torch.cuda.device_count()
+        logger.info(f"系统可用GPU数量: {available_gpus}, 配置的GPU设备: {gpu_devices}")
+
+        # 在每个GPU上创建引擎实例
+        for device in gpu_devices:
+            gpu_id = int(device.split(":")[1])
+            if gpu_id >= available_gpus:
+                logger.warning(f"GPU {gpu_id} 不存在，跳过")
+                continue
+
+            logger.info(f"正在初始化 {device} 上的ASR引擎...")
+            try:
+                kwargs = self._engine_kwargs.copy()
+                kwargs["device"] = device
+                engine = self._engine_factory(**kwargs)
+                self._engines.append(engine)
+                self._devices.append(device)
+                self._engine_active_count.append(0)
+                logger.info(f"{device} 上的ASR引擎初始化成功")
+            except Exception as e:
+                logger.error(f"{device} 上的ASR引擎初始化失败: {e}")
+
+        if not self._engines:
+            raise DefaultServerErrorException("没有成功初始化任何ASR引擎")
+
+        logger.info(f"多GPU ASR引擎初始化完成，共 {len(self._engines)} 个副本")
+
+    def _select_engine(self) -> Tuple[int, BaseASREngine]:
+        """选择一个引擎（最少连接数策略）
+
+        Returns:
+            (引擎索引, 引擎实例)
+        """
+        with self._lock:
+            # 选择当前活跃请求数最少的引擎
+            min_count = min(self._engine_active_count)
+            for i, count in enumerate(self._engine_active_count):
+                if count == min_count:
+                    self._engine_active_count[i] += 1
+                    return i, self._engines[i]
+
+            # 降级到轮询
+            idx = self._current_index
+            self._current_index = (self._current_index + 1) % len(self._engines)
+            self._engine_active_count[idx] += 1
+            return idx, self._engines[idx]
+
+    def _release_engine(self, index: int):
+        """释放引擎（减少活跃计数）"""
+        with self._lock:
+            if 0 <= index < len(self._engine_active_count):
+                self._engine_active_count[index] = max(0, self._engine_active_count[index] - 1)
+
+    def transcribe_file(
+        self,
+        audio_path: str,
+        hotwords: str = "",
+        enable_punctuation: bool = False,
+        enable_itn: bool = False,
+        enable_vad: bool = False,
+        sample_rate: int = 16000,
+        dolphin_lang_sym: str = "zh",
+        dolphin_region_sym: str = "SHANGHAI",
+    ) -> str:
+        """转录音频文件（负载均衡）"""
+        idx, engine = self._select_engine()
+        try:
+            logger.debug(f"使用引擎 {idx} ({self._devices[idx]}) 处理ASR请求")
+            return engine.transcribe_file(
+                audio_path=audio_path,
+                hotwords=hotwords,
+                enable_punctuation=enable_punctuation,
+                enable_itn=enable_itn,
+                enable_vad=enable_vad,
+                sample_rate=sample_rate,
+                dolphin_lang_sym=dolphin_lang_sym,
+                dolphin_region_sym=dolphin_region_sym,
+            )
+        finally:
+            self._release_engine(idx)
+
+    def transcribe_websocket(
+        self,
+        audio_chunk: bytes,
+        cache: Optional[Dict] = None,
+        is_final: bool = False,
+        **kwargs,
+    ) -> str:
+        """WebSocket流式语音识别（负载均衡）
+
+        注意：WebSocket流式识别需要保持会话状态，因此需要在更上层
+        （如WebSocket连接建立时）选择引擎并在整个会话期间保持使用同一个引擎。
+        这里的实现假设调用者会正确处理会话管理。
+        """
+        # 对于流式识别，由于需要保持会话状态，这里提供一个简单实现
+        # 实际使用时应该在会话级别管理引擎选择
+        idx, engine = self._select_engine()
+        try:
+            if isinstance(engine, RealTimeASREngine):
+                return engine.transcribe_websocket(
+                    audio_chunk=audio_chunk,
+                    cache=cache,
+                    is_final=is_final,
+                    **kwargs,
+                )
+            else:
+                raise DefaultServerErrorException("选中的引擎不支持实时识别")
+        finally:
+            self._release_engine(idx)
+
+    def get_engine_for_session(self) -> Tuple[int, BaseASREngine]:
+        """为WebSocket会话获取一个引擎（会话级别的负载均衡）
+
+        返回:
+            (引擎索引, 引擎实例) - 调用者负责在会话结束时调用 release_session_engine
+        """
+        return self._select_engine()
+
+    def release_session_engine(self, index: int):
+        """释放WebSocket会话使用的引擎"""
+        self._release_engine(index)
+
+    def is_model_loaded(self) -> bool:
+        """检查模型是否已加载"""
+        return any(engine.is_model_loaded() for engine in self._engines)
+
+    @property
+    def device(self) -> str:
+        """获取设备信息（返回所有设备）"""
+        return ",".join(self._devices)
+
+    @property
+    def supports_realtime(self) -> bool:
+        """是否支持实时识别"""
+        return any(
+            isinstance(engine, RealTimeASREngine) and engine.supports_realtime
+            for engine in self._engines
+        )
+
+    def get_engine_stats(self) -> Dict[str, Any]:
+        """获取引擎状态统计"""
+        with self._lock:
+            return {
+                "total_engines": len(self._engines),
+                "devices": self._devices,
+                "active_counts": self._engine_active_count.copy(),
+            }

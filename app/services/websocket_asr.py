@@ -49,6 +49,7 @@ from ..models.websocket_asr import (
     AliyunASRMessageName,
     AliyunASRStatus,
 )
+from .asr.engine import MultiGPUASREngine
 
 logger = logging.getLogger(__name__)
 
@@ -114,6 +115,10 @@ class AliyunWebSocketASRService:
         empty_result_count = 0
         audio_buffer = np.array([], dtype=np.float32)  # 音频缓冲区，用于累积到完整chunk
 
+        # 多GPU会话级负载均衡
+        session_engine = None
+        session_engine_index = None
+
         logger.info(f"[{task_id}] WebSocket ASR连接开始")
 
         try:
@@ -159,6 +164,15 @@ class AliyunWebSocketASRService:
                                 )
                                 if transcription_params:
                                     task_id = message_task_id or task_id
+
+                                    # 多GPU会话级负载均衡：在会话开始时选择引擎
+                                    asr_engine = self._ensure_asr_engine()
+                                    if isinstance(asr_engine, MultiGPUASREngine):
+                                        session_engine_index, session_engine = asr_engine.get_engine_for_session()
+                                        logger.info(f"[{task_id}] 分配会话引擎 {session_engine_index} ({asr_engine._devices[session_engine_index]})")
+                                    else:
+                                        session_engine = asr_engine
+
                                     await self._send_transcription_started(
                                         websocket, task_id, session_id
                                     )
@@ -363,6 +377,7 @@ class AliyunWebSocketASRService:
                                         audio_time,
                                         task_id,
                                         is_final=False,
+                                        session_engine=session_engine,
                                     )
                                 # ========== 远场过滤结束 ==========
 
@@ -415,6 +430,7 @@ class AliyunWebSocketASRService:
                                         audio_time,
                                         task_id,
                                         is_final=True,
+                                        session_engine=session_engine,
                                     )
 
                                     if flush_result_text_raw:
@@ -535,6 +551,13 @@ class AliyunWebSocketASRService:
                     await self._send_task_failed(websocket, task_id, str(e))
                 except:
                     pass
+        finally:
+            # 释放会话级引擎（多GPU负载均衡）
+            if session_engine_index is not None:
+                asr_engine = self._ensure_asr_engine()
+                if isinstance(asr_engine, MultiGPUASREngine):
+                    asr_engine.release_session_engine(session_engine_index)
+                    logger.debug(f"[{task_id}] 释放会话引擎 {session_engine_index}")
 
     def _parse_start_transcription(self, data: dict, task_id: str) -> Optional[dict]:
         """解析StartTranscription消息参数"""
@@ -594,10 +617,15 @@ class AliyunWebSocketASRService:
         current_audio_time: int,
         task_id: str,
         is_final: bool = False,
+        session_engine=None,  # 会话级引擎（多GPU负载均衡）
     ) -> tuple[str, str, bool, bool, Dict, int]:
         """处理音频块，返回带标点文本、无标点文本、是否句子结束、是否静音帧、缓存、音频时长"""
         try:
-            asr_engine = self._ensure_asr_engine()
+            # 使用会话级引擎（如果提供），否则使用全局引擎
+            if session_engine is not None:
+                asr_engine = session_engine
+            else:
+                asr_engine = self._ensure_asr_engine()
 
             audio_format = params.get("format", "pcm").lower()
             sample_rate_value = params.get("sample_rate", 16000)

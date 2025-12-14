@@ -69,6 +69,8 @@ FunSpeech 支持多路并发处理,通过以下环境变量配置:
 |----------|--------|------|
 | `WORKERS` | `1` | Worker进程数,每个进程加载独立模型(内存×N) |
 | `INFERENCE_THREAD_POOL_SIZE` | `auto` | 推理线程池大小,确保事件循环不阻塞 |
+| `TTS_GPUS` | `""` | TTS GPU配置: `""` (自动), `cpu`, `0` (单卡), `0,1` (多卡) |
+| `ASR_GPUS` | `""` | ASR GPU配置: `""` (自动), `cpu`, `0` (单卡), `0,1` (多卡) |
 
 **配置示例:**
 
@@ -77,6 +79,8 @@ FunSpeech 支持多路并发处理,通过以下环境变量配置:
 environment:
   - WORKERS=2                        # 2个Worker进程
   - INFERENCE_THREAD_POOL_SIZE=4     # 每个Worker 4个推理线程
+  - TTS_GPUS=0,1                     # TTS在GPU 0和1上各创建副本
+  - ASR_GPUS=0,1                     # ASR在GPU 0和1上各创建副本
 ```
 
 > 💡 详细配置说明和资源规划请查看 [部署指南 - 并发配置](./docs/deployment.md#并发配置)

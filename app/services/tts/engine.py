@@ -5,6 +5,7 @@ TTS引擎模块
 
 import sys
 import logging
+import threading
 from typing import List, Dict, Any, Union, Tuple, Optional
 from pathlib import Path
 
@@ -15,22 +16,68 @@ from ...utils.audio import save_audio_array, generate_temp_audio_path
 logger = logging.getLogger(__name__)
 
 
+def parse_gpu_config(gpu_str: str) -> Tuple[List[str], str]:
+    """解析GPU配置字符串
+
+    Args:
+        gpu_str: GPU配置字符串
+            - "" 或 "auto": 自动检测，返回单个设备
+            - "cpu": 使用CPU
+            - "0": 使用单卡 cuda:0
+            - "0,1,2": 使用多卡
+
+    Returns:
+        (设备列表, 单设备字符串) - 多卡时设备列表有多个元素，单卡/CPU时只有一个
+    """
+    import torch
+
+    gpu_str = gpu_str.strip().lower() if gpu_str else ""
+
+    # 空值或auto: 自动检测
+    if not gpu_str or gpu_str == "auto":
+        if torch.cuda.is_available():
+            return ["cuda:0"], "cuda:0"
+        else:
+            return ["cpu"], "cpu"
+
+    # CPU模式
+    if gpu_str == "cpu":
+        return ["cpu"], "cpu"
+
+    # GPU列表模式
+    devices = []
+    for gpu_id in gpu_str.split(","):
+        gpu_id = gpu_id.strip()
+        if gpu_id and gpu_id.isdigit():
+            devices.append(f"cuda:{gpu_id}")
+
+    if not devices:
+        # 无效配置，回退到自动检测
+        if torch.cuda.is_available():
+            return ["cuda:0"], "cuda:0"
+        else:
+            return ["cpu"], "cpu"
+
+    return devices, devices[0]
+
+
 class CosyVoiceTTSEngine:
     """CosyVoice TTS引擎"""
 
-    def __init__(self, load_sft: bool = True, load_clone: bool = True):
+    def __init__(self, load_sft: bool = True, load_clone: bool = True, device: Optional[str] = None):
         """
         初始化TTS引擎
 
         Args:
             load_sft: 是否加载SFT模型，默认为True
             load_clone: 是否加载零样本克隆模型，默认为True
+            device: 指定设备，如 "cuda:0"，None则自动检测
         """
         # 两个不同的模型实例
         self.cosyvoice_sft = None  # 用于预设音色（SFT模式=CosyVoice）
         self.cosyvoice_clone = None  # 用于音零样本色克隆（零样本/跨语言=CosyVoice2）
 
-        self._device = self._detect_device()
+        self._device = device if device else self._detect_device()
         self._sft_model_loaded = False
         self._clone_model_loaded = False
         self._preset_voices = settings.PRESET_VOICES.copy()
@@ -42,14 +89,7 @@ class CosyVoiceTTSEngine:
 
     def _detect_device(self) -> str:
         """检测可用设备"""
-        import torch
-
-        device = settings.TTS_DEVICE
-        if device == "auto":
-            if torch.cuda.is_available():
-                return "cuda:0"
-            else:
-                return "cpu"
+        _, device = parse_gpu_config(settings.TTS_GPUS)
         return device
 
     def _setup_paths(self):
@@ -75,15 +115,16 @@ class CosyVoiceTTSEngine:
             # 根据配置决定是否加载SFT模型（用于预设音色）
             if self._load_sft:
                 try:
-                    logger.info("正在加载SFT模型（CosyVoice1）...")
+                    logger.info(f"正在加载SFT模型（CosyVoice1）到 {self._device}...")
                     self.cosyvoice_sft = CosyVoice(
                         settings.SFT_MODEL_ID,
                         load_jit=True,
                         load_trt=True,
                         fp16=fp16_enabled,
+                        device=self._device,  # 传递 device 参数
                     )
                     self._sft_model_loaded = True
-                    logger.info("SFT模型加载成功")
+                    logger.info(f"SFT模型加载成功，device={self._device}")
                 except Exception as e:
                     logger.warning(f"SFT模型加载失败: {str(e)}")
                     self._sft_model_loaded = False
@@ -94,16 +135,17 @@ class CosyVoiceTTSEngine:
             # 加载零样本克隆模型（用于零样本和跨语言）
             if self._load_clone:
                 try:
-                    logger.info("正在加载零样本克隆模型（CosyVoice2）...")
+                    logger.info(f"正在加载零样本克隆模型（CosyVoice2）到 {self._device}...")
                     self.cosyvoice_clone = CosyVoice2(
                         settings.CLONE_MODEL_ID,
                         load_jit=True,
                         load_trt=True,
                         load_vllm=False,
                         fp16=fp16_enabled,
+                        device=self._device,  # 传递 device 参数
                     )
                     self._clone_model_loaded = True
-                    logger.info("零样本克隆模型加载成功")
+                    logger.info(f"零样本克隆模型加载成功，device={self._device}")
                 except Exception as e:
                     logger.warning(f"零样本克隆模型加载失败: {str(e)}")
                     self._clone_model_loaded = False
@@ -584,47 +626,263 @@ class CosyVoiceTTSEngine:
         return self._voice_manager
 
 
-# 全局TTS引擎实例字典，根据配置保存不同的实例
-_tts_engines: Dict[str, CosyVoiceTTSEngine] = {}
+class MultiGPUTTSEngine:
+    """多GPU多副本TTS引擎，支持负载均衡"""
+
+    def __init__(self, load_sft: bool = True, load_clone: bool = True):
+        """
+        初始化多GPU TTS引擎
+
+        Args:
+            load_sft: 是否加载SFT模型
+            load_clone: 是否加载零样本克隆模型
+        """
+        self._load_sft = load_sft
+        self._load_clone = load_clone
+        self._engines: List[CosyVoiceTTSEngine] = []
+        self._devices: List[str] = []
+        self._lock = threading.Lock()
+        self._current_index = 0
+        self._engine_locks: List[threading.Lock] = []  # 每个引擎的锁
+        self._engine_active_count: List[int] = []  # 每个引擎当前活跃请求数
+
+        self._init_engines()
+
+    def _init_engines(self):
+        """初始化所有GPU上的引擎实例"""
+        import torch
+
+        # 解析GPU配置
+        gpu_devices, single_device = parse_gpu_config(settings.TTS_GPUS)
+
+        # 单设备模式（包括CPU、单卡GPU、自动检测）
+        if len(gpu_devices) == 1:
+            logger.info(f"TTS使用单设备模式: {single_device}")
+            engine = CosyVoiceTTSEngine(
+                load_sft=self._load_sft,
+                load_clone=self._load_clone,
+                device=single_device
+            )
+            self._engines.append(engine)
+            self._devices.append(engine.device)
+            self._engine_locks.append(threading.Lock())
+            self._engine_active_count.append(0)
+            return
+
+        # 多GPU模式
+        if not torch.cuda.is_available():
+            raise DefaultServerErrorException("配置了多GPU但CUDA不可用")
+
+        available_gpus = torch.cuda.device_count()
+        logger.info(f"系统可用GPU数量: {available_gpus}, 配置的GPU设备: {gpu_devices}")
+
+        # 在每个GPU上创建引擎实例
+        for device in gpu_devices:
+            gpu_id = int(device.split(":")[1])
+            if gpu_id >= available_gpus:
+                logger.warning(f"GPU {gpu_id} 不存在，跳过")
+                continue
+
+            logger.info(f"正在初始化 {device} 上的TTS引擎...")
+            try:
+                engine = CosyVoiceTTSEngine(
+                    load_sft=self._load_sft,
+                    load_clone=self._load_clone,
+                    device=device
+                )
+                self._engines.append(engine)
+                self._devices.append(device)
+                self._engine_locks.append(threading.Lock())
+                self._engine_active_count.append(0)
+                logger.info(f"{device} 上的TTS引擎初始化成功")
+            except Exception as e:
+                logger.error(f"{device} 上的TTS引擎初始化失败: {e}")
+
+        if not self._engines:
+            raise DefaultServerErrorException("没有成功初始化任何TTS引擎")
+
+        logger.info(f"多GPU TTS引擎初始化完成，共 {len(self._engines)} 个副本")
+
+    def _select_engine(self) -> Tuple[int, CosyVoiceTTSEngine]:
+        """选择一个引擎（最少连接数策略）
+
+        Returns:
+            (引擎索引, 引擎实例)
+        """
+        with self._lock:
+            # 选择当前活跃请求数最少的引擎
+            min_count = min(self._engine_active_count)
+            for i, count in enumerate(self._engine_active_count):
+                if count == min_count:
+                    self._engine_active_count[i] += 1
+                    return i, self._engines[i]
+
+            # 降级到轮询
+            idx = self._current_index
+            self._current_index = (self._current_index + 1) % len(self._engines)
+            self._engine_active_count[idx] += 1
+            return idx, self._engines[idx]
+
+    def _release_engine(self, index: int):
+        """释放引擎（减少活跃计数）"""
+        with self._lock:
+            if 0 <= index < len(self._engine_active_count):
+                self._engine_active_count[index] = max(0, self._engine_active_count[index] - 1)
+
+    def synthesize_speech(
+        self,
+        text: str,
+        voice: str = "中文女",
+        speed: float = 1.0,
+        format: str = "wav",
+        sample_rate: int = 22050,
+        volume: int = 50,
+        prompt: str = "",
+        return_timestamps: bool = False,
+    ) -> Union[str, Tuple[str, Optional[List[Dict[str, Any]]]]]:
+        """语音合成（负载均衡）"""
+        idx, engine = self._select_engine()
+        try:
+            logger.debug(f"使用引擎 {idx} ({self._devices[idx]}) 处理TTS请求")
+            return engine.synthesize_speech(
+                text=text,
+                voice=voice,
+                speed=speed,
+                format=format,
+                sample_rate=sample_rate,
+                volume=volume,
+                prompt=prompt,
+                return_timestamps=return_timestamps,
+            )
+        finally:
+            self._release_engine(idx)
+
+    def synthesize_with_preset_voice(
+        self,
+        text: str,
+        voice: str = "中文女",
+        speed: float = 1.0,
+        format: str = "wav",
+        sample_rate: int = 22050,
+        volume: int = 50,
+        return_timestamps: bool = False,
+    ) -> Union[str, Tuple[str, Optional[List[Dict[str, Any]]]]]:
+        """使用预设音色合成语音（负载均衡）"""
+        idx, engine = self._select_engine()
+        try:
+            logger.debug(f"使用引擎 {idx} ({self._devices[idx]}) 处理预设音色TTS请求")
+            return engine.synthesize_with_preset_voice(
+                text=text,
+                voice=voice,
+                speed=speed,
+                format=format,
+                sample_rate=sample_rate,
+                volume=volume,
+                return_timestamps=return_timestamps,
+            )
+        finally:
+            self._release_engine(idx)
+
+    def get_voices(self) -> List[str]:
+        """获取音色列表（从第一个引擎获取）"""
+        if self._engines:
+            return self._engines[0].get_voices()
+        return []
+
+    def get_voices_info(self) -> Dict[str, Dict[str, Any]]:
+        """获取音色详细信息（从第一个引擎获取）"""
+        if self._engines:
+            return self._engines[0].get_voices_info()
+        return {}
+
+    def refresh_voices(self):
+        """刷新所有引擎的音色配置"""
+        for engine in self._engines:
+            engine.refresh_voices()
+
+    def is_sft_model_loaded(self) -> bool:
+        """检查SFT模型是否已加载"""
+        return any(engine.is_sft_model_loaded() for engine in self._engines)
+
+    def is_clone_model_loaded(self) -> bool:
+        """检查零样本克隆模型是否已加载"""
+        return any(engine.is_clone_model_loaded() for engine in self._engines)
+
+    def is_tts_model_loaded(self) -> bool:
+        """检查TTS模型是否已加载"""
+        return any(engine.is_tts_model_loaded() for engine in self._engines)
+
+    @property
+    def device(self) -> str:
+        """获取设备信息（返回所有设备）"""
+        return ",".join(self._devices)
+
+    @property
+    def voice_manager(self):
+        """获取音色管理器（从第一个引擎获取）"""
+        if self._engines:
+            return self._engines[0].voice_manager
+        return None
+
+    @property
+    def cosyvoice_sft(self):
+        """获取SFT模型（从第一个引擎获取，兼容旧代码）"""
+        if self._engines:
+            return self._engines[0].cosyvoice_sft
+        return None
+
+    @property
+    def cosyvoice_clone(self):
+        """获取零样本克隆模型（从第一个引擎获取，兼容旧代码）"""
+        if self._engines:
+            return self._engines[0].cosyvoice_clone
+        return None
+
+    def get_engine_stats(self) -> Dict[str, Any]:
+        """获取引擎状态统计"""
+        with self._lock:
+            return {
+                "total_engines": len(self._engines),
+                "devices": self._devices,
+                "active_counts": self._engine_active_count.copy(),
+            }
 
 
-def get_tts_engine() -> CosyVoiceTTSEngine:
+# 全局TTS引擎实例
+_tts_engine: Optional[MultiGPUTTSEngine] = None
+_tts_engine_lock = threading.Lock()
+
+
+def get_tts_engine() -> MultiGPUTTSEngine:
     """
-    获取TTS引擎实例（根据环境变量TTS_MODEL_MODE决定加载策略）
+    获取TTS引擎实例（根据环境变量TTS_MODEL_MODE和TTS_GPUS决定加载策略）
+
+    TTS_GPUS配置:
+        - "" 或 "auto": 自动检测设备
+        - "cpu": 使用CPU
+        - "0": 使用单卡GPU 0
+        - "0,1,2": 使用多卡负载均衡
 
     Returns:
-        CosyVoiceTTSEngine: TTS引擎实例
+        MultiGPUTTSEngine: TTS引擎实例（支持单设备和多GPU模式）
     """
-    global _tts_engines
+    global _tts_engine
 
-    # 根据环境变量决定加载策略
-    model_mode = settings.TTS_MODEL_MODE.lower()
+    with _tts_engine_lock:
+        if _tts_engine is None:
+            model_mode = settings.TTS_MODEL_MODE.lower()
+            load_sft = model_mode in ("all", "cosyvoice1")
+            load_clone = model_mode in ("all", "cosyvoice2")
 
-    # 使用模型模式作为缓存key
-    cache_key = f"engine_{model_mode}"
-
-    if cache_key not in _tts_engines:
-        if model_mode == "cosyvoice1":
-            logger.info("创建TTS引擎实例，仅加载SFT模型（CosyVoice1）")
-            _tts_engines[cache_key] = CosyVoiceTTSEngine(
-                load_sft=True, load_clone=False
+            logger.info(f"创建TTS引擎，TTS_GPUS={settings.TTS_GPUS or '(auto)'}, 模式={model_mode}")
+            _tts_engine = MultiGPUTTSEngine(
+                load_sft=load_sft,
+                load_clone=load_clone
             )
-        elif model_mode == "cosyvoice2":
-            logger.info("创建TTS引擎实例，仅加载零样本克隆模型（CosyVoice2）")
-            _tts_engines[cache_key] = CosyVoiceTTSEngine(
-                load_sft=False, load_clone=True
-            )
-        elif model_mode == "all":
-            logger.info("创建TTS引擎实例，加载所有模型")
-            _tts_engines[cache_key] = CosyVoiceTTSEngine(load_sft=True, load_clone=True)
-        else:
-            logger.warning(f"未知的TTS_MODEL_MODE: {model_mode}，使用默认配置（all）")
-            _tts_engines[cache_key] = CosyVoiceTTSEngine(load_sft=True, load_clone=True)
-
-    return _tts_engines[cache_key]
+        return _tts_engine
 
 
 def reset_tts_engines():
-    """重置所有TTS引擎实例（用于测试或重新配置）"""
-    global _tts_engines
-    _tts_engines.clear()
+    """重置TTS引擎实例（用于测试或重新配置）"""
+    global _tts_engine
+    _tts_engine = None

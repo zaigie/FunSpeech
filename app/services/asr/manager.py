@@ -7,12 +7,15 @@ ASR模型管理器
 
 import json
 import torch
+import logging
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 
 from ...core.config import settings
 from ...core.exceptions import DefaultServerErrorException, InvalidParameterException
-from .engine import BaseASREngine, FunASREngine, DolphinEngine
+from .engine import BaseASREngine, FunASREngine, DolphinEngine, MultiGPUASREngine
+
+logger = logging.getLogger(__name__)
 
 
 class ModelConfig:
@@ -176,26 +179,36 @@ class ModelManager:
         return engine
 
     def _create_engine(self, config: ModelConfig) -> BaseASREngine:
-        """根据配置创建ASR引擎"""
+        """根据配置创建ASR引擎（统一使用MultiGPUASREngine支持单/多GPU）"""
+        # 统一使用MultiGPUASREngine，它会根据ASR_GPUS配置自动处理单GPU和多GPU场景
+        return self._create_multi_gpu_engine(config)
+
+    def _create_multi_gpu_engine(self, config: ModelConfig) -> MultiGPUASREngine:
+        """创建多GPU ASR引擎"""
         if config.engine.lower() == "funasr":
-            return FunASREngine(
-                offline_model_path=config.offline_model_path,
-                realtime_model_path=config.realtime_model_path,
-                device=settings.DEVICE,
-                vad_model=settings.VAD_MODEL,
-                vad_model_revision=settings.VAD_MODEL_REVISION,
-                punc_model=settings.PUNC_MODEL,
-                punc_model_revision=settings.PUNC_MODEL_REVISION,
-                punc_realtime_model=settings.PUNC_REALTIME_MODEL,
-            )
+            engine_factory = FunASREngine
+            engine_kwargs = {
+                "offline_model_path": config.offline_model_path,
+                "realtime_model_path": config.realtime_model_path,
+                "vad_model": settings.VAD_MODEL,
+                "vad_model_revision": settings.VAD_MODEL_REVISION,
+                "punc_model": settings.PUNC_MODEL,
+                "punc_model_revision": settings.PUNC_MODEL_REVISION,
+                "punc_realtime_model": settings.PUNC_REALTIME_MODEL,
+            }
         elif config.engine.lower() == "dolphin":
-            return DolphinEngine(
-                model_path=config.offline_model_path or config.realtime_model_path,
-                size=config.size,
-                device=settings.DEVICE,
-            )
+            engine_factory = DolphinEngine
+            engine_kwargs = {
+                "model_path": config.offline_model_path or config.realtime_model_path,
+                "size": config.size,
+            }
         else:
             raise InvalidParameterException(f"不支持的引擎类型: {config.engine}")
+
+        return MultiGPUASREngine(
+            engine_factory=engine_factory,
+            engine_kwargs=engine_kwargs,
+        )
 
     def unload_model(self, model_id: str) -> bool:
         """卸载指定模型"""

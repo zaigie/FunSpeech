@@ -26,9 +26,10 @@ class Settings:
     APPTOKEN: Optional[str] = None  # 从环境变量APPTOKEN读取，如果为None则鉴权可选
     APPKEY: Optional[str] = None  # 从环境变量APPKEY读取，如果为None则appkey可选
 
-    # 设备配置
-    DEVICE: str = "auto"  # auto, cpu, cuda:0, npu:0
-    TTS_DEVICE: str = "auto"  # auto, cpu, cuda:0
+    # GPU配置
+    # 支持格式: "" (自动检测), "cpu" (使用CPU), "0" (单卡), "0,1,2" (多卡)
+    TTS_GPUS: str = ""  # TTS使用的GPU，空则自动检测
+    ASR_GPUS: str = ""  # ASR使用的GPU，空则自动检测
 
     # 路径配置
     BASE_DIR: Path = Path(__file__).parent.parent.parent
@@ -126,9 +127,9 @@ class Settings:
         self.APPTOKEN = os.getenv("APPTOKEN", self.APPTOKEN)
         self.APPKEY = os.getenv("APPKEY", self.APPKEY)
 
-        # 设备配置
-        self.DEVICE = os.getenv("DEVICE", self.DEVICE)
-        self.TTS_DEVICE = os.getenv("TTS_DEVICE", self.TTS_DEVICE)
+        # GPU配置
+        self.TTS_GPUS = os.getenv("TTS_GPUS", self.TTS_GPUS)
+        self.ASR_GPUS = os.getenv("ASR_GPUS", self.ASR_GPUS)
 
         # ASR模型配置
         self.ASR_MODEL_MODE = os.getenv("ASR_MODEL_MODE", self.ASR_MODEL_MODE)
