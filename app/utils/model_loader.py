@@ -251,7 +251,8 @@ def preload_models() -> dict:
             logger.info("📥 正在加载VAD模型...")
             from ..services.asr.engine import get_global_vad_model
 
-            device = asr_engine.device if "asr_engine" in locals() else _get_default_asr_device()
+            # VAD是全局单例，使用单个设备（不使用多GPU引擎的拼接字符串）
+            device = _get_default_asr_device()
             vad_model = get_global_vad_model(device)
 
             if vad_model:
@@ -272,7 +273,8 @@ def preload_models() -> dict:
         logger.info("📥 正在加载标点符号模型(离线)...")
         from ..services.asr.engine import get_global_punc_model
 
-        device = asr_engine.device if "asr_engine" in locals() else _get_default_asr_device()
+        # 标点模型是全局单例，使用单个设备
+        device = _get_default_asr_device()
         punc_model = get_global_punc_model(device)
 
         if punc_model:
@@ -292,7 +294,8 @@ def preload_models() -> dict:
             logger.info("📥 正在加载实时标点符号模型...")
             from ..services.asr.engine import get_global_punc_realtime_model
 
-            device = asr_engine.device if "asr_engine" in locals() else _get_default_asr_device()
+            # 实时标点模型是全局单例，使用单个设备
+            device = _get_default_asr_device()
             punc_realtime_model = get_global_punc_realtime_model(device)
 
             if punc_realtime_model:
