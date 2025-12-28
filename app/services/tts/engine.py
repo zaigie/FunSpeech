@@ -111,8 +111,11 @@ class CosyVoiceTTSEngine:
         try:
             from cosyvoice.cli.cosyvoice import CosyVoice, CosyVoice2, CosyVoice3
 
-            fp16_enabled = self._device.startswith("cuda")
             clone_version = settings.CLONE_MODEL_VERSION.lower()
+            load_trt = settings.TTS_LOAD_TRT
+            fp16_enabled = settings.TTS_ENABLE_FP16
+
+            logger.info(f"TTS 加速配置: TRT={load_trt}, FP16={fp16_enabled}")
 
             # 根据配置决定是否加载SFT模型（用于预设音色）
             if self._load_sft:
@@ -120,10 +123,10 @@ class CosyVoiceTTSEngine:
                     logger.info(f"正在加载SFT模型（CosyVoice1）到 {self._device}...")
                     self.cosyvoice_sft = CosyVoice(
                         settings.SFT_MODEL_ID,
-                        load_jit=True,
-                        load_trt=True,
+                        load_jit=load_trt,  # JIT 与 TRT 一起控制
+                        load_trt=load_trt,
                         fp16=fp16_enabled,
-                        device=self._device,  # 传递 device 参数
+                        device=self._device,
                     )
                     self._sft_model_loaded = True
                     logger.info(f"SFT模型加载成功，device={self._device}")
@@ -138,10 +141,16 @@ class CosyVoiceTTSEngine:
             if self._load_clone:
                 try:
                     if clone_version == "cosyvoice3":
+                        # CosyVoice3 的 FP16 TensorRT 存在数值溢出问题（NaN）
+                        if fp16_enabled:
+                            logger.warning(
+                                "CosyVoice3 的 FP16 TensorRT 存在数值溢出问题，可能导致静音或杂音。"
+                                "建议设置 TTS_ENABLE_FP16=false"
+                            )
                         logger.info(f"正在加载零样本克隆模型（CosyVoice3）到 {self._device}...")
                         self.cosyvoice_clone = CosyVoice3(
                             settings.COSYVOICE3_MODEL_ID,
-                            load_trt=True,
+                            load_trt=load_trt,
                             load_vllm=False,
                             fp16=fp16_enabled,
                             device=self._device,
@@ -151,8 +160,8 @@ class CosyVoiceTTSEngine:
                         logger.info(f"正在加载零样本克隆模型（CosyVoice2）到 {self._device}...")
                         self.cosyvoice_clone = CosyVoice2(
                             settings.CLONE_MODEL_ID,
-                            load_jit=True,
-                            load_trt=True,
+                            load_jit=load_trt,  # JIT 与 TRT 一起控制
+                            load_trt=load_trt,
                             load_vllm=False,
                             fp16=fp16_enabled,
                             device=self._device,

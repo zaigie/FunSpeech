@@ -75,6 +75,8 @@ class Settings:
     COSYVOICE3_MODEL_ID: str = "FunAudioLLM/Fun-CosyVoice3-0.5B-2512"  # CosyVoice3 模型
     TTS_MODEL_MODE: str = "all"  # TTS模型加载模式: all, sft, clone
     CLONE_MODEL_VERSION: str = "cosyvoice3"  # Clone模型版本: cosyvoice2, cosyvoice3
+    TTS_LOAD_TRT: bool = False  # 是否启用 TensorRT 加速
+    TTS_ENABLE_FP16: bool = False  # 是否启用 FP16 推理（CosyVoice3 的 FP16 存在数值溢出问题）
 
     # 音频处理配置
     MAX_AUDIO_SIZE: int = 100 * 1024 * 1024  # 100MB
@@ -146,6 +148,8 @@ class Settings:
         self.TTS_MODEL_MODE = os.getenv("TTS_MODEL_MODE", self.TTS_MODEL_MODE)
         self.CLONE_MODEL_VERSION = os.getenv("CLONE_MODEL_VERSION", self.CLONE_MODEL_VERSION)
         self.COSYVOICE3_MODEL_ID = os.getenv("COSYVOICE3_MODEL_ID", self.COSYVOICE3_MODEL_ID)
+        self.TTS_LOAD_TRT = os.getenv("TTS_LOAD_TRT", "false").lower() == "true"
+        self.TTS_ENABLE_FP16 = os.getenv("TTS_ENABLE_FP16", "false").lower() == "true"
 
         # 远场过滤配置
         self.ASR_ENABLE_NEARFIELD_FILTER = (

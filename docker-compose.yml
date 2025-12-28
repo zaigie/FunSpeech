@@ -55,6 +55,10 @@ services:
       # - CLONE_MODEL_VERSION=cosyvoice2   # 使用 CosyVoice2-0.5B
       # - COSYVOICE3_MODEL_ID=FunAudioLLM/Fun-CosyVoice3-0.5B-2512  # CosyVoice3 模型 ID（可选）
 
+      # TTS 推理加速配置（可选，默认都为 false）
+      # - TTS_LOAD_TRT=false      # 是否启用 TensorRT 加速
+      # - TTS_ENABLE_FP16=false   # 是否启用 FP16 推理（CosyVoice3 的 FP16 存在数值溢出问题，建议保持 false）
+
       # 推理线程池配置（可选，默认为 max(4, CPU核心数)）
       # 用于实现多路并发推理，每个请求的模型推理在独���线程中执行
       # - INFERENCE_THREAD_POOL_SIZE=8

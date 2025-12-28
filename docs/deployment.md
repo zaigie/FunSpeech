@@ -218,6 +218,8 @@ export ASR_GPUS=0,1
 | `TTS_MODEL_MODE` | `all`  | TTS 模型加载模式         | `all`, `sft`, `clone` |
 | `CLONE_MODEL_VERSION` | `cosyvoice3` | Clone 模型版本 | `cosyvoice2`, `cosyvoice3` |
 | `COSYVOICE3_MODEL_ID` | `FunAudioLLM/Fun-CosyVoice3-0.5B-2512` | CosyVoice3 模型 ID | ModelScope 模型 ID |
+| `TTS_LOAD_TRT` | `false` | 是否启用 TensorRT 加速 | `true`, `false` |
+| `TTS_ENABLE_FP16` | `false` | 是否启用 FP16 推理 | `true`, `false` |
 
 **模式说明:**
 
@@ -234,6 +236,16 @@ export ASR_GPUS=0,1
 | `cosyvoice3` | Fun-CosyVoice3-0.5B-2512 | 默认版本，支持更多控制特性（prompt 指令） |
 | `cosyvoice2` | CosyVoice2-0.5B | 稳定版本 |
 
+**TensorRT 加速说明:**
+
+| 配置 | 说明 |
+| ---- | ---- |
+| `TTS_LOAD_TRT=false` | 纯 PyTorch 推理，稳定性最高（默认） |
+| `TTS_LOAD_TRT=true, TTS_ENABLE_FP16=false` | FP32 TensorRT 加速，速度较快，稳定 |
+| `TTS_LOAD_TRT=true, TTS_ENABLE_FP16=true` | FP16 TensorRT 加速，速度最快，但 CosyVoice3 存在数值溢出问题 |
+
+> ⚠️ **注意**: CosyVoice3 的 FP16 TensorRT 存在数值溢出问题，可能导致静音或杂音，建议保持 `TTS_ENABLE_FP16=false`
+
 **使用示例:**
 
 ```bash
@@ -247,6 +259,10 @@ export CLONE_MODEL_VERSION=cosyvoice3
 # 使用 CosyVoice2 音色克隆
 export TTS_MODEL_MODE=clone
 export CLONE_MODEL_VERSION=cosyvoice2
+
+# 启用 TensorRT FP32 加速
+export TTS_LOAD_TRT=true
+export TTS_ENABLE_FP16=false
 
 # 完整功能
 export TTS_MODEL_MODE=all
