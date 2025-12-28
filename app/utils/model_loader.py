@@ -17,6 +17,14 @@ def _get_default_asr_device() -> str:
     return device
 
 
+def _get_all_asr_devices() -> list:
+    """获取所有配置的ASR设备列表"""
+    from ..services.asr.engine import parse_gpu_config
+    from ..core.config import settings
+    devices, _ = parse_gpu_config(settings.ASR_GPUS)
+    return devices
+
+
 def print_model_statistics(result: dict, use_logger: bool = True):
     """
     打印模型加载统计信息
@@ -251,13 +259,17 @@ def preload_models() -> dict:
             logger.info("📥 正在加载VAD模型...")
             from ..services.asr.engine import get_global_vad_model
 
-            # VAD是全局单例，使用单个设备（不使用多GPU引擎的拼接字符串）
-            device = _get_default_asr_device()
-            vad_model = get_global_vad_model(device)
+            # VAD模型按设备加载，支持多GPU
+            devices = _get_all_asr_devices()
+            loaded_devices = []
+            for device in devices:
+                vad_model = get_global_vad_model(device)
+                if vad_model:
+                    loaded_devices.append(device)
 
-            if vad_model:
+            if loaded_devices:
                 result["vad_model"]["loaded"] = True
-                logger.info("✅ VAD模型加载成功")
+                logger.info(f"✅ VAD模型加载成功 (设备: {', '.join(loaded_devices)})")
             else:
                 result["vad_model"]["error"] = "VAD模型加载后返回None"
                 logger.warning("⚠️  VAD模型加载后返回None")
@@ -273,13 +285,17 @@ def preload_models() -> dict:
         logger.info("📥 正在加载标点符号模型(离线)...")
         from ..services.asr.engine import get_global_punc_model
 
-        # 标点模型是全局单例，使用单个设备
-        device = _get_default_asr_device()
-        punc_model = get_global_punc_model(device)
+        # 标点模型按设备加载，支持多GPU
+        devices = _get_all_asr_devices()
+        loaded_devices = []
+        for device in devices:
+            punc_model = get_global_punc_model(device)
+            if punc_model:
+                loaded_devices.append(device)
 
-        if punc_model:
+        if loaded_devices:
             result["punc_model"]["loaded"] = True
-            logger.info("✅ 标点符号模型(离线)加载成功")
+            logger.info(f"✅ 标点符号模型(离线)加载成功 (设备: {', '.join(loaded_devices)})")
         else:
             result["punc_model"]["error"] = "标点符号模型加载后返回None"
             logger.warning("⚠️  标点符号模型(离线)加载后返回None")
@@ -294,13 +310,17 @@ def preload_models() -> dict:
             logger.info("📥 正在加载实时标点符号模型...")
             from ..services.asr.engine import get_global_punc_realtime_model
 
-            # 实时标点模型是全局单例，使用单个设备
-            device = _get_default_asr_device()
-            punc_realtime_model = get_global_punc_realtime_model(device)
+            # 实时标点模型按设备加载，支持多GPU
+            devices = _get_all_asr_devices()
+            loaded_devices = []
+            for device in devices:
+                punc_realtime_model = get_global_punc_realtime_model(device)
+                if punc_realtime_model:
+                    loaded_devices.append(device)
 
-            if punc_realtime_model:
+            if loaded_devices:
                 result["punc_realtime_model"]["loaded"] = True
-                logger.info("✅ 实时标点符号模型加载成功")
+                logger.info(f"✅ 实时标点符号模型加载成功 (设备: {', '.join(loaded_devices)})")
             else:
                 result["punc_realtime_model"]["error"] = "实时标点符号模型加载后返回None"
                 logger.warning("⚠️  实时标点符号模型加载后返回None")

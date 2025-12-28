@@ -543,128 +543,128 @@ class DolphinEngine(BaseASREngine):
 # 全局ASR引擎实例缓存
 _asr_engine: Optional[BaseASREngine] = None
 
-# 全局VAD模型缓存（避免重复加载）
-_global_vad_model = None
+# 全局VAD模型缓存（按设备缓存，避免重复加载）
+_global_vad_models: Dict[str, AutoModel] = {}
 _vad_model_lock = threading.Lock()
 
-# 全局标点符号模型缓存（避免重复加载）
-_global_punc_model = None
+# 全局标点符号模型缓存（按设备缓存，避免重复加载）
+_global_punc_models: Dict[str, AutoModel] = {}
 _punc_model_lock = threading.Lock()
 
-# 全局实时标点符号模型缓存（避免重复加载）
-_global_punc_realtime_model = None
+# 全局实时标点符号模型缓存（按设备缓存，避免重复加载）
+_global_punc_realtime_models: Dict[str, AutoModel] = {}
 _punc_realtime_model_lock = threading.Lock()
 
 
 def get_global_vad_model(device: str):
-    """获取全局VAD模型实例"""
-    global _global_vad_model
+    """获取全局VAD模型实例（按设备缓存）"""
+    global _global_vad_models
 
     with _vad_model_lock:
-        if _global_vad_model is None:
+        if device not in _global_vad_models:
             try:
-                logger.info("正在加载全局VAD模型...")
+                logger.info(f"正在加载全局VAD模型（设备: {device}）...")
 
-                _global_vad_model = AutoModel(
+                _global_vad_models[device] = AutoModel(
                     model=settings.VAD_MODEL,
                     model_revision=settings.VAD_MODEL_REVISION,
                     device=device,
                     **settings.FUNASR_AUTOMODEL_KWARGS,
                 )
-                logger.info("全局VAD模型加载成功")
+                logger.info(f"全局VAD模型加载成功（设备: {device}）")
             except Exception as e:
-                logger.error(f"全局VAD模型加载失败: {str(e)}")
-                _global_vad_model = None
+                logger.error(f"全局VAD模型加载失败（设备: {device}）: {str(e)}")
                 raise
 
-    return _global_vad_model
+    return _global_vad_models[device]
 
 
 def clear_global_vad_model():
     """清理全局VAD模型缓存"""
-    global _global_vad_model
+    global _global_vad_models
 
     with _vad_model_lock:
-        if _global_vad_model is not None:
-            del _global_vad_model
-            _global_vad_model = None
+        if _global_vad_models:
+            for device, model in list(_global_vad_models.items()):
+                del model
+                logger.info(f"全局VAD模型缓存已清理（设备: {device}）")
+            _global_vad_models.clear()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-            logger.info("全局VAD模型缓存已清理")
 
 
 def get_global_punc_model(device: str):
-    """获取全局标点符号模型实例（离线版）"""
-    global _global_punc_model
+    """获取全局标点符号模型实例（离线版，按设备缓存）"""
+    global _global_punc_models
 
     with _punc_model_lock:
-        if _global_punc_model is None:
+        if device not in _global_punc_models:
             try:
-                logger.info("正在加载全局标点符号模型（离线）...")
+                logger.info(f"正在加载全局标点符号模型（离线，设备: {device}）...")
 
-                _global_punc_model = AutoModel(
+                _global_punc_models[device] = AutoModel(
                     model=settings.PUNC_MODEL,
                     model_revision=settings.PUNC_MODEL_REVISION,
                     device=device,
                     **settings.FUNASR_AUTOMODEL_KWARGS,
                 )
-                logger.info("全局标点符号模型（离线）加载成功")
+                logger.info(f"全局标点符号模型（离线）加载成功（设备: {device}）")
             except Exception as e:
-                logger.error(f"全局标点符号模型（离线）加载失败: {str(e)}")
-                _global_punc_model = None
+                logger.error(f"全局标点符号模型（离线）加载失败（设备: {device}）: {str(e)}")
                 raise
 
-    return _global_punc_model
+    return _global_punc_models[device]
 
 
 def clear_global_punc_model():
     """清理全局标点符号模型缓存"""
-    global _global_punc_model
+    global _global_punc_models
 
     with _punc_model_lock:
-        if _global_punc_model is not None:
-            del _global_punc_model
-            _global_punc_model = None
+        if _global_punc_models:
+            for device, model in list(_global_punc_models.items()):
+                del model
+                logger.info(f"全局标点符号模型（离线）缓存已清理（设备: {device}）")
+            _global_punc_models.clear()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-            logger.info("全局标点符号模型（离线）缓存已清理")
 
 
 def get_global_punc_realtime_model(device: str):
-    """获取全局实时标点符号模型实例"""
-    global _global_punc_realtime_model
+    """获取全局实时标点符号模型实例（按设备缓存）"""
+    global _global_punc_realtime_models
 
     with _punc_realtime_model_lock:
-        if _global_punc_realtime_model is None:
+        if device not in _global_punc_realtime_models:
             try:
-                logger.info("正在加载全局标点符号模型（实时）...")
+                logger.info(f"正在加载全局标点符号模型（实时，设备: {device}）...")
 
-                _global_punc_realtime_model = AutoModel(
+                _global_punc_realtime_models[device] = AutoModel(
                     model=settings.PUNC_REALTIME_MODEL,
                     model_revision=settings.PUNC_MODEL_REVISION,
                     device=device,
                     **settings.FUNASR_AUTOMODEL_KWARGS,
                 )
-                logger.info("全局标点符号模型（实时）加载成功")
+                logger.info(f"全局标点符号模型（实时）加载成功（设备: {device}）")
             except Exception as e:
-                logger.error(f"全局标点符号模型（实时）加载失败: {str(e)}")
-                _global_punc_realtime_model = None
+                logger.error(f"全局标点符号模型（实时）加载失败（设备: {device}）: {str(e)}")
                 raise
 
-    return _global_punc_realtime_model
+    return _global_punc_realtime_models[device]
 
 
 def clear_global_punc_realtime_model():
     """清理全局实时标点符号模型缓存"""
-    global _global_punc_realtime_model
+    global _global_punc_realtime_models
 
     with _punc_realtime_model_lock:
-        if _global_punc_realtime_model is not None:
-            del _global_punc_realtime_model
-            _global_punc_realtime_model = None
+        if _global_punc_realtime_models:
+            for device, model in list(_global_punc_realtime_models.items()):
+                del model
+                logger.info(f"全局标点符号模型（实时）缓存已清理（设备: {device}）")
+            _global_punc_realtime_models.clear()
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
-            logger.info("全局标点符号模型（实时）缓存已清理")
 
 
 def get_asr_engine() -> BaseASREngine:

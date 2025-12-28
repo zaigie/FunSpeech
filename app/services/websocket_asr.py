@@ -213,7 +213,7 @@ class AliyunWebSocketASRService:
                                         "enable_punctuation_prediction", True
                                     ):
                                         full_sentence_text = await self._apply_final_punctuation_to_sentence(
-                                            full_sentence_text, task_id
+                                            full_sentence_text, task_id, session_engine=session_engine
                                         )
 
                                     await self._send_sentence_end(
@@ -450,7 +450,7 @@ class AliyunWebSocketASRService:
                                     ):
                                         full_sentence_text = (
                                             await self._apply_final_punctuation_to_sentence(
-                                                full_sentence_text, task_id
+                                                full_sentence_text, task_id, session_engine=session_engine
                                             )
                                         )
 
@@ -770,7 +770,7 @@ class AliyunWebSocketASRService:
             raise e
 
     async def _apply_final_punctuation_to_sentence(
-        self, text: str, task_id: str
+        self, text: str, task_id: str, session_engine=None
     ) -> str:
         """对完整句子应用最终标点恢复（使用离线标点模型添加完整标点包括句末标点）"""
         if not text:
@@ -779,7 +779,11 @@ class AliyunWebSocketASRService:
         try:
             from .asr.engine import get_global_punc_model
 
-            asr_engine = self._ensure_asr_engine()
+            # 使用会话级引擎（如果提供），否则使用全局引擎
+            if session_engine is not None:
+                asr_engine = session_engine
+            else:
+                asr_engine = self._ensure_asr_engine()
 
             # 使用全局PUNC模型
             punc_model = get_global_punc_model(asr_engine.device)
