@@ -252,10 +252,10 @@ class CosyVoiceTTSEngine:
         # 检查SFT模型是否可用
         if not self.cosyvoice_sft:
             model_mode = settings.TTS_MODEL_MODE.lower()
-            if model_mode == "cosyvoice2":
+            if model_mode == "clone":
                 raise DefaultServerErrorException(
-                    "当前配置为仅使用零样本克隆模型（TTS_MODEL_MODE=cosyvoice2），无法使用预设音色。"
-                    "如需使用预设音色，请设置环境变量 TTS_MODEL_MODE=all 或 TTS_MODEL_MODE=cosyvoice1"
+                    "当前配置为仅使用零样本克隆模型（TTS_MODEL_MODE=clone），无法使用预设音色。"
+                    "如需使用预设音色，请设置环境变量 TTS_MODEL_MODE=all 或 TTS_MODEL_MODE=sft"
                 )
             else:
                 raise DefaultServerErrorException("SFT模型未加载")
@@ -385,10 +385,10 @@ class CosyVoiceTTSEngine:
         """使用保存的音色合成语音（基于官方API）"""
         if not self.cosyvoice_clone:
             model_mode = settings.TTS_MODEL_MODE.lower()
-            if model_mode == "cosyvoice1":
+            if model_mode == "sft":
                 raise DefaultServerErrorException(
-                    "当前配置为仅使用SFT模型（TTS_MODEL_MODE=cosyvoice1），无法使用零样本音色克隆功能。"
-                    "如需使用零样本音色克隆，请设置环境变量 TTS_MODEL_MODE=all 或 TTS_MODEL_MODE=cosyvoice2"
+                    "当前配置为仅使用SFT模型（TTS_MODEL_MODE=sft），无法使用零样本音色克隆功能。"
+                    "如需使用零样本音色克隆，请设置环境变量 TTS_MODEL_MODE=all 或 TTS_MODEL_MODE=clone"
                 )
             else:
                 raise DefaultServerErrorException("零样本克隆模型未加载")
@@ -528,10 +528,10 @@ class CosyVoiceTTSEngine:
         """获取音色列表（根据模型加载模式返回对应音色）"""
         model_mode = settings.TTS_MODEL_MODE.lower()
 
-        if model_mode == "cosyvoice1":
+        if model_mode == "sft":
             # 仅返回预设音色
             return settings.PRESET_VOICES.copy()
-        elif model_mode == "cosyvoice2":
+        elif model_mode == "clone":
             # 仅返回零样本克隆音色
             if self._voice_manager:
                 return self._voice_manager.list_clone_voices()
@@ -593,10 +593,10 @@ class CosyVoiceTTSEngine:
         }
 
         # 根据模型模式决定返回哪些音色信息
-        if model_mode == "cosyvoice1":
+        if model_mode == "sft":
             # 仅返回预设音色信息
             target_voices = settings.PRESET_VOICES
-        elif model_mode == "cosyvoice2":
+        elif model_mode == "clone":
             # 仅返回零样本克隆音色信息
             target_voices = (
                 self._voice_manager.list_clone_voices() if self._voice_manager else []
@@ -642,23 +642,23 @@ class CosyVoiceTTSEngine:
         """刷新音色配置（根据模型模式仅在必要时重新加载）"""
         model_mode = settings.TTS_MODEL_MODE.lower()
 
-        if model_mode == "cosyvoice1":
+        if model_mode == "sft":
             # 仅使用预设音色
             self._preset_voices = settings.PRESET_VOICES.copy()
             logger.debug(
-                f"音色配置已刷新（cosyvoice1模式），当前有 {len(self._preset_voices)} 个预设音色"
+                f"音色配置已刷新（sft模式），当前有 {len(self._preset_voices)} 个预设音色"
             )
-        elif model_mode == "cosyvoice2":
+        elif model_mode == "clone":
             # 仅使用零样本克隆音色
             if self._voice_manager:
                 clone_voices = self._voice_manager.list_clone_voices()
                 self._preset_voices = clone_voices.copy()
                 logger.debug(
-                    f"音色配置已刷新（cosyvoice2模式），当前有 {len(clone_voices)} 个零样本克隆音色"
+                    f"音色配置已刷新（clone模式），当前有 {len(clone_voices)} 个零样本克隆音色"
                 )
             else:
                 self._preset_voices = []
-                logger.debug("音色配置已刷新（cosyvoice2模式），当前没有可用音色")
+                logger.debug("音色配置已刷新（clone模式），当前没有可用音色")
         else:
             # all模式：包含所有音色
             self._preset_voices = settings.PRESET_VOICES.copy()
@@ -947,8 +947,8 @@ def get_tts_engine() -> MultiGPUTTSEngine:
     with _tts_engine_lock:
         if _tts_engine is None:
             model_mode = settings.TTS_MODEL_MODE.lower()
-            load_sft = model_mode in ("all", "cosyvoice1")
-            load_clone = model_mode in ("all", "cosyvoice2")
+            load_sft = model_mode in ("all", "sft")
+            load_clone = model_mode in ("all", "clone")
 
             logger.info(f"创建TTS引擎，TTS_GPUS={settings.TTS_GPUS or '(auto)'}, 模式={model_mode}")
             _tts_engine = MultiGPUTTSEngine(

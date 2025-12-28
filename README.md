@@ -191,8 +191,8 @@ curl -X POST "http://localhost:8000/stream/v1/tts" \
 
 音色列表 API (`/stream/v1/tts/voices`) 会根据当前的模型模式智能返回对应的音色:
 
-- **cosyvoice1 模式**: 仅返回预设音色列表(7 个)
-- **cosyvoice2 模式**: 仅返回零样本克隆音色列表(允许为空)
+- **sft 模式**: 仅返回预设音色列表(7 个)
+- **clone 模式**: 仅返回零样本克隆音色列表(允许为空)
 - **all 模式**: 返回所有音色列表(预设+零样本克隆)
 
 ### 预训练音色
@@ -278,21 +278,21 @@ curl -X POST "http://localhost:8000/stream/v1/tts" \
 
 | 模型名称               | 加载模式             | 大小  | 说明                              | ModelScope 链接                                         |
 | ---------------------- | -------------------- | ----- | --------------------------------- | ------------------------------------------------------- |
-| **CosyVoice-300M-SFT** | `cosyvoice1` / `all` | 5.4GB | 预训练音色模型,支持 7 种预设音色  | https://www.modelscope.cn/models/iic/CosyVoice-300M-SFT |
-| **CosyVoice2-0.5B**    | `cosyvoice2` / `all` | 5.5GB | 零样本克隆模型,支持音色克隆和指导 | https://www.modelscope.cn/models/iic/CosyVoice2-0.5B    |
-| **Fun-CosyVoice3-0.5B** | `cosyvoice2` / `all` | 5.5GB | CosyVoice3 零样本克隆模型 | https://www.modelscope.cn/models/FunAudioLLM/Fun-CosyVoice3-0.5B-2512 |
+| **CosyVoice-300M-SFT** | `sft` / `all` | 5.4GB | 预训练音色模型,支持 7 种预设音色  | https://www.modelscope.cn/models/iic/CosyVoice-300M-SFT |
+| **CosyVoice2-0.5B**    | `clone` / `all` | 5.5GB | 零样本克隆模型,支持音色克隆和指导 | https://www.modelscope.cn/models/iic/CosyVoice2-0.5B    |
+| **Fun-CosyVoice3-0.5B** | `clone` / `all` | 5.5GB | CosyVoice3 零样本克隆模型 | https://www.modelscope.cn/models/FunAudioLLM/Fun-CosyVoice3-0.5B-2512 |
 
 **模式说明:**
 
-- `TTS_MODEL_MODE=cosyvoice1` - 仅加载预设音色模型 (~5.4GB)
-- `TTS_MODEL_MODE=cosyvoice2` - 仅加载音色克隆模型 (~5.5GB)
+- `TTS_MODEL_MODE=sft` - 仅加载预设音色模型 (~5.4GB)
+- `TTS_MODEL_MODE=clone` - 仅加载音色克隆模型 (~5.5GB)
 - `TTS_MODEL_MODE=all` - 加载全部模型 (~11GB,默认)
 
 **克隆模型版本选择:**
 
 通过 `CLONE_MODEL_VERSION` 环境变量选择克隆模型版本:
-- `CLONE_MODEL_VERSION=cosyvoice2` - 使用 CosyVoice2-0.5B (默认)
-- `CLONE_MODEL_VERSION=cosyvoice3` - 使用 Fun-CosyVoice3-0.5B-2512
+- `CLONE_MODEL_VERSION=cosyvoice3` - 使用 Fun-CosyVoice3-0.5B-2512 (默认)
+- `CLONE_MODEL_VERSION=cosyvoice2` - 使用 CosyVoice2-0.5B
 
 ### ASR 模型 (语音识别)
 
@@ -345,14 +345,14 @@ pip install modelscope
 **下载 TTS 模型:**
 
 ```bash
-# 预设音色模型 (TTS_MODEL_MODE=cosyvoice1 或 all)
+# 预设音色模型 (TTS_MODEL_MODE=sft 或 all)
 modelscope download --model iic/CosyVoice-300M-SFT
 
-# 音色克隆模型 - CosyVoice2 (CLONE_MODEL_VERSION=cosyvoice2,默认)
-modelscope download --model iic/CosyVoice2-0.5B
-
-# 音色克隆模型 - CosyVoice3 (CLONE_MODEL_VERSION=cosyvoice3)
+# 音色克隆模型 - CosyVoice3 (CLONE_MODEL_VERSION=cosyvoice3,默认)
 modelscope download --model FunAudioLLM/Fun-CosyVoice3-0.5B-2512
+
+# 音色克隆模型 - CosyVoice2 (CLONE_MODEL_VERSION=cosyvoice2)
+modelscope download --model iic/CosyVoice2-0.5B
 ```
 
 **下载 ASR 模型:**
@@ -387,8 +387,8 @@ modelscope download --model iic/speech_fsmn_vad_zh-cn-16k-common-pytorch
 
 | 场景           | 环境变量配置                                             | 所需模型                   | 总大小 |
 | -------------- | -------------------------------------------------------- | -------------------------- | ------ |
-| **最小部署**   | `TTS_MODEL_MODE=cosyvoice1`<br>`ASR_MODEL_MODE=offline`  | 1 个 TTS + 离线 ASR + 辅助 | ~7GB   |
-| **实时流式**   | `TTS_MODEL_MODE=cosyvoice1`<br>`ASR_MODEL_MODE=realtime` | 1 个 TTS + 流式 ASR + 辅助 | ~7GB   |
+| **最小部署**   | `TTS_MODEL_MODE=sft`<br>`ASR_MODEL_MODE=offline`  | 1 个 TTS + 离线 ASR + 辅助 | ~7GB   |
+| **实时流式**   | `TTS_MODEL_MODE=sft`<br>`ASR_MODEL_MODE=realtime` | 1 个 TTS + 流式 ASR + 辅助 | ~7GB   |
 | **完整 TTS**   | `TTS_MODEL_MODE=all`<br>`ASR_MODEL_MODE=offline`         | 2 个 TTS + 离线 ASR + 辅助 | ~12GB  |
 | **全功能部署** | `TTS_MODEL_MODE=all`<br>`ASR_MODEL_MODE=all`             | 全部模型                   | ~14GB  |
 

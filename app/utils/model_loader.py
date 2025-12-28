@@ -335,7 +335,7 @@ def preload_models() -> dict:
     tts_mode = settings.TTS_MODEL_MODE.lower()
 
     # 6.1 加载SFT模型 (CosyVoice1)
-    if tts_mode in ["all", "cosyvoice1"]:
+    if tts_mode in ["all", "sft"]:
         try:
             logger.info("📥 正在加载TTS SFT模型(CosyVoice1)...")
             from ..services.tts.engine import get_tts_engine
@@ -354,33 +354,35 @@ def preload_models() -> dict:
             result["tts_sft_model"]["error"] = str(e)
             logger.error(f"❌ TTS SFT模型(CosyVoice1)加载失败: {e}")
     else:
-        logger.info("⏭️  跳过TTS SFT模型加载 (TTS_MODEL_MODE=cosyvoice2)")
+        logger.info("⏭️  跳过TTS SFT模型加载 (TTS_MODEL_MODE=clone)")
 
-    # 6.2 加载零样本克隆模型 (CosyVoice2)
-    if tts_mode in ["all", "cosyvoice2"]:
+    # 6.2 加载零样本克隆模型 (CosyVoice2/3)
+    if tts_mode in ["all", "clone"]:
         try:
-            logger.info("📥 正在加载TTS零样本克隆模型(CosyVoice2)...")
+            clone_version = settings.CLONE_MODEL_VERSION
+            logger.info(f"📥 正在加载TTS零样本克隆模型({clone_version})...")
             from ..services.tts.engine import get_tts_engine
 
             tts_engine = get_tts_engine()
 
             if tts_engine.is_clone_model_loaded():
                 result["tts_clone_model"]["loaded"] = True
-                logger.info("✅ TTS零样本克隆模型(CosyVoice2)加载成功")
-                logger.info(f"   - 模型ID: {settings.CLONE_MODEL_ID}")
+                logger.info(f"✅ TTS零样本克隆模型({clone_version})加载成功")
+                model_id = settings.COSYVOICE3_MODEL_ID if clone_version == "cosyvoice3" else settings.CLONE_MODEL_ID
+                logger.info(f"   - 模型ID: {model_id}")
 
                 # 显示可用音色数量
                 voices = tts_engine.get_voices()
                 logger.info(f"   - 可用音色: {len(voices)} 个")
             else:
                 result["tts_clone_model"]["error"] = "零样本克隆模型未加载"
-                logger.warning("⚠️  TTS零样本克隆模型(CosyVoice2)未加载")
+                logger.warning(f"⚠️  TTS零样本克隆模型({clone_version})未加载")
 
         except Exception as e:
             result["tts_clone_model"]["error"] = str(e)
-            logger.error(f"❌ TTS零样本克隆模型(CosyVoice2)加载失败: {e}")
+            logger.error(f"❌ TTS零样本克隆模型加载失败: {e}")
     else:
-        logger.info("⏭️  跳过TTS零样本克隆模型加载 (TTS_MODEL_MODE=cosyvoice1)")
+        logger.info("⏭️  跳过TTS零样本克隆模型加载 (TTS_MODEL_MODE=sft)")
 
     # 打印统计结果到日志
     print_model_statistics(result, use_logger=True)

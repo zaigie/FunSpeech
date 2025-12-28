@@ -215,8 +215,8 @@ export ASR_GPUS=0,1
 
 | 环境变量       | 默认值 | 说明                     | 可选值                          |
 | -------------- | ------ | ------------------------ | ------------------------------- |
-| `TTS_MODEL_MODE` | `all`  | TTS 模型加载模式         | `all`, `cosyvoice1`, `cosyvoice2` |
-| `CLONE_MODEL_VERSION` | `cosyvoice2` | Clone 模型版本 | `cosyvoice2`, `cosyvoice3` |
+| `TTS_MODEL_MODE` | `all`  | TTS 模型加载模式         | `all`, `sft`, `clone` |
+| `CLONE_MODEL_VERSION` | `cosyvoice3` | Clone 模型版本 | `cosyvoice2`, `cosyvoice3` |
 | `COSYVOICE3_MODEL_ID` | `FunAudioLLM/Fun-CosyVoice3-0.5B-2512` | CosyVoice3 模型 ID | ModelScope 模型 ID |
 
 **模式说明:**
@@ -224,37 +224,37 @@ export ASR_GPUS=0,1
 | 模式         | 功能           | 磁盘空间 | 内存使用 | 适用场景           |
 | ------------ | -------------- | -------- | -------- | ------------------ |
 | `all`        | 预设+克隆音色  | ~11GB    | 较高     | 完整功能需求       |
-| `cosyvoice1` | 仅预设音色     | ~5.4GB   | 较低     | 标准语音合成       |
-| `cosyvoice2` | 仅音色克隆     | ~5.5GB   | 较低     | 个性化音色定制     |
+| `sft`        | 仅预设音色     | ~5.4GB   | 较低     | 标准语音合成       |
+| `clone`      | 仅音色克隆     | ~5.5GB   | 较低     | 个性化音色定制     |
 
 **克隆模型版本说明:**
 
 | 版本 | 模型 | 说明 |
 | ---- | ---- | ---- |
-| `cosyvoice2` | CosyVoice2-0.5B | 默认版本，稳定可靠 |
-| `cosyvoice3` | Fun-CosyVoice3-0.5B-2512 | 新版本，支持更多控制特性 |
+| `cosyvoice3` | Fun-CosyVoice3-0.5B-2512 | 默认版本，支持更多控制特性（prompt 指令） |
+| `cosyvoice2` | CosyVoice2-0.5B | 稳定版本 |
 
 **使用示例:**
 
 ```bash
 # 仅需预设音色(节省空间)
-export TTS_MODEL_MODE=cosyvoice1
+export TTS_MODEL_MODE=sft
 
-# 仅需音色克隆（使用 CosyVoice2，默认）
-export TTS_MODEL_MODE=cosyvoice2
-export CLONE_MODEL_VERSION=cosyvoice2
-
-# 使用 CosyVoice3 音色克隆
-export TTS_MODEL_MODE=cosyvoice2
+# 仅需音色克隆（使用 CosyVoice3，默认）
+export TTS_MODEL_MODE=clone
 export CLONE_MODEL_VERSION=cosyvoice3
+
+# 使用 CosyVoice2 音色克隆
+export TTS_MODEL_MODE=clone
+export CLONE_MODEL_VERSION=cosyvoice2
 
 # 完整功能
 export TTS_MODEL_MODE=all
 ```
 
 **影响:**
-- `cosyvoice1`: 仅加载 CosyVoice-300M-SFT 模型,音色列表仅返回 7 个预设音色
-- `cosyvoice2`: 仅加载 CosyVoice2-0.5B 模型,音色列表仅返回克隆音色,支持 `prompt` 参数
+- `sft`: 仅加载 CosyVoice-300M-SFT 模型,音色列表仅返回 7 个预设音色
+- `clone`: 仅加载零样本克隆模型,音色列表仅返回克隆音色,支持 `prompt` 参数
 - `all`: 加载所有模型,音色列表返回预设+克隆音色
 
 ### ASR 模型配置
@@ -327,7 +327,7 @@ TTS_GPUS=cpu
 ASR_GPUS=cpu
 
 # TTS 模式(仅预设音色)
-TTS_MODEL_MODE=cosyvoice1
+TTS_MODEL_MODE=sft
 
 # 不启用鉴权
 # APPTOKEN=

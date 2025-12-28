@@ -73,8 +73,8 @@ class Settings:
     SFT_MODEL_ID: str = "iic/CosyVoice-300M-SFT"  # 预训练音色模型（CosyVoice）
     CLONE_MODEL_ID: str = "iic/CosyVoice2-0.5B"  # 零样本克隆模型（CosyVoice2）
     COSYVOICE3_MODEL_ID: str = "FunAudioLLM/Fun-CosyVoice3-0.5B-2512"  # CosyVoice3 模型
-    TTS_MODEL_MODE: str = "all"  # TTS模型加载模式: all, cosyvoice1, cosyvoice2
-    CLONE_MODEL_VERSION: str = "cosyvoice2"  # Clone模型版本: cosyvoice2, cosyvoice3
+    TTS_MODEL_MODE: str = "all"  # TTS模型加载模式: all, sft, clone
+    CLONE_MODEL_VERSION: str = "cosyvoice3"  # Clone模型版本: cosyvoice2, cosyvoice3
 
     # 音频处理配置
     MAX_AUDIO_SIZE: int = 100 * 1024 * 1024  # 100MB
