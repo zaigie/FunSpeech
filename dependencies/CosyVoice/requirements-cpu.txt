@@ -7,6 +7,7 @@ transformers==4.51.3
 HyperPyYAML==1.2.2
 lightning==2.2.4
 matplotlib==3.7.5
+x-transformers==2.12.2
 
 # 声学与文本前端
 openai-whisper==20231117
