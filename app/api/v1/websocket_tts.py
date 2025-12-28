@@ -168,7 +168,15 @@ async def websocket_test_page():
                     <textarea id="text" placeholder="输入文本片段，支持连续发送多个片段">你好，这是第一个文本片段。</textarea>
                 </div>
             </div>
-            
+
+            <div class="form-row">
+                <div class="form-group">
+                    <label>语音指令 (prompt，可选):</label>
+                    <input type="text" id="prompt" placeholder="例如：用开心的语气说话、请用广东话表达、请慢一点说" />
+                    <div style="font-size: 11px; color: #666; margin-top: 3px;">💡 仅对克隆音色生效，可控制语气、方言、语速等</div>
+                </div>
+            </div>
+
             <div class="form-row">
                 <div class="form-group">
                     <label>已发送的文本历史:</label>
@@ -566,7 +574,8 @@ async def websocket_test_page():
                 const volume = parseInt(document.getElementById('volume').value);
                 const speechRate = parseInt(document.getElementById('speechRate').value);
                 const autoStopAfterSentence = document.getElementById('autoStopAfterSentence').checked;
-                
+                const prompt = document.getElementById('prompt').value;
+
                 const message = {
                     header: {
                         message_id: generateMessageId(),
@@ -582,12 +591,13 @@ async def websocket_test_page():
                         speech_rate: speechRate,
                         pitch_rate: 0,
                         enable_subtitle: false,  // 字幕功能已移除
+                        prompt: prompt,  // 语音指令控制
                         platform: 'javascript'
                     }
                 };
-                
+
                 websocket.send(JSON.stringify(message));
-                log('→ 发送StartSynthesis', 'info');
+                log('→ 发送StartSynthesis' + (prompt ? ` (prompt: ${prompt})` : ''), 'info');
             }
             
             // 发送RunSynthesis

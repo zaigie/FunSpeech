@@ -251,6 +251,7 @@ class AliyunWebSocketTTSService:
                 "speech_rate": payload.get("speech_rate", 0),
                 "pitch_rate": payload.get("pitch_rate", 0),
                 "enable_subtitle": payload.get("enable_subtitle", False),
+                "prompt": payload.get("prompt", ""),  # 自然语言指令控制
             }
 
             # 验证参数
@@ -283,6 +284,9 @@ class AliyunWebSocketTTSService:
             # 映射本地音色到阿里云音色名称
             local_voice = self._map_aliyun_voice_to_local(params["voice"])
 
+            # 获取 prompt 参数
+            prompt = params.get("prompt", "")
+
             # 生成音频
             audio_sent = False
             async for audio_chunk in self._synthesize_streaming_audio(
@@ -294,6 +298,7 @@ class AliyunWebSocketTTSService:
                 params["volume"],
                 task_id,
                 websocket,  # 传入websocket用于检测连接状态
+                prompt,  # 传入 prompt 参数
             ):
                 if audio_chunk and len(audio_chunk) > 0:
                     # 检查WebSocket连接状态
@@ -340,15 +345,27 @@ class AliyunWebSocketTTSService:
         return aliyun_voice
 
     def _format_prompt_text(self, prompt_text: str, clone_version: str) -> str:
-        """根据模型版本格式化 prompt_text
+        """根据模型版本格式化 prompt_text (instruct_text)
 
         CosyVoice3 需要 'You are a helpful assistant.<|endofprompt|>' 前缀
+        CosyVoice2 需要 '<|endofprompt|>' 后缀
         """
         if clone_version == "cosyvoice3":
             if prompt_text and not prompt_text.startswith("You are"):
-                return f"You are a helpful assistant.<|endofprompt|>{prompt_text}"
+                return f"You are a helpful assistant. {prompt_text}<|endofprompt|>"
             elif not prompt_text:
                 return "You are a helpful assistant.<|endofprompt|>"
+            else:
+                # 已经有前缀，确保有后缀
+                if not prompt_text.endswith("<|endofprompt|>"):
+                    return f"{prompt_text}<|endofprompt|>"
+                return prompt_text
+        else:
+            # CosyVoice2
+            if prompt_text:
+                if not prompt_text.endswith("<|endofprompt|>"):
+                    return f"{prompt_text}<|endofprompt|>"
+                return prompt_text
         return prompt_text
 
     async def _synthesize_streaming_audio(
@@ -361,6 +378,7 @@ class AliyunWebSocketTTSService:
         volume: int,
         task_id: str,
         websocket,  # 添加websocket参数用于检测连接状态
+        prompt: str = "",  # 自然语言指令控制
     ) -> AsyncGenerator[Optional[bytes], None]:
         """生成流式音频数据"""
         tts_engine = self._ensure_tts_engine()
@@ -381,9 +399,9 @@ class AliyunWebSocketTTSService:
                 and voice_manager.is_voice_available(voice)
             ):
                 if voice in voice_manager.list_clone_voices():
-                    # 使用CosyVoice2流式合成（零样本克隆音色）
+                    # 使用CosyVoice2/3流式合成（零样本克隆音色）
                     async for chunk in self._stream_clone_voice_with_engine(
-                        text, voice, speed, format, task_id, websocket, single_engine
+                        text, voice, speed, format, task_id, websocket, single_engine, prompt
                     ):
                         yield chunk
                     return
@@ -445,24 +463,48 @@ class AliyunWebSocketTTSService:
             await asyncio.sleep(0.01)
 
     async def _stream_clone_voice_with_engine(
-        self, text: str, voice: str, speed: float, format: str, task_id: str, websocket, engine
+        self, text: str, voice: str, speed: float, format: str, task_id: str, websocket, engine, prompt: str = ""
     ) -> AsyncGenerator[bytes, None]:
         """使用指定引擎的 CosyVoice2/3 进行流式合成（零样本克隆音色）"""
         clone_version = engine._clone_model_version if hasattr(engine, '_clone_model_version') else "cosyvoice2"
-        logger.debug(f"[{task_id}] 使用 {clone_version} 流式合成零样本克隆音色: {voice}")
+        logger.debug(f"[{task_id}] 使用 {clone_version} 流式合成零样本克隆音色: {voice}, prompt: {prompt}")
 
-        # 格式化 prompt（CosyVoice3 需要特殊前缀）
-        prompt_text = self._format_prompt_text("", clone_version)
+        # 格式化 prompt（CosyVoice3 需要特殊前缀，CosyVoice2 需要后缀）
+        formatted_prompt = self._format_prompt_text(prompt, clone_version)
+
+        # 根据是否有 prompt 选择不同的推理方法
+        if prompt:
+            # 使用 instruct2 方法，支持自然语言指令控制
+            inference_method = engine.cosyvoice_clone.inference_instruct2
+            inference_args = (
+                text,
+                formatted_prompt,  # instruct_text
+                None,  # prompt_wav - 不需要，使用保存的音色
+            )
+            inference_kwargs = {
+                "zero_shot_spk_id": voice,
+                "stream": True,
+                "speed": speed,
+            }
+        else:
+            # 无 prompt 时使用 zero_shot
+            inference_method = engine.cosyvoice_clone.inference_zero_shot
+            inference_args = (
+                text,
+                "",
+                None,
+            )
+            inference_kwargs = {
+                "zero_shot_spk_id": voice,
+                "stream": True,
+                "speed": speed,
+            }
 
         # 使用线程池执行流式推理，避免阻塞事件循环
         async for audio_data in run_sync_generator(
-            engine.cosyvoice_clone.inference_zero_shot,
-            text,
-            prompt_text,  # 使用格式化后的 prompt
-            None,  # prompt_speech_16k - 不需要，因为使用保存的音色
-            zero_shot_spk_id=voice,  # 使用保存的音色ID
-            stream=True,  # 关键：启用流式模式
-            speed=speed,
+            inference_method,
+            *inference_args,
+            **inference_kwargs,
         ):
             # 检查连接状态，如果断开则立即停止
             if websocket.client_state.name != "CONNECTED":

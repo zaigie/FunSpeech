@@ -348,15 +348,27 @@ class CosyVoiceTTSEngine:
             return output_path
 
     def _format_prompt_text(self, prompt_text: str) -> str:
-        """根据模型版本格式化 prompt_text
+        """根据模型版本格式化 prompt_text (instruct_text)
 
         CosyVoice3 需要 'You are a helpful assistant.<|endofprompt|>' 前缀
+        CosyVoice2 需要 '<|endofprompt|>' 后缀
         """
         if self._clone_model_version == "cosyvoice3":
             if prompt_text and not prompt_text.startswith("You are"):
-                return f"You are a helpful assistant.<|endofprompt|>{prompt_text}"
+                return f"You are a helpful assistant. {prompt_text}<|endofprompt|>"
             elif not prompt_text:
                 return "You are a helpful assistant.<|endofprompt|>"
+            else:
+                # 已经有前缀，确保有后缀
+                if not prompt_text.endswith("<|endofprompt|>"):
+                    return f"{prompt_text}<|endofprompt|>"
+                return prompt_text
+        else:
+            # CosyVoice2
+            if prompt_text:
+                if not prompt_text.endswith("<|endofprompt|>"):
+                    return f"{prompt_text}<|endofprompt|>"
+                return prompt_text
         return prompt_text
 
     def _synthesize_with_saved_voice(
@@ -399,14 +411,28 @@ class CosyVoiceTTSEngine:
                 # 为每个句子生成音频并记录时间戳
                 for sentence_text in normalized_texts:
                     sentence_audio_segments = []
-                    for audio_data in self.cosyvoice_clone.inference_zero_shot(
-                        sentence_text,
-                        formatted_prompt,  # 使用格式化后的 prompt
-                        None,  # 不需要音频
-                        zero_shot_spk_id=voice,  # 使用保存的音色ID
-                        stream=False,
-                        speed=speed,
-                    ):
+                    # 根据是否有 prompt 选择不同的推理方法
+                    if prompt:
+                        # 使用 instruct2 方法，支持自然语言指令控制
+                        inference_gen = self.cosyvoice_clone.inference_instruct2(
+                            sentence_text,
+                            formatted_prompt,  # instruct_text
+                            None,  # prompt_wav - 不需要，使用保存的音色
+                            zero_shot_spk_id=voice,
+                            stream=False,
+                            speed=speed,
+                        )
+                    else:
+                        # 无 prompt 时使用 zero_shot
+                        inference_gen = self.cosyvoice_clone.inference_zero_shot(
+                            sentence_text,
+                            "",
+                            None,
+                            zero_shot_spk_id=voice,
+                            stream=False,
+                            speed=speed,
+                        )
+                    for audio_data in inference_gen:
                         sentence_audio_segments.append(audio_data["tts_speech"].numpy())
 
                     if sentence_audio_segments:
@@ -443,14 +469,28 @@ class CosyVoiceTTSEngine:
 
             else:
                 # 不需要时间戳，直接合成
-                for audio_data in self.cosyvoice_clone.inference_zero_shot(
-                    text,
-                    formatted_prompt,  # 使用格式化后的 prompt
-                    None,  # 不需要音频
-                    zero_shot_spk_id=voice,  # 使用保存的音色ID
-                    stream=False,
-                    speed=speed,
-                ):
+                # 根据是否有 prompt 选择不同的推理方法
+                if prompt:
+                    # 使用 instruct2 方法，支持自然语言指令控制
+                    inference_gen = self.cosyvoice_clone.inference_instruct2(
+                        text,
+                        formatted_prompt,  # instruct_text
+                        None,  # prompt_wav - 不需要，使用保存的音色
+                        zero_shot_spk_id=voice,
+                        stream=False,
+                        speed=speed,
+                    )
+                else:
+                    # 无 prompt 时使用 zero_shot
+                    inference_gen = self.cosyvoice_clone.inference_zero_shot(
+                        text,
+                        "",
+                        None,
+                        zero_shot_spk_id=voice,
+                        stream=False,
+                        speed=speed,
+                    )
+                for audio_data in inference_gen:
                     all_audio_segments.append(audio_data["tts_speech"].numpy())
 
             if not all_audio_segments:
