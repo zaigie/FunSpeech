@@ -280,12 +280,19 @@ curl -X POST "http://localhost:8000/stream/v1/tts" \
 | ---------------------- | -------------------- | ----- | --------------------------------- | ------------------------------------------------------- |
 | **CosyVoice-300M-SFT** | `cosyvoice1` / `all` | 5.4GB | 预训练音色模型,支持 7 种预设音色  | https://www.modelscope.cn/models/iic/CosyVoice-300M-SFT |
 | **CosyVoice2-0.5B**    | `cosyvoice2` / `all` | 5.5GB | 零样本克隆模型,支持音色克隆和指导 | https://www.modelscope.cn/models/iic/CosyVoice2-0.5B    |
+| **Fun-CosyVoice3-0.5B** | `cosyvoice2` / `all` | 5.5GB | CosyVoice3 零样本克隆模型 | https://www.modelscope.cn/models/FunAudioLLM/Fun-CosyVoice3-0.5B-2512 |
 
 **模式说明:**
 
 - `TTS_MODEL_MODE=cosyvoice1` - 仅加载预设音色模型 (~5.4GB)
 - `TTS_MODEL_MODE=cosyvoice2` - 仅加载音色克隆模型 (~5.5GB)
 - `TTS_MODEL_MODE=all` - 加载全部模型 (~11GB,默认)
+
+**克隆模型版本选择:**
+
+通过 `CLONE_MODEL_VERSION` 环境变量选择克隆模型版本:
+- `CLONE_MODEL_VERSION=cosyvoice2` - 使用 CosyVoice2-0.5B (默认)
+- `CLONE_MODEL_VERSION=cosyvoice3` - 使用 Fun-CosyVoice3-0.5B-2512
 
 ### ASR 模型 (语音识别)
 
@@ -341,8 +348,11 @@ pip install modelscope
 # 预设音色模型 (TTS_MODEL_MODE=cosyvoice1 或 all)
 modelscope download --model iic/CosyVoice-300M-SFT
 
-# 音色克隆模型 (TTS_MODEL_MODE=cosyvoice2 或 all)
+# 音色克隆模型 - CosyVoice2 (CLONE_MODEL_VERSION=cosyvoice2,默认)
 modelscope download --model iic/CosyVoice2-0.5B
+
+# 音色克隆模型 - CosyVoice3 (CLONE_MODEL_VERSION=cosyvoice3)
+modelscope download --model FunAudioLLM/Fun-CosyVoice3-0.5B-2512
 ```
 
 **下载 ASR 模型:**

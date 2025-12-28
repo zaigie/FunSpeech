@@ -339,6 +339,18 @@ class AliyunWebSocketTTSService:
         """直接返回音色名称，不进行映射"""
         return aliyun_voice
 
+    def _format_prompt_text(self, prompt_text: str, clone_version: str) -> str:
+        """根据模型版本格式化 prompt_text
+
+        CosyVoice3 需要 'You are a helpful assistant.<|endofprompt|>' 前缀
+        """
+        if clone_version == "cosyvoice3":
+            if prompt_text and not prompt_text.startswith("You are"):
+                return f"You are a helpful assistant.<|endofprompt|>{prompt_text}"
+            elif not prompt_text:
+                return "You are a helpful assistant.<|endofprompt|>"
+        return prompt_text
+
     async def _synthesize_streaming_audio(
         self,
         text: str,
@@ -435,14 +447,18 @@ class AliyunWebSocketTTSService:
     async def _stream_clone_voice_with_engine(
         self, text: str, voice: str, speed: float, format: str, task_id: str, websocket, engine
     ) -> AsyncGenerator[bytes, None]:
-        """使用指定引擎的CosyVoice2进行流式合成（零样本克隆音色）"""
-        logger.debug(f"[{task_id}] 使用CosyVoice2流式合成零样本克隆音色: {voice}")
+        """使用指定引擎的 CosyVoice2/3 进行流式合成（零样本克隆音色）"""
+        clone_version = engine._clone_model_version if hasattr(engine, '_clone_model_version') else "cosyvoice2"
+        logger.debug(f"[{task_id}] 使用 {clone_version} 流式合成零样本克隆音色: {voice}")
+
+        # 格式化 prompt（CosyVoice3 需要特殊前缀）
+        prompt_text = self._format_prompt_text("", clone_version)
 
         # 使用线程池执行流式推理，避免阻塞事件循环
         async for audio_data in run_sync_generator(
             engine.cosyvoice_clone.inference_zero_shot,
             text,
-            "",  # prompt_text - 使用空字符串，由于我们使用保存的音色
+            prompt_text,  # 使用格式化后的 prompt
             None,  # prompt_speech_16k - 不需要，因为使用保存的音色
             zero_shot_spk_id=voice,  # 使用保存的音色ID
             stream=True,  # 关键：启用流式模式

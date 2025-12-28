@@ -242,11 +242,8 @@ class VoiceManager:
             # 获取CosyVoice实例
             cosyvoice = self._get_cosyvoice()
 
-            # 加载音频
-            from cosyvoice.utils.file_utils import load_wav
-            import torchaudio
-
             # 检查音频文件基本信息
+            import torchaudio
             try:
                 audio_info = torchaudio.info(str(wav_file))
                 audio_duration = audio_info.num_frames / audio_info.sample_rate
@@ -269,21 +266,11 @@ class VoiceManager:
                 logger.error(f"无法读取音频文件信息: {e}")
                 return False
 
-            # 加载音频数据 (16kHz)
-            prompt_speech_16k = load_wav(str(wav_file), 16000)
-
-            # 检查加载后的音频数据
-            if prompt_speech_16k.shape[1] < 16000:  # 少于1秒
-                logger.error(
-                    f"音频数据太短: {prompt_speech_16k.shape[1]} 样本点 ({prompt_speech_16k.shape[1]/16000:.2f}秒)"
-                )
-                return False
-
-            logger.info(f"  音频数据形状: {prompt_speech_16k.shape}")
-
             # 使用官方API添加音色
+            # 注意：add_zero_shot_spk 的第二个参数需要是文件路径字符串，而非 tensor
+            # 因为内部会调用 load_wav 加载音频
             success = cosyvoice.add_zero_shot_spk(
-                reference_text, prompt_speech_16k, voice_name
+                reference_text, str(wav_file), voice_name
             )
 
             if not success:

@@ -216,6 +216,8 @@ export ASR_GPUS=0,1
 | 环境变量       | 默认值 | 说明                     | 可选值                          |
 | -------------- | ------ | ------------------------ | ------------------------------- |
 | `TTS_MODEL_MODE` | `all`  | TTS 模型加载模式         | `all`, `cosyvoice1`, `cosyvoice2` |
+| `CLONE_MODEL_VERSION` | `cosyvoice2` | Clone 模型版本 | `cosyvoice2`, `cosyvoice3` |
+| `COSYVOICE3_MODEL_ID` | `FunAudioLLM/Fun-CosyVoice3-0.5B-2512` | CosyVoice3 模型 ID | ModelScope 模型 ID |
 
 **模式说明:**
 
@@ -225,14 +227,26 @@ export ASR_GPUS=0,1
 | `cosyvoice1` | 仅预设音色     | ~5.4GB   | 较低     | 标准语音合成       |
 | `cosyvoice2` | 仅音色克隆     | ~5.5GB   | 较低     | 个性化音色定制     |
 
+**克隆模型版本说明:**
+
+| 版本 | 模型 | 说明 |
+| ---- | ---- | ---- |
+| `cosyvoice2` | CosyVoice2-0.5B | 默认版本，稳定可靠 |
+| `cosyvoice3` | Fun-CosyVoice3-0.5B-2512 | 新版本，支持更多控制特性 |
+
 **使用示例:**
 
 ```bash
 # 仅需预设音色(节省空间)
 export TTS_MODEL_MODE=cosyvoice1
 
-# 仅需音色克隆
+# 仅需音色克隆（使用 CosyVoice2，默认）
 export TTS_MODEL_MODE=cosyvoice2
+export CLONE_MODEL_VERSION=cosyvoice2
+
+# 使用 CosyVoice3 音色克隆
+export TTS_MODEL_MODE=cosyvoice2
+export CLONE_MODEL_VERSION=cosyvoice3
 
 # 完整功能
 export TTS_MODEL_MODE=all

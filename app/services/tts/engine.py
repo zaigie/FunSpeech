@@ -75,11 +75,12 @@ class CosyVoiceTTSEngine:
         """
         # 两个不同的模型实例
         self.cosyvoice_sft = None  # 用于预设音色（SFT模式=CosyVoice）
-        self.cosyvoice_clone = None  # 用于音零样本色克隆（零样本/跨语言=CosyVoice2）
+        self.cosyvoice_clone = None  # 用于零样本音色克隆（CosyVoice2 或 CosyVoice3）
 
         self._device = device if device else self._detect_device()
         self._sft_model_loaded = False
         self._clone_model_loaded = False
+        self._clone_model_version = "cosyvoice2"  # 默认版本，加载时会更新
         self._preset_voices = settings.PRESET_VOICES.copy()
         self._voice_manager = None  # 新的音色管理器
         self._load_sft = load_sft  # 保存配置
@@ -108,9 +109,10 @@ class CosyVoiceTTSEngine:
         """加载TTS模型"""
         logger.info("开始加载TTS模型...")
         try:
-            from cosyvoice.cli.cosyvoice import CosyVoice, CosyVoice2
+            from cosyvoice.cli.cosyvoice import CosyVoice, CosyVoice2, CosyVoice3
 
             fp16_enabled = self._device.startswith("cuda")
+            clone_version = settings.CLONE_MODEL_VERSION.lower()
 
             # 根据配置决定是否加载SFT模型（用于预设音色）
             if self._load_sft:
@@ -132,20 +134,32 @@ class CosyVoiceTTSEngine:
                 logger.info("跳过SFT模型加载（load_sft=False）")
                 self._sft_model_loaded = False
 
-            # 加载零样本克隆模型（用于零样本和跨语言）
+            # 加载零样本克隆模型（根据 CLONE_MODEL_VERSION 选择 CosyVoice2 或 CosyVoice3）
             if self._load_clone:
                 try:
-                    logger.info(f"正在加载零样本克隆模型（CosyVoice2）到 {self._device}...")
-                    self.cosyvoice_clone = CosyVoice2(
-                        settings.CLONE_MODEL_ID,
-                        load_jit=True,
-                        load_trt=True,
-                        load_vllm=False,
-                        fp16=fp16_enabled,
-                        device=self._device,  # 传递 device 参数
-                    )
+                    if clone_version == "cosyvoice3":
+                        logger.info(f"正在加载零样本克隆模型（CosyVoice3）到 {self._device}...")
+                        self.cosyvoice_clone = CosyVoice3(
+                            settings.COSYVOICE3_MODEL_ID,
+                            load_trt=True,
+                            load_vllm=False,
+                            fp16=fp16_enabled,
+                            device=self._device,
+                        )
+                        self._clone_model_version = "cosyvoice3"
+                    else:
+                        logger.info(f"正在加载零样本克隆模型（CosyVoice2）到 {self._device}...")
+                        self.cosyvoice_clone = CosyVoice2(
+                            settings.CLONE_MODEL_ID,
+                            load_jit=True,
+                            load_trt=True,
+                            load_vllm=False,
+                            fp16=fp16_enabled,
+                            device=self._device,
+                        )
+                        self._clone_model_version = "cosyvoice2"
                     self._clone_model_loaded = True
-                    logger.info(f"零样本克隆模型加载成功，device={self._device}")
+                    logger.info(f"零样本克隆模型（{self._clone_model_version}）加载成功，device={self._device}")
                 except Exception as e:
                     logger.warning(f"零样本克隆模型加载失败: {str(e)}")
                     self._clone_model_loaded = False
@@ -333,6 +347,18 @@ class CosyVoiceTTSEngine:
         else:
             return output_path
 
+    def _format_prompt_text(self, prompt_text: str) -> str:
+        """根据模型版本格式化 prompt_text
+
+        CosyVoice3 需要 'You are a helpful assistant.<|endofprompt|>' 前缀
+        """
+        if self._clone_model_version == "cosyvoice3":
+            if prompt_text and not prompt_text.startswith("You are"):
+                return f"You are a helpful assistant.<|endofprompt|>{prompt_text}"
+            elif not prompt_text:
+                return "You are a helpful assistant.<|endofprompt|>"
+        return prompt_text
+
     def _synthesize_with_saved_voice(
         self,
         text: str,
@@ -360,6 +386,9 @@ class CosyVoiceTTSEngine:
             all_audio_segments = []
             current_time = 0.0
 
+            # 格式化 prompt（CosyVoice3 需要特殊前缀）
+            formatted_prompt = self._format_prompt_text(prompt)
+
             if return_timestamps:
                 # 获取CosyVoice的分句结果
                 normalized_texts = self.cosyvoice_clone.frontend.text_normalize(
@@ -372,7 +401,7 @@ class CosyVoiceTTSEngine:
                     sentence_audio_segments = []
                     for audio_data in self.cosyvoice_clone.inference_zero_shot(
                         sentence_text,
-                        prompt,  # 使用传入的prompt_text
+                        formatted_prompt,  # 使用格式化后的 prompt
                         None,  # 不需要音频
                         zero_shot_spk_id=voice,  # 使用保存的音色ID
                         stream=False,
@@ -416,7 +445,7 @@ class CosyVoiceTTSEngine:
                 # 不需要时间戳，直接合成
                 for audio_data in self.cosyvoice_clone.inference_zero_shot(
                     text,
-                    prompt,  # 使用传入的prompt_text
+                    formatted_prompt,  # 使用格式化后的 prompt
                     None,  # 不需要音频
                     zero_shot_spk_id=voice,  # 使用保存的音色ID
                     stream=False,
@@ -837,6 +866,13 @@ class MultiGPUTTSEngine:
         if self._engines:
             return self._engines[0].cosyvoice_clone
         return None
+
+    @property
+    def _clone_model_version(self):
+        """获取克隆模型版本（从第一个引擎获取）"""
+        if self._engines:
+            return self._engines[0]._clone_model_version
+        return "cosyvoice2"
 
     def get_engine_stats(self) -> Dict[str, Any]:
         """获取引擎状态统计"""

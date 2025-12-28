@@ -50,6 +50,11 @@ services:
       # - TTS_MODEL_MODE=cosyvoice1   # 仅加载SFT模型，用于预设音色
       # - TTS_MODEL_MODE=cosyvoice2   # 仅加载零样本克隆模型，用于音色克隆
 
+      # 克隆模型版本选择（可选，默认为 cosyvoice2）
+      # - CLONE_MODEL_VERSION=cosyvoice2   # 使用 CosyVoice2-0.5B（默认）
+      # - CLONE_MODEL_VERSION=cosyvoice3   # 使用 Fun-CosyVoice3-0.5B-2512
+      # - COSYVOICE3_MODEL_ID=FunAudioLLM/Fun-CosyVoice3-0.5B-2512  # CosyVoice3 模型 ID（可选）
+
       # 推理线程池配置（可选，默认为 max(4, CPU核心数)）
       # 用于实现多路并发推理，每个请求的模型推理在独���线程中执行
       # - INFERENCE_THREAD_POOL_SIZE=8

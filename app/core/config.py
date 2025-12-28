@@ -72,7 +72,9 @@ class Settings:
     # TTS模型配置
     SFT_MODEL_ID: str = "iic/CosyVoice-300M-SFT"  # 预训练音色模型（CosyVoice）
     CLONE_MODEL_ID: str = "iic/CosyVoice2-0.5B"  # 零样本克隆模型（CosyVoice2）
+    COSYVOICE3_MODEL_ID: str = "FunAudioLLM/Fun-CosyVoice3-0.5B-2512"  # CosyVoice3 模型
     TTS_MODEL_MODE: str = "all"  # TTS模型加载模式: all, cosyvoice1, cosyvoice2
+    CLONE_MODEL_VERSION: str = "cosyvoice2"  # Clone模型版本: cosyvoice2, cosyvoice3
 
     # 音频处理配置
     MAX_AUDIO_SIZE: int = 100 * 1024 * 1024  # 100MB
@@ -142,6 +144,8 @@ class Settings:
 
         # TTS模型配置
         self.TTS_MODEL_MODE = os.getenv("TTS_MODEL_MODE", self.TTS_MODEL_MODE)
+        self.CLONE_MODEL_VERSION = os.getenv("CLONE_MODEL_VERSION", self.CLONE_MODEL_VERSION)
+        self.COSYVOICE3_MODEL_ID = os.getenv("COSYVOICE3_MODEL_ID", self.COSYVOICE3_MODEL_ID)
 
         # 远场过滤配置
         self.ASR_ENABLE_NEARFIELD_FILTER = (
