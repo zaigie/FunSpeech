@@ -226,7 +226,6 @@ class CosyVoiceTTSEngine:
             if self._voice_manager and self._voice_manager.is_voice_available(voice):
                 # 检查是否在零样本克隆音色列表中
                 if voice in self._voice_manager.list_clone_voices():
-                    sample_rate = 24000
                     logger.debug(f"使用零样本克隆音色模型合成: {voice}")
                     return self._synthesize_with_saved_voice(
                         text,
