@@ -64,6 +64,16 @@ class Settings:
         "iic/punc_ct-transformer_zh-cn-common-vad_realtime-vocab272727"
     )
 
+    # 微服务化 — 子服务 URL / 鉴权 / 超时
+    INTERNAL_SERVICE_TOKEN: Optional[str] = None  # 网关 -> 子服务的共享头(X-Internal-Token)
+    SERVICE_REQUEST_TIMEOUT: float = 60.0  # 子服务 HTTP 调用超时(秒)
+    SERVICE_HEALTHCHECK_INTERVAL: float = 5.0
+    USE_FUNASR_SERVICE: bool = False  # 旗标: True 走 services/funasr/, False 进程内 (默认)
+    FUNASR_SERVICE_URLS: str = ""  # 逗号分隔, 如 http://funasr-0:8001,http://funasr-1:8001
+    DOLPHIN_SERVICE_URLS: str = ""
+    QWEN3_ASR_SERVICE_URLS: str = ""
+    COSYVOICE_SERVICE_URLS: str = ""
+
     # 流式ASR远场过滤配置
     ASR_ENABLE_NEARFIELD_FILTER: bool = True  # 是否启用远场声音过滤
     ASR_NEARFIELD_RMS_THRESHOLD: float = 0.01  # RMS能量阈值（宽松模式，适合大多数场景）
@@ -150,6 +160,34 @@ class Settings:
         self.COSYVOICE3_MODEL_ID = os.getenv("COSYVOICE3_MODEL_ID", self.COSYVOICE3_MODEL_ID)
         self.TTS_LOAD_TRT = os.getenv("TTS_LOAD_TRT", "false").lower() == "true"
         self.TTS_ENABLE_FP16 = os.getenv("TTS_ENABLE_FP16", "false").lower() == "true"
+
+        # 微服务化 — 子服务 URL / 鉴权 / 超时
+        self.INTERNAL_SERVICE_TOKEN = os.getenv(
+            "INTERNAL_SERVICE_TOKEN", self.INTERNAL_SERVICE_TOKEN
+        )
+        self.SERVICE_REQUEST_TIMEOUT = float(
+            os.getenv("SERVICE_REQUEST_TIMEOUT", str(self.SERVICE_REQUEST_TIMEOUT))
+        )
+        self.SERVICE_HEALTHCHECK_INTERVAL = float(
+            os.getenv(
+                "SERVICE_HEALTHCHECK_INTERVAL", str(self.SERVICE_HEALTHCHECK_INTERVAL)
+            )
+        )
+        self.USE_FUNASR_SERVICE = (
+            os.getenv("USE_FUNASR_SERVICE", "false").lower() == "true"
+        )
+        self.FUNASR_SERVICE_URLS = os.getenv(
+            "FUNASR_SERVICE_URLS", self.FUNASR_SERVICE_URLS
+        )
+        self.DOLPHIN_SERVICE_URLS = os.getenv(
+            "DOLPHIN_SERVICE_URLS", self.DOLPHIN_SERVICE_URLS
+        )
+        self.QWEN3_ASR_SERVICE_URLS = os.getenv(
+            "QWEN3_ASR_SERVICE_URLS", self.QWEN3_ASR_SERVICE_URLS
+        )
+        self.COSYVOICE_SERVICE_URLS = os.getenv(
+            "COSYVOICE_SERVICE_URLS", self.COSYVOICE_SERVICE_URLS
+        )
 
         # 远场过滤配置
         self.ASR_ENABLE_NEARFIELD_FILTER = (

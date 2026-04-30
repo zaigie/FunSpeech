@@ -16,7 +16,18 @@ dependencies = [
     "soundfile==0.12.1",
     "numpy==1.23.5",
     "scipy==1.15.3",
+    "wetext==0.0.4",
+    # wetext 老 sdist 顶层 import pkg_resources, 用 setuptools<70 + no-build-isolation 解决
+    "setuptools<70",
+    "wheel",
 ]
 
 [tool.uv]
 package = false
+no-build-isolation-package = ["wetext"]
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.0.3",
+]

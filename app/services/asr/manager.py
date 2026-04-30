@@ -183,9 +183,21 @@ class ModelManager:
         # 统一使用MultiGPUASREngine，它会根据ASR_GPUS配置自动处理单GPU和多GPU场景
         return self._create_multi_gpu_engine(config)
 
-    def _create_multi_gpu_engine(self, config: ModelConfig) -> MultiGPUASREngine:
-        """创建多GPU ASR引擎"""
-        if config.engine.lower() == "funasr":
+    def _create_multi_gpu_engine(self, config: ModelConfig) -> BaseASREngine:
+        """创建 ASR 引擎(支持单/多 GPU,或微服务 HTTP 客户端)"""
+        engine_type = config.engine.lower()
+
+        # 微服务旗标: 优先级高于进程内引擎
+        if engine_type == "funasr" and settings.USE_FUNASR_SERVICE:
+            from .http_engine import make_funasr_http_engine
+
+            logger.info(
+                "USE_FUNASR_SERVICE=true,使用 HTTP 客户端引擎 (urls=%s)",
+                settings.FUNASR_SERVICE_URLS,
+            )
+            return make_funasr_http_engine()
+
+        if engine_type == "funasr":
             engine_factory = FunASREngine
             engine_kwargs = {
                 "offline_model_path": config.offline_model_path,
@@ -196,7 +208,7 @@ class ModelManager:
                 "punc_model_revision": settings.PUNC_MODEL_REVISION,
                 "punc_realtime_model": settings.PUNC_REALTIME_MODEL,
             }
-        elif config.engine.lower() == "dolphin":
+        elif engine_type == "dolphin":
             engine_factory = DolphinEngine
             engine_kwargs = {
                 "model_path": config.offline_model_path or config.realtime_model_path,

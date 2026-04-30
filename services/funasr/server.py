@@ -1,26 +1,389 @@
 # -*- coding: utf-8 -*-
-"""FunASR 子服务入口 — 占位
+"""FunASR 子服务
 
-实际实现见 Step 3 (HTTP /asr/file, /asr/punc) 与 Step 4 (WS /asr/stream/v1)。
+暴露:
+- GET  /health
+- POST /asr/file          (multipart 音频文件)
+- POST /asr/punc          (仅打标点)
+- WS   /asr/stream/v1     (实时流式, Step 4 实装)
+
+启动:
+    PORT=8001 uv run python server.py
 """
 
-from fastapi import FastAPI
+from __future__ import annotations
 
-app = FastAPI(title="funspeech-funasr-service")
+import logging
+import os
+import re
+import tempfile
+import threading
+from contextlib import asynccontextmanager
+from typing import Optional
+
+from fastapi import (
+    FastAPI,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+)
+
+
+logger = logging.getLogger("funasr_service")
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+
+
+# ---------------------------------------------------------------------------
+# 配置
+# ---------------------------------------------------------------------------
+
+ASR_MODEL_MODE = os.getenv("ASR_MODEL_MODE", "all").lower()
+ASR_DEVICE = os.getenv("ASR_DEVICE", "auto")
+MODELSCOPE_PATH = os.path.expanduser(
+    os.getenv("MODELSCOPE_PATH", "~/.cache/modelscope/hub")
+)
+INTERNAL_SERVICE_TOKEN = os.getenv("INTERNAL_SERVICE_TOKEN", "")
+
+OFFLINE_MODEL = os.getenv(
+    "FUNASR_OFFLINE_MODEL",
+    "iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
+)
+REALTIME_MODEL = os.getenv(
+    "FUNASR_REALTIME_MODEL",
+    "iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online",
+)
+VAD_MODEL = os.getenv("VAD_MODEL", "iic/speech_fsmn_vad_zh-cn-16k-common-pytorch")
+VAD_MODEL_REVISION = os.getenv("VAD_MODEL_REVISION", "v2.0.4")
+PUNC_MODEL = os.getenv(
+    "PUNC_MODEL", "iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch"
+)
+PUNC_MODEL_REVISION = os.getenv("PUNC_MODEL_REVISION", "v2.0.4")
+PUNC_REALTIME_MODEL = os.getenv(
+    "PUNC_REALTIME_MODEL",
+    "iic/punc_ct-transformer_zh-cn-common-vad_realtime-vocab272727",
+)
+
+# 全局 funasr kwargs(与主项目当前一致)
+FUNASR_AUTOMODEL_KWARGS = {
+    "trust_remote_code": False,
+    "disable_update": True,
+    "disable_pbar": True,
+    "disable_log": True,
+}
+
+
+# ---------------------------------------------------------------------------
+# 设备探测
+# ---------------------------------------------------------------------------
+
+
+def _detect_device(device_hint: str) -> str:
+    if device_hint and device_hint not in ("auto", ""):
+        return device_hint
+
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            return "cuda:0"
+    except Exception:
+        pass
+    return "cpu"
+
+
+DEVICE = _detect_device(ASR_DEVICE)
+
+
+# ---------------------------------------------------------------------------
+# 模型缓存(VAD / PUNC / 实时 PUNC 按需懒加载,与主项目原行为一致)
+# ---------------------------------------------------------------------------
+
+
+_offline_model = None
+_realtime_model = None
+
+_vad_model: Optional[object] = None
+_punc_model: Optional[object] = None
+_punc_realtime_model: Optional[object] = None
+_aux_lock = threading.Lock()
+
+
+def _load_offline_model():
+    global _offline_model
+    if _offline_model is not None:
+        return _offline_model
+    from funasr import AutoModel
+
+    logger.info("加载离线 FunASR 模型: %s (device=%s)", OFFLINE_MODEL, DEVICE)
+    _offline_model = AutoModel(
+        model=OFFLINE_MODEL, device=DEVICE, **FUNASR_AUTOMODEL_KWARGS
+    )
+    return _offline_model
+
+
+def _load_realtime_model():
+    global _realtime_model
+    if _realtime_model is not None:
+        return _realtime_model
+    from funasr import AutoModel
+
+    logger.info("加载实时 FunASR 模型: %s (device=%s)", REALTIME_MODEL, DEVICE)
+    _realtime_model = AutoModel(
+        model=REALTIME_MODEL, device=DEVICE, **FUNASR_AUTOMODEL_KWARGS
+    )
+    return _realtime_model
+
+
+def _get_vad_model():
+    global _vad_model
+    if _vad_model is not None:
+        return _vad_model
+    from funasr import AutoModel
+
+    with _aux_lock:
+        if _vad_model is None:
+            logger.info("加载 VAD 模型: %s", VAD_MODEL)
+            _vad_model = AutoModel(
+                model=VAD_MODEL,
+                model_revision=VAD_MODEL_REVISION,
+                device=DEVICE,
+                **FUNASR_AUTOMODEL_KWARGS,
+            )
+    return _vad_model
+
+
+def _get_punc_model(realtime: bool = False):
+    global _punc_model, _punc_realtime_model
+    cache = "_punc_realtime_model" if realtime else "_punc_model"
+    cached = globals()[cache]
+    if cached is not None:
+        return cached
+    from funasr import AutoModel
+
+    with _aux_lock:
+        if globals()[cache] is None:
+            model_id = PUNC_REALTIME_MODEL if realtime else PUNC_MODEL
+            logger.info("加载 PUNC 模型: %s", model_id)
+            instance = AutoModel(
+                model=model_id,
+                model_revision=PUNC_MODEL_REVISION,
+                device=DEVICE,
+                **FUNASR_AUTOMODEL_KWARGS,
+            )
+            globals()[cache] = instance
+    return globals()[cache]
+
+
+# ---------------------------------------------------------------------------
+# ITN
+# ---------------------------------------------------------------------------
+
+_itn_normalizer = None
+
+
+def _apply_itn(text: str) -> str:
+    global _itn_normalizer
+    if not text:
+        return text
+    try:
+        if _itn_normalizer is None:
+            from wetext import Normalizer
+
+            _itn_normalizer = Normalizer(lang="zh", operator="itn")
+        return _itn_normalizer.normalize(text)
+    except Exception as exc:
+        logger.warning("ITN 处理失败,原文返回: %s", exc)
+        return text
+
+
+# ---------------------------------------------------------------------------
+# 业务逻辑(从主项目 FunASREngine 搬过来)
+# ---------------------------------------------------------------------------
+
+
+def transcribe_offline(
+    audio_path: str,
+    hotwords: str = "",
+    enable_punctuation: bool = False,
+    enable_itn: bool = False,
+    enable_vad: bool = False,
+) -> str:
+    offline = _load_offline_model()
+
+    if enable_vad:
+        # 复用主项目的"临时 AutoModel + 注入 VAD/PUNC"技巧
+        from funasr import AutoModel
+        import types
+
+        vad_inst = _get_vad_model()
+        punc_inst = _get_punc_model() if enable_punctuation else None
+
+        temp = type("TempAutoModel", (), {})()
+        temp.model = offline.model
+        temp.kwargs = offline.kwargs
+        temp.model_path = offline.model_path
+        temp.spk_model = None
+        temp.vad_model = vad_inst.model
+        temp.vad_kwargs = vad_inst.kwargs
+        if punc_inst:
+            temp.punc_model = punc_inst.model
+            temp.punc_kwargs = punc_inst.kwargs
+        else:
+            temp.punc_model = None
+            temp.punc_kwargs = {}
+        temp.inference = types.MethodType(AutoModel.inference, temp)
+        temp.inference_with_vad = types.MethodType(AutoModel.inference_with_vad, temp)
+        temp.generate = types.MethodType(AutoModel.generate, temp)
+
+        result = temp.generate(
+            input=audio_path,
+            hotword=hotwords or None,
+            cache={},
+        )
+    else:
+        result = offline.generate(
+            input=audio_path,
+            hotword=hotwords or None,
+            cache={},
+        )
+        if enable_punctuation and result and len(result) > 0:
+            text = (result[0].get("text") or "").strip()
+            if text:
+                punc_inst = _get_punc_model()
+                punc_result = punc_inst.generate(input=text, cache={})
+                if punc_result and len(punc_result) > 0:
+                    result[0]["text"] = punc_result[0].get("text", text)
+
+    if not result or not len(result):
+        return ""
+    text = (result[0].get("text") or "").strip()
+    if enable_itn and text:
+        text = _apply_itn(text)
+    return text
+
+
+# ---------------------------------------------------------------------------
+# FastAPI 应用
+# ---------------------------------------------------------------------------
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # 启动时根据 mode 预加载,避免首次请求长等待
+    try:
+        if ASR_MODEL_MODE in ("all", "offline"):
+            _load_offline_model()
+        if ASR_MODEL_MODE in ("all", "realtime"):
+            _load_realtime_model()
+        logger.info("FunASR 子服务就绪 (mode=%s, device=%s)", ASR_MODEL_MODE, DEVICE)
+    except Exception as exc:
+        logger.error("模型预加载失败: %s", exc, exc_info=True)
+    yield
+
+
+app = FastAPI(title="funspeech-funasr-service", lifespan=lifespan)
+
+
+def _check_internal_token(request: Request) -> None:
+    if not INTERNAL_SERVICE_TOKEN:
+        return
+    token = request.headers.get("X-Internal-Token", "")
+    if token != INTERNAL_SERVICE_TOKEN:
+        raise HTTPException(status_code=401, detail="invalid internal token")
 
 
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "healthy", "implemented": False}
+    return {
+        "status": "healthy",
+        "device": DEVICE,
+        "mode": ASR_MODEL_MODE,
+        "offline_loaded": _offline_model is not None,
+        "realtime_loaded": _realtime_model is not None,
+        "vad_loaded": _vad_model is not None,
+        "punc_loaded": _punc_model is not None,
+        "punc_realtime_loaded": _punc_realtime_model is not None,
+    }
+
+
+@app.post("/asr/file")
+async def asr_file(
+    request: Request,
+    audio: UploadFile = File(...),
+    hotwords: str = Form(""),
+    enable_punctuation: bool = Form(False),
+    enable_itn: bool = Form(False),
+    enable_vad: bool = Form(False),
+    sample_rate: int = Form(16000),
+) -> dict:
+    _check_internal_token(request)
+
+    if ASR_MODEL_MODE not in ("all", "offline"):
+        raise HTTPException(
+            status_code=503,
+            detail=f"offline model not loaded in this service (mode={ASR_MODEL_MODE})",
+        )
+
+    suffix = os.path.splitext(audio.filename or "audio.wav")[1] or ".wav"
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(await audio.read())
+        tmp_path = tmp.name
+
+    try:
+        text = transcribe_offline(
+            audio_path=tmp_path,
+            hotwords=hotwords,
+            enable_punctuation=enable_punctuation,
+            enable_itn=enable_itn,
+            enable_vad=enable_vad,
+        )
+    except Exception as exc:
+        logger.exception("识别失败")
+        raise HTTPException(status_code=500, detail=f"transcribe error: {exc}")
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+
+    return {"text": text, "sample_rate": sample_rate}
+
+
+@app.post("/asr/punc")
+async def asr_punc(
+    request: Request,
+    payload: dict,
+) -> dict:
+    """仅打标点。{text, mode: offline|realtime} -> {text}"""
+    _check_internal_token(request)
+
+    text = (payload.get("text") or "").strip()
+    if not text:
+        return {"text": ""}
+
+    realtime = (payload.get("mode") or "offline").lower() == "realtime"
+    try:
+        punc_inst = _get_punc_model(realtime=realtime)
+        result = punc_inst.generate(input=text, cache={})
+        if result and len(result):
+            return {"text": result[0].get("text", text)}
+    except Exception as exc:
+        logger.exception("PUNC 失败")
+        raise HTTPException(status_code=500, detail=f"punc error: {exc}")
+    return {"text": text}
 
 
 if __name__ == "__main__":
-    import os
     import uvicorn
 
     uvicorn.run(
         "server:app",
         host="0.0.0.0",
         port=int(os.getenv("PORT", "8001")),
-        log_level="info",
+        log_level=os.getenv("LOG_LEVEL", "info").lower(),
     )
