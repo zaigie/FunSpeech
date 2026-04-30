@@ -293,8 +293,8 @@ class AliyunWebSocketTTSService:
                         websocket, task_id, session_id, text
                     )
 
-                    # 小延迟模拟流式效果
-                    await asyncio.sleep(0.05)
+                    # 不再人为 sleep — 子服务 yield 节奏 = 客户端接收节奏。
+                    # 微服务化后多了一跳网络 RTT,再叠 50ms 是负优化。
 
             if not audio_sent:
                 logger.warning(f"[{task_id}] 没有生成任何音频数据")
@@ -350,7 +350,6 @@ class AliyunWebSocketTTSService:
                     yield self._convert_audio_to_pcm(audio_array, sample_rate)
                 else:
                     yield self._convert_audio_to_wav(audio_array, sample_rate)
-                await asyncio.sleep(0.01)
         except WebSocketDisconnect:
             logger.warning(f"[{task_id}] 客户端断开,停止音频生成")
             raise

@@ -140,6 +140,26 @@ class ModelManager:
         self._loaded_engines[model_id] = engine
         return engine
 
+    def get_realtime_asr_engine(
+        self, model_id: Optional[str] = None
+    ) -> BaseASREngine:
+        """获取实时 ASR 引擎; 模型不支持流式时显式拒绝。
+
+        与 get_asr_engine 等价, 只是先按 models.json 的 supports_realtime
+        校验, 在 WS 入口尽早 fail-fast — 否则用户会拿到一个底层连不通的
+        子服务 WS 错误, 难以归因。
+        """
+        target_id = model_id or self._default_model_id
+        if not target_id:
+            raise InvalidParameterException("未指定模型且没有默认模型")
+
+        config = self.get_model_config(target_id)
+        if not config.supports_realtime:
+            raise InvalidParameterException(
+                f"模型 {target_id} 不支持实时识别 (supports_realtime=false)"
+            )
+        return self.get_asr_engine(target_id)
+
     def _create_engine(self, config: ModelConfig) -> BaseASREngine:
         engine_type = config.engine.lower()
 

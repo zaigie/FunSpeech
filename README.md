@@ -43,6 +43,11 @@ ASR + TTS API 网关,兼容阿里云语音 API 与 OpenAI TTS API,支持 WebSock
 ```bash
 git clone <your-repo>
 cd agents-e3557b6358
+
+# 必须: 拉 cosyvoice 上游源码 (git submodule)
+# 不做这一步, cosyvoice 镜像启动会 ModuleNotFoundError
+git submodule update --init --recursive
+
 cp .env.example .env  # 按需修改
 ```
 
@@ -56,8 +61,15 @@ HTTPS_PROXY=http://host.docker.internal:7890
 
 ### 2. 构建 + 启动
 
+Dockerfile 用了 `RUN --mount=type=cache` 给 apt / uv 双缓存,需要 BuildKit。Docker 23+ 默认开启;低版本手动启用:
+
 ```bash
-docker compose build
+export DOCKER_BUILDKIT=1
+export COMPOSE_DOCKER_CLI_BUILD=1
+```
+
+```bash
+docker compose build                         # 重 build 时 apt/uv 走本机缓存,极快
 docker compose up -d                         # 默认: gateway + funasr + cosyvoice
 docker compose --profile dolphin up -d       # 加上 dolphin
 docker compose --profile qwen3-asr up -d     # 加上 qwen3-asr-vllm

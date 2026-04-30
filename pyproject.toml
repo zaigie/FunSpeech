@@ -11,7 +11,8 @@ dependencies = [
     "fastapi==0.115.6",
     "uvicorn[standard]==0.30.0",
     "python-multipart==0.0.6",
-    "websockets==11.0",
+    # websockets >=13 提供 .sync (内部 funasr/qwen3 流式) + .asyncio (cosyvoice 流式 TTS) 双 client
+    "websockets>=13,<14",
     "httpx==0.28.1",
     "requests==2.32.4",
     "openai>=1.40.0",
@@ -22,7 +23,6 @@ dependencies = [
     "librosa==0.9.2",
     "pydub==0.25.1",
     "wetext==0.0.4",  # ITN
-    # 同步流式时用 websockets.sync
     "setuptools<70",  # wetext / 老 sdist 构建期需要
     "wheel",
 ]

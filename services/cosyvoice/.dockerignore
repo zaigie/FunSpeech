@@ -1,0 +1,15 @@
+# 注意: 不要 ignore third_party/ — server.py 依赖上游 CosyVoice 源码
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+tests/__pycache__
+*.log
+.DS_Store
+# third_party 内部的 .git / .pytest_cache / __pycache__ 也清掉
+third_party/**/__pycache__
+third_party/**/.git
+third_party/**/.pytest_cache
+third_party/**/*.pyc

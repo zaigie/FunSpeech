@@ -342,23 +342,25 @@ class CosyVoiceHttpEngine:
     # ---------------------------------------------------------- 内部 HTTP
 
     def _refresh_health_if_stale(self) -> None:
+        """刷新健康状态缓存。直接探 _urls,不走副本池 acquire/release —
+        否则高频健康检查会把"活跃连接数"计数推高,污染最少连接调度。"""
         import time
 
         now = time.time()
         if now - self._cached_health_at < settings.SERVICE_HEALTHCHECK_INTERVAL:
             return
         self._cached_health_at = now
-        idx, base_url = self._pool.acquire()
-        try:
-            r = httpx.get(f"{base_url}/health", timeout=5.0, headers=self._headers)
-            if r.status_code == 200:
-                body = r.json()
-                self._sft_loaded = bool(body.get("sft_loaded"))
-                self._clone_loaded = bool(body.get("clone_loaded"))
-        except httpx.HTTPError:
-            pass
-        finally:
-            self._pool.release(idx)
+
+        for url in self._urls:
+            try:
+                r = httpx.get(f"{url}/health", timeout=5.0, headers=self._headers)
+                if r.status_code == 200:
+                    body = r.json()
+                    self._sft_loaded = bool(body.get("sft_loaded"))
+                    self._clone_loaded = bool(body.get("clone_loaded"))
+                    return
+            except httpx.HTTPError:
+                continue
 
     def _post_tts_file(
         self,

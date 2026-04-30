@@ -81,17 +81,19 @@ class AliyunWebSocketASRService:
         return self.asr_engine
 
     def _initialize_engine(self):
-        """初始化ASR引擎"""
+        """初始化ASR引擎(默认模型 + 强制 supports_realtime)"""
         try:
             from .asr.manager import get_model_manager
 
             model_manager = get_model_manager()
-            self.asr_engine = model_manager.get_asr_engine()
-
-            if not self.asr_engine.supports_realtime:
-                raise Exception("当前ASR引擎不支持实时识别")
-
-            logger.info("WebSocket ASR引擎加载完成")
+            # 用 get_realtime_asr_engine 而非 get_asr_engine + 后置检查:
+            # 后者拿到不支持流式的引擎(如 dolphin)后才报错,错误归因更含糊;
+            # 前者基于 models.json 的 supports_realtime 字段提前拒绝。
+            self.asr_engine = model_manager.get_realtime_asr_engine()
+            logger.info(
+                "WebSocket ASR引擎加载完成: %s",
+                type(self.asr_engine).__name__,
+            )
         except Exception as e:
             logger.error(f"WebSocket ASR引擎加载失败: {e}")
             raise e

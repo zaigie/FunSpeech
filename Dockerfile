@@ -1,10 +1,24 @@
 # FunSpeech 网关 — CPU only,所有模型推理在 services/* 子服务里完成
+#
+# Layer 顺序按"变化频率从低到高"排列, 让本地重 build 在改代码时
+# 只重跑最后两层:
+#   1. base image
+#   2. 系统依赖 (apt)            — 极少变
+#   3. uv 二进制                — 极少变
+#   4. 运行期目录 (mkdir)       — 与代码无关
+#   5. COPY pyproject.toml uv.lock + uv sync 依赖
+#   6. COPY . . + uv sync 项目本身
+#
+# 启用 BuildKit (Docker 23+ 默认开)。低版本:
+#   export DOCKER_BUILDKIT=1
+#
+# 用法 (本机有 http://127.0.0.1:7890 代理时):
+#   docker build --build-arg HTTP_PROXY=http://host.docker.internal:7890 \
+#                --build-arg HTTPS_PROXY=http://host.docker.internal:7890 -t funspeech/gateway .
 
 FROM python:3.10-slim AS runtime
 
 # ---------- 构建期 HTTP 代理 ----------
-# 用法: docker build --build-arg HTTP_PROXY=http://host.docker.internal:7890 ...
-# 或在 docker-compose.yml 的 build.args 里集中配
 ARG HTTP_PROXY=""
 ARG HTTPS_PROXY=""
 ARG NO_PROXY="localhost,127.0.0.1,*.local"
@@ -24,35 +38,39 @@ ENV DEBIAN_FRONTEND=noninteractive \
     UV_PROJECT_ENVIRONMENT=/app/.venv \
     PATH=/app/.venv/bin:$PATH
 
-# 系统依赖
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# ---------- 系统依赖 (一次装完, 不再 install→remove 来回折腾) ----------
+# build-essential 留下: wetext / 老 sdist 在 wheel rebuild 时仍可能需要,
+# 卸载省的几十 MB 不值得多一层 + 多一次 apt-get update 的时间。
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
         ffmpeg \
         sox \
         libsox-dev \
         libsndfile1 \
         build-essential \
         curl \
-        ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+        ca-certificates
 
+# ---------- uv 二进制 (小, 提前以最大化缓存命中) ----------
 COPY --from=ghcr.io/astral-sh/uv:0.11.8 /uv /uvx /usr/local/bin/
 
 WORKDIR /app
 
+# ---------- 运行期目录 (与代码无关, 单独成层) ----------
+RUN mkdir -p /app/temp /app/data /app/logs
+
+# ---------- Python 依赖层 (仅看 pyproject + lock, 改代码不会失效) ----------
 COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project
 
+# ---------- 代码层 (变化最频繁, 放最后) ----------
 COPY . .
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen
-
-RUN apt-get update && apt-get remove -y build-essential \
-    && apt-get autoremove -y \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN mkdir -p /app/temp /app/data /app/logs \
+    uv sync --frozen \
     && chmod +x start.py
 
 # 清掉运行期代理 ENV

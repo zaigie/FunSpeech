@@ -15,7 +15,28 @@ sudo apt-get install -y nvidia-container-toolkit
 sudo systemctl restart docker
 ```
 
-## 二、构建期 HTTP 代理
+## 二、构建前置准备
+
+### 2.1 拉子模块 (cosyvoice 必需)
+
+`services/cosyvoice/third_party/CosyVoice` 是上游官方 git submodule。**首次 clone 后必须执行**:
+
+```bash
+git submodule update --init --recursive
+```
+
+否则 cosyvoice 镜像里 `third_party/CosyVoice` 是空目录,容器启动 `from cosyvoice.cli.cosyvoice import ...` 会立刻 `ModuleNotFoundError`。
+
+### 2.2 启用 BuildKit
+
+Dockerfile 用 `RUN --mount=type=cache,target=/var/cache/apt` 与 `--mount=type=cache,target=/root/.cache/uv` 给 apt 与 uv 加缓存挂载,大幅缩短重复 build 时间。Docker 23+ 默认开启 BuildKit;低版本手动:
+
+```bash
+export DOCKER_BUILDKIT=1
+export COMPOSE_DOCKER_CLI_BUILD=1
+```
+
+### 2.3 构建期 HTTP 代理
 
 国内拉 PyPI / HuggingFace 慢,推荐配置代理:
 
@@ -40,6 +61,14 @@ docker compose --profile dolphin up -d                              # 加 dolphi
 docker compose --profile qwen3-asr up -d                            # 加 qwen3-asr-vllm
 docker compose --profile dolphin --profile qwen3-asr up -d          # 全部启动
 ```
+
+并行加速 build (子服务镜像之间互相独立):
+
+```bash
+docker compose build --parallel
+```
+
+> 首次 build 内存可能吃紧 (vLLM 编译 + torch wheel),如果 OOM 退到串行 build。
 
 ## 四、服务编排与 GPU 拓扑
 

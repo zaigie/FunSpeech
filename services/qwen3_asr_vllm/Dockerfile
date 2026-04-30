@@ -1,4 +1,9 @@
-# vLLM 自带 CUDA wheel,基础镜像选用 Python + CUDA runtime 即可
+# qwen3-asr-vllm 子服务 — Qwen3-ASR + 进程内 vLLM 加速
+#
+# vLLM 自带 CUDA wheel, 基础镜像选 Python + CUDA runtime 即可。
+# Layer 顺序: 基础镜像 → 系统依赖 → uv 二进制 → uv sync 依赖 → COPY 代码 + uv sync 项目。
+# 需要 BuildKit (Docker 23+ 默认开启, 或 DOCKER_BUILDKIT=1)。
+
 FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 
 # ---------- 构建期 HTTP 代理 ----------
@@ -23,10 +28,13 @@ ENV DEBIAN_FRONTEND=noninteractive \
     UV_PROJECT_ENVIRONMENT=/app/.venv \
     PATH=/app/.venv/bin:$PATH
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
+    --mount=type=cache,target=/var/lib/apt,sharing=locked \
+    rm -f /etc/apt/apt.conf.d/docker-clean \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends \
         python3.10 python3.10-venv python3.10-dev \
-        ffmpeg libsndfile1 curl ca-certificates git \
-    && rm -rf /var/lib/apt/lists/*
+        ffmpeg libsndfile1 curl ca-certificates git
 
 COPY --from=ghcr.io/astral-sh/uv:0.11.8 /uv /uvx /usr/local/bin/
 
