@@ -49,7 +49,9 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         ffmpeg sox libsox-dev libsndfile1 build-essential \
         curl ca-certificates git
 
-COPY --from=ghcr.io/astral-sh/uv:0.11.8 /uv /uvx /usr/local/bin/
+# uv 装到 base 自带的 python (pytorch/pytorch:*-runtime 自带 python + pip)
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    pip install --no-cache-dir uv==0.11.8
 
 WORKDIR /app
 

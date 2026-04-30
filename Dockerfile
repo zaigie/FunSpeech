@@ -54,8 +54,11 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         curl \
         ca-certificates
 
-# ---------- uv 二进制 (小, 提前以最大化缓存命中) ----------
-COPY --from=ghcr.io/astral-sh/uv:0.11.8 /uv /uvx /usr/local/bin/
+# ---------- uv (装到 base 自带 python, 不走 ghcr) ----------
+# pip 走构建期 HTTP_PROXY, 不依赖 ghcr.io/astral-sh/uv 镜像。
+# uv 仅用于 sync 项目依赖到 /app/.venv, 自身在哪个 python 不关键。
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    pip install --no-cache-dir uv==0.11.8
 
 WORKDIR /app
 

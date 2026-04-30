@@ -33,10 +33,12 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-        python3.10 python3.10-venv python3.10-dev \
+        python3.10 python3.10-venv python3.10-dev python3-pip \
         ffmpeg libsndfile1 curl ca-certificates git
 
-COPY --from=ghcr.io/astral-sh/uv:0.11.8 /uv /uvx /usr/local/bin/
+# uv 装到 apt 装的 python3.10 (本 base 是裸 CUDA 镜像, 不自带 python)
+RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
+    python3.10 -m pip install --no-cache-dir uv==0.11.8
 
 WORKDIR /app
 
