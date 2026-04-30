@@ -426,7 +426,6 @@ async def health_check(request: Request):
                 else "ASR model not loaded"
             ),
             "loaded_models": memory_info["model_list"],
-            "memory_usage": memory_info.get("gpu_memory"),
             "asr_model_mode": memory_info.get(
                 "asr_model_mode", settings.ASR_MODEL_MODE
             ),

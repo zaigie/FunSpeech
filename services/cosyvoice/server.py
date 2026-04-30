@@ -274,7 +274,11 @@ def _load_models() -> None:
 
 
 def _format_prompt_for_clone(prompt_text: str) -> str:
-    """复刻主项目 _format_prompt_text 的 prompt 拼接逻辑"""
+    """根据 clone 模型版本拼接 instruct 文本前后缀。
+
+    CosyVoice3 需要 'You are a helpful assistant.<...>' 前缀;
+    CosyVoice2 仅需 '<|endofprompt|>' 后缀。
+    """
     if _clone_model_actual_version == "cosyvoice3":
         if prompt_text and not prompt_text.startswith("You are"):
             return f"You are a helpful assistant. {prompt_text}<|endofprompt|>"
@@ -689,8 +693,10 @@ async def text_normalize_endpoint(request: Request) -> dict:
 # WebSocket 流式
 #
 # 协议:
-#   client -> server (首帧 JSON):
-#     {op: "start", text, voice, speed, prompt?, mode: "sft"|"zero_shot"|"instruct2"}
+#   client -> server (首帧 JSON, 一次合成一连接):
+#     {text: str, voice: str, speed: float = 1.0, prompt: str = ""}
+#     - 是否走 zero_shot / instruct2 / sft 由子服务根据 voice 是否在
+#       clone 注册表中自动决定; prompt 非空且 voice 是 clone 时走 instruct2。
 #   server -> client:
 #     第 1 帧 JSON {type:"started", sample_rate}
 #     之后 N 帧二进制 = float32 PCM mono 块(client 自己拼接 + 转格式)

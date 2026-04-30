@@ -51,24 +51,6 @@ class AliyunWebSocketTTSService:
     def __init__(self):
         self.tts_engine = None
 
-    def cleanup(self):
-        """清理资源"""
-        try:
-            if self.tts_engine:
-                logger.info("正在清理WebSocket TTS引擎资源...")
-                self.tts_engine.cleanup()
-                logger.info("WebSocket TTS引擎资源已清理")
-        except Exception as e:
-            logger.warning(f"清理WebSocket TTS资源时出现异常: {e}")
-
-        # 额外清理：导入并清理所有TTS引擎
-        try:
-            from .tts.engine import cleanup_all_tts_engines
-
-            cleanup_all_tts_engines()
-        except Exception as e:
-            logger.warning(f"清理所有TTS引擎时出现异常: {e}")
-
     def _ensure_tts_engine(self):
         """确保TTS引擎已加载（懒加载）"""
         if self.tts_engine is None:
@@ -279,18 +261,13 @@ class AliyunWebSocketTTSService:
             # 清理文本
             clean_text = clean_text_for_tts(text)
             speed = convert_speech_rate_to_speed(params["speech_rate"])
-
-            # 映射本地音色到阿里云音色名称
-            local_voice = self._map_aliyun_voice_to_local(params["voice"])
-
-            # 获取 prompt 参数
             prompt = params.get("prompt", "")
 
             # 生成音频
             audio_sent = False
             async for audio_chunk in self._synthesize_streaming_audio(
                 clean_text,
-                local_voice,
+                params["voice"],
                 speed,
                 params["format"],
                 params["sample_rate"],
@@ -338,34 +315,6 @@ class AliyunWebSocketTTSService:
                 await self._send_task_failed(
                     websocket, task_id, f"Synthesis failed: {str(e)}"
                 )
-
-    def _map_aliyun_voice_to_local(self, aliyun_voice: str) -> str:
-        """直接返回音色名称，不进行映射"""
-        return aliyun_voice
-
-    def _format_prompt_text(self, prompt_text: str, clone_version: str) -> str:
-        """根据模型版本格式化 prompt_text (instruct_text)
-
-        CosyVoice3 需要 'You are a helpful assistant.<|endofprompt|>' 前缀
-        CosyVoice2 需要 '<|endofprompt|>' 后缀
-        """
-        if clone_version == "cosyvoice3":
-            if prompt_text and not prompt_text.startswith("You are"):
-                return f"You are a helpful assistant. {prompt_text}<|endofprompt|>"
-            elif not prompt_text:
-                return "You are a helpful assistant.<|endofprompt|>"
-            else:
-                # 已经有前缀，确保有后缀
-                if not prompt_text.endswith("<|endofprompt|>"):
-                    return f"{prompt_text}<|endofprompt|>"
-                return prompt_text
-        else:
-            # CosyVoice2
-            if prompt_text:
-                if not prompt_text.endswith("<|endofprompt|>"):
-                    return f"{prompt_text}<|endofprompt|>"
-                return prompt_text
-        return prompt_text
 
     async def _synthesize_streaming_audio(
         self,

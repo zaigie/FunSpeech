@@ -29,9 +29,3 @@ def get_tts_engine() -> CosyVoiceHttpEngine:
         if _tts_engine is None:
             _tts_engine = make_cosyvoice_http_engine()
         return _tts_engine
-
-
-def reset_tts_engines() -> None:
-    """重置 TTS 引擎实例(测试或重新配置时使用)"""
-    global _tts_engine
-    _tts_engine = None

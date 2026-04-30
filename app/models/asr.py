@@ -171,23 +171,18 @@ class ASRHealthCheckResponse(HealthCheckResponse):
             "example": {
                 "status": "healthy",
                 "model_loaded": True,
-                "device": "cuda:0",
-                "version": "1.0.0",
+                "device": "remote:http://funasr-0:8001",
+                "version": "2.0.0",
                 "message": "ASR service is running normally",
                 "loaded_models": ["paraformer-large", "sensevoice-small"],
-                "memory_usage": {
-                    "gpu_memory_used": "2.1GB",
-                    "gpu_memory_total": "8.0GB",
-                },
-                "asr_model_mode": "realtime",
+                "asr_model_mode": "all",
             },
         },
     }
 
-    model_loaded: bool = Field(..., description="模型是否已加载")
-    device: str = Field(..., description="推理设备")
+    model_loaded: bool = Field(..., description="子服务是否就绪")
+    device: str = Field(..., description="子服务地址 (remote:<urls>)")
     loaded_models: Optional[List[str]] = Field([], description="已加载的模型列表")
-    memory_usage: Optional[dict] = Field(None, description="内存使用情况")
     asr_model_mode: Optional[str] = Field(None, description="当前ASR模型加载模式")
 
 

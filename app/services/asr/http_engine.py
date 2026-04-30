@@ -1,18 +1,20 @@
 # -*- coding: utf-8 -*-
 """ASR 子服务 HTTP 客户端引擎
 
-实现 BaseASREngine / RealTimeASREngine 的 HTTP 客户端版本，
-让网关无需 import funasr/dolphin/torch 等模型库，全部通过 HTTP
+实现 BaseASREngine / RealTimeASREngine 的 HTTP 客户端版本,
+让网关无需 import funasr/dolphin/torch 等模型库,全部通过 HTTP
 调用 services/* 下的子服务。
 
-当前(Step 3)只支持 transcribe_file。WS 流式在 Step 4 加上。
+包含:
+  - transcribe_file: POST /asr/file
+  - 流式 ASR: 持有内部 WS 会话, cache 状态在子服务侧
+  - punc_offline: POST /asr/punc (供网关在 SentenceEnd 时给整句打标点)
 """
 
 from __future__ import annotations
 
 import json
 import logging
-import queue
 import random
 import threading
 from typing import Any, Dict, List, Optional, Tuple
@@ -53,36 +55,6 @@ class _HttpReplicaPool:
         with self._lock:
             if 0 <= idx < len(self._active):
                 self._active[idx] = max(0, self._active[idx] - 1)
-
-
-class _BaseHttpAsrEngine(BaseASREngine):
-    """子服务 HTTP 客户端引擎基类"""
-
-    def __init__(self, urls: List[str], internal_token: str = "", timeout: float = 60.0):
-        self._pool = _HttpReplicaPool(urls)
-        self._timeout = timeout
-        self._headers = {}
-        if internal_token:
-            self._headers["X-Internal-Token"] = internal_token
-
-    @property
-    def supports_realtime(self) -> bool:
-        return False
-
-    @property
-    def device(self) -> str:
-        return f"remote:{','.join(self._pool._urls)}"
-
-    def is_model_loaded(self) -> bool:
-        # 至少一个副本健康即视为已加载
-        for url in self._pool._urls:
-            try:
-                r = httpx.get(f"{url}/health", timeout=5.0, headers=self._headers)
-                if r.status_code == 200:
-                    return True
-            except httpx.HTTPError:
-                continue
-        return False
 
 
 class _RealtimeASRSession:

@@ -13,11 +13,14 @@
 
 from __future__ import annotations
 
+import io
+import json
 import logging
 import os
-import re
 import tempfile
 import threading
+
+import numpy as np
 from contextlib import asynccontextmanager
 from typing import Optional
 
@@ -440,10 +443,6 @@ async def asr_punc(
 # ---------------------------------------------------------------------------
 
 
-import io as _io  # noqa: E402  (放这里避开顶层 import)
-import numpy as _np  # noqa: E402
-
-
 def _ws_check_token(websocket: WebSocket) -> bool:
     if not INTERNAL_SERVICE_TOKEN:
         return True
@@ -524,7 +523,7 @@ async def asr_stream(websocket: WebSocket) -> None:
                         )
                         continue
 
-                    empty = _np.array([], dtype=_np.float32)
+                    empty = np.array([], dtype=np.float32)
                     text = transcribe_realtime_chunk(
                         empty,
                         audio_cache,
@@ -557,16 +556,16 @@ async def asr_stream(websocket: WebSocket) -> None:
                 try:
                     if audio_format == "pcm":
                         audio_array = (
-                            _np.frombuffer(audio_bytes, dtype=_np.int16).astype(
-                                _np.float32
+                            np.frombuffer(audio_bytes, dtype=np.int16).astype(
+                                np.float32
                             )
                             / 32768.0
                         )
                     elif audio_format == "wav":
                         import soundfile as sf
 
-                        audio_array, _ = sf.read(_io.BytesIO(audio_bytes))
-                        audio_array = _np.asarray(audio_array, dtype=_np.float32)
+                        audio_array, _ = sf.read(io.BytesIO(audio_bytes))
+                        audio_array = np.asarray(audio_array, dtype=np.float32)
                     else:
                         await websocket.send_json(
                             {
@@ -585,7 +584,7 @@ async def asr_stream(websocket: WebSocket) -> None:
                 # 真正的远场过滤在网关侧已经做了
                 is_silence = bool(
                     len(audio_array) > 0
-                    and float(_np.max(_np.abs(audio_array))) < 0.002
+                    and float(np.max(np.abs(audio_array))) < 0.002
                 )
 
                 try:
