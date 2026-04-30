@@ -28,6 +28,8 @@ from fastapi import (
     HTTPException,
     Request,
     UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
 )
 
 
@@ -267,6 +269,40 @@ def transcribe_offline(
     return text
 
 
+def transcribe_realtime_chunk(
+    audio_array,
+    cache: dict,
+    is_final: bool,
+    chunk_size: list,
+    encoder_chunk_look_back: int,
+    decoder_chunk_look_back: int,
+) -> str:
+    """单步 funasr 实时流式推理。cache 按引用更新。"""
+    realtime = _load_realtime_model()
+    result = realtime.generate(
+        input=audio_array,
+        cache=cache,
+        is_final=is_final,
+        chunk_size=chunk_size,
+        encoder_chunk_look_back=encoder_chunk_look_back,
+        decoder_chunk_look_back=decoder_chunk_look_back,
+    )
+    if not result or not len(result):
+        return ""
+    return (result[0].get("text") or "").strip()
+
+
+def punc_realtime_apply(text: str, cache: dict) -> str:
+    """实时标点。cache 按引用更新。"""
+    if not text:
+        return text
+    punc = _get_punc_model(realtime=True)
+    result = punc.generate(input=text, cache=cache)
+    if not result or not len(result):
+        return text
+    return (result[0].get("text") or text).strip()
+
+
 # ---------------------------------------------------------------------------
 # FastAPI 应用
 # ---------------------------------------------------------------------------
@@ -376,6 +412,222 @@ async def asr_punc(
         logger.exception("PUNC 失败")
         raise HTTPException(status_code=500, detail=f"punc error: {exc}")
     return {"text": text}
+
+
+# ---------------------------------------------------------------------------
+# WebSocket 流式端点
+#
+# 协议(网关 ↔ 子服务):
+#   client -> server:
+#     - 首帧 JSON: {op:"start", chunk_size:[0,10,5], encoder_lookback:4,
+#                   decoder_lookback:1, enable_realtime_punc:false,
+#                   sample_rate:16000, format:"pcm"}
+#     - 二进制 PCM int16 帧 = 普通 chunk (is_final=False)
+#     - JSON {op:"flush"}    = is_final=True 但不带音频(强制 flush cache)
+#     - JSON {op:"close"}    = 优雅结束
+#
+#   server -> client:
+#     - JSON {type:"started"}                  # 收到 start 后
+#     - JSON {type:"partial", text, text_punc, is_silence}  # 每个 chunk 后
+#     - JSON {type:"flushed", text}            # flush 完成后
+#     - JSON {type:"error", message}           # 出错
+#
+# 约定:
+#   - 网关侧负责 PCM 完整 chunk 切分、句子边界状态机、远场过滤、
+#     离线 PUNC、ITN — 子服务只做 generate + (可选)实时 PUNC。
+#   - 鉴权: 通过 query string ?token=... 或 sec-websocket-protocol 头携带
+#     X-Internal-Token 不便,这里走 query 参数 token。
+# ---------------------------------------------------------------------------
+
+
+import io as _io  # noqa: E402  (放这里避开顶层 import)
+import numpy as _np  # noqa: E402
+
+
+def _ws_check_token(websocket: WebSocket) -> bool:
+    if not INTERNAL_SERVICE_TOKEN:
+        return True
+    token = websocket.query_params.get("token") or ""
+    if token != INTERNAL_SERVICE_TOKEN:
+        return False
+    return True
+
+
+@app.websocket("/asr/stream/v1")
+async def asr_stream(websocket: WebSocket) -> None:
+    if not _ws_check_token(websocket):
+        await websocket.close(code=4401, reason="invalid internal token")
+        return
+
+    await websocket.accept()
+
+    if ASR_MODEL_MODE not in ("all", "realtime"):
+        await websocket.send_json(
+            {
+                "type": "error",
+                "message": f"realtime model not loaded (mode={ASR_MODEL_MODE})",
+            }
+        )
+        await websocket.close()
+        return
+
+    started = False
+    chunk_size = [0, 10, 5]
+    encoder_lookback = 4
+    decoder_lookback = 1
+    sample_rate = 16000
+    audio_format = "pcm"
+    enable_realtime_punc = False
+    audio_cache: dict = {}
+    punc_cache: dict = {}
+
+    try:
+        while True:
+            msg = await websocket.receive()
+
+            if "text" in msg:
+                try:
+                    payload = json.loads(msg["text"])
+                except json.JSONDecodeError:
+                    await websocket.send_json(
+                        {"type": "error", "message": "invalid json"}
+                    )
+                    continue
+
+                op = payload.get("op")
+                if op == "start":
+                    chunk_size = payload.get("chunk_size", chunk_size)
+                    encoder_lookback = int(
+                        payload.get("encoder_lookback", encoder_lookback)
+                    )
+                    decoder_lookback = int(
+                        payload.get("decoder_lookback", decoder_lookback)
+                    )
+                    sample_rate = int(payload.get("sample_rate", sample_rate))
+                    audio_format = (payload.get("format") or "pcm").lower()
+                    enable_realtime_punc = bool(
+                        payload.get("enable_realtime_punc", False)
+                    )
+                    # 预加载实时 PUNC 模型避免首次 chunk 长等待
+                    if enable_realtime_punc:
+                        try:
+                            _get_punc_model(realtime=True)
+                        except Exception as exc:
+                            logger.warning("实时 PUNC 模型加载失败: %s", exc)
+                    started = True
+                    await websocket.send_json({"type": "started"})
+
+                elif op == "flush":
+                    if not started:
+                        await websocket.send_json(
+                            {"type": "error", "message": "not started"}
+                        )
+                        continue
+
+                    empty = _np.array([], dtype=_np.float32)
+                    text = transcribe_realtime_chunk(
+                        empty,
+                        audio_cache,
+                        is_final=True,
+                        chunk_size=chunk_size,
+                        encoder_chunk_look_back=encoder_lookback,
+                        decoder_chunk_look_back=decoder_lookback,
+                    )
+                    await websocket.send_json({"type": "flushed", "text": text})
+                    # flush 后清空 cache, 下一个 sentence 重新开始
+                    audio_cache.clear()
+                    punc_cache.clear()
+
+                elif op == "close":
+                    break
+
+                else:
+                    await websocket.send_json(
+                        {"type": "error", "message": f"unknown op: {op}"}
+                    )
+
+            elif "bytes" in msg:
+                if not started:
+                    await websocket.send_json(
+                        {"type": "error", "message": "not started"}
+                    )
+                    continue
+
+                audio_bytes = msg["bytes"]
+                try:
+                    if audio_format == "pcm":
+                        audio_array = (
+                            _np.frombuffer(audio_bytes, dtype=_np.int16).astype(
+                                _np.float32
+                            )
+                            / 32768.0
+                        )
+                    elif audio_format == "wav":
+                        import soundfile as sf
+
+                        audio_array, _ = sf.read(_io.BytesIO(audio_bytes))
+                        audio_array = _np.asarray(audio_array, dtype=_np.float32)
+                    else:
+                        await websocket.send_json(
+                            {
+                                "type": "error",
+                                "message": f"unsupported format: {audio_format}",
+                            }
+                        )
+                        continue
+                except Exception as exc:
+                    await websocket.send_json(
+                        {"type": "error", "message": f"audio decode: {exc}"}
+                    )
+                    continue
+
+                # 子服务只做静音判定的轻量信号(便于网关侧统计),
+                # 真正的远场过滤在网关侧已经做了
+                is_silence = bool(
+                    len(audio_array) > 0
+                    and float(_np.max(_np.abs(audio_array))) < 0.002
+                )
+
+                try:
+                    text_raw = transcribe_realtime_chunk(
+                        audio_array,
+                        audio_cache,
+                        is_final=False,
+                        chunk_size=chunk_size,
+                        encoder_chunk_look_back=encoder_lookback,
+                        decoder_chunk_look_back=decoder_lookback,
+                    )
+                except Exception as exc:
+                    logger.exception("realtime chunk failed")
+                    await websocket.send_json(
+                        {"type": "error", "message": f"asr error: {exc}"}
+                    )
+                    continue
+
+                text_punc = ""
+                if enable_realtime_punc and text_raw:
+                    try:
+                        text_punc = punc_realtime_apply(text_raw, punc_cache)
+                    except Exception as exc:
+                        logger.warning("实时 PUNC 失败: %s", exc)
+
+                await websocket.send_json(
+                    {
+                        "type": "partial",
+                        "text": text_raw,
+                        "text_punc": text_punc,
+                        "is_silence": is_silence,
+                    }
+                )
+
+    except WebSocketDisconnect:
+        logger.info("WS 客户端断开")
+    except Exception:
+        logger.exception("WS 处理异常")
+        try:
+            await websocket.close()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

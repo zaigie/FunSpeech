@@ -475,6 +475,7 @@ class AliyunWebSocketASRService:
                                     sentence_texts = []
                                     sentence_texts_raw = []
                                     empty_result_count = 0
+                                    self._close_http_session_in_cache(audio_cache)
                                     audio_cache = {}
                                     punc_cache = {}
                                 elif result_text:
@@ -552,6 +553,9 @@ class AliyunWebSocketASRService:
                 except:
                     pass
         finally:
+            # 关闭 HTTP 子服务的内部 WS session(若有)
+            self._close_http_session_in_cache(audio_cache)
+
             # 释放会话级引擎（多GPU负载均衡）
             if session_engine_index is not None:
                 asr_engine = self._ensure_asr_engine()
@@ -778,12 +782,20 @@ class AliyunWebSocketASRService:
 
         try:
             from .asr.engine import get_global_punc_model
+            from .asr.http_engine import FunASRHttpEngine
 
             # 使用会话级引擎（如果提供），否则使用全局引擎
             if session_engine is not None:
                 asr_engine = session_engine
             else:
                 asr_engine = self._ensure_asr_engine()
+
+            # HTTP 客户端引擎: 调子服务 /asr/punc
+            if isinstance(asr_engine, FunASRHttpEngine):
+                logger.debug(f"[{task_id}] 通过 HTTP 子服务应用标点: '{text}'")
+                punctuated_text = await run_sync(asr_engine.punc_offline, text)
+                logger.debug(f"[{task_id}] 标点恢复结果: '{punctuated_text}'")
+                return punctuated_text or text
 
             # 使用全局PUNC模型
             punc_model = get_global_punc_model(asr_engine.device)
@@ -813,6 +825,22 @@ class AliyunWebSocketASRService:
             return False
         sentence_endings = ["。", "！", "？", ".", "!", "?", "…"]
         return any(text.endswith(ending) for ending in sentence_endings)
+
+    def _close_http_session_in_cache(self, cache: Dict) -> None:
+        """若 cache 中存在 HTTP 子服务 session,关闭它并移除。
+
+        当使用 FunASRHttpEngine 时,realtime_model.generate 会把内部 WS session
+        以 __funasr_http_session__ 为 key 存进 cache。每次 SentenceEnd 后网关会
+        重置 audio_cache,所以这里需要在重置前显式 close。
+        """
+        if not cache:
+            return
+        session = cache.pop("__funasr_http_session__", None)
+        if session is not None:
+            try:
+                session.close()
+            except Exception as exc:
+                logger.debug(f"关闭 HTTP session 异常: {exc}")
 
     def _convert_audio_bytes_to_array(
         self, audio_bytes: bytes, audio_format: str, sample_rate: int, task_id: str
