@@ -1,0 +1,22 @@
+[project]
+name = "funspeech-funasr-service"
+version = "0.1.0"
+description = "FunASR (Paraformer / SenseVoice) 子服务 — 暴露 HTTP /asr/file 与 WS /asr/stream/v1"
+requires-python = ">=3.10,<3.11"
+
+dependencies = [
+    "fastapi==0.115.6",
+    "uvicorn[standard]==0.30.0",
+    "python-multipart==0.0.6",
+    "websockets==11.0",
+    "funasr==1.2.6",
+    "modelscope==1.20.0",
+    "torch==2.3.1",
+    "torchaudio==2.3.1",
+    "soundfile==0.12.1",
+    "numpy==1.23.5",
+    "scipy==1.15.3",
+]
+
+[tool.uv]
+package = false

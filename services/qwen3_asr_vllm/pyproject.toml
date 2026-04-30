@@ -1,0 +1,24 @@
+[project]
+name = "funspeech-qwen3-asr-service"
+version = "0.1.0"
+description = "Qwen3-ASR (in-process vLLM) 子服务 — 离线 HTTP /asr/file 与流式 WS /asr/stream/v1"
+requires-python = ">=3.10,<3.13"
+
+# 注意: vLLM 0.11+ 与 transformers 4.57.1 是 Qwen3-ASR 官方推荐配套,
+# 与主项目和其他 ASR 子服务 (transformers 4.51.3) 完全隔离。
+# 需要 in-process 调 Qwen3ASRModel,所以子模块代码会通过
+# services/qwen3_asr_vllm/third_party/Qwen3-ASR (Step 6 加 git submodule) 引入。
+dependencies = [
+    "fastapi==0.115.6",
+    "uvicorn[standard]==0.30.0",
+    "python-multipart==0.0.6",
+    "websockets==11.0",
+    "vllm>=0.11.0",
+    "transformers==4.57.1",
+    "numpy==1.26.4",
+    "soundfile==0.12.1",
+    "torchaudio>=2.5.1",
+]
+
+[tool.uv]
+package = false
