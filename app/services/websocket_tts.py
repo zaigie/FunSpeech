@@ -384,6 +384,23 @@ class AliyunWebSocketTTSService:
         tts_engine = self._ensure_tts_engine()
         engine_index = None
 
+        # CosyVoiceHttpEngine: 内部 WS 调子服务,不需要选 GPU 副本
+        try:
+            from .tts.http_engine import CosyVoiceHttpEngine
+        except Exception:
+            CosyVoiceHttpEngine = None  # type: ignore[assignment]
+
+        if CosyVoiceHttpEngine is not None and isinstance(tts_engine, CosyVoiceHttpEngine):
+            try:
+                async for chunk in self._stream_with_http_engine(
+                    text, voice, speed, format, sample_rate, task_id, websocket, tts_engine, prompt
+                ):
+                    yield chunk
+            except WebSocketDisconnect:
+                logger.warning(f"[{task_id}] 客户端断开，停止音频生成")
+                raise
+            return
+
         try:
             # 如果是多GPU引擎，选择一个副本并获取索引
             if isinstance(tts_engine, MultiGPUTTSEngine):
@@ -425,6 +442,37 @@ class AliyunWebSocketTTSService:
             # 释放引擎
             if engine_index is not None and isinstance(tts_engine, MultiGPUTTSEngine):
                 tts_engine._release_engine(engine_index)
+
+    async def _stream_with_http_engine(
+        self,
+        text: str,
+        voice: str,
+        speed: float,
+        format: str,
+        target_sr: int,
+        task_id: str,
+        websocket,
+        engine,  # CosyVoiceHttpEngine
+        prompt: str = "",
+    ) -> AsyncGenerator[bytes, None]:
+        """走 cosyvoice 子服务 WS /tts/stream 拿 chunks, 网关侧负责重采样 + 格式转换"""
+        logger.debug(f"[{task_id}] 走 HTTP 子服务流式合成: voice={voice}, prompt={prompt}")
+
+        async for audio_array, native_sr in engine.iter_stream_audio_chunks(
+            text=text, voice=voice, speed=speed, prompt=prompt
+        ):
+            if websocket.client_state.name != "CONNECTED":
+                logger.warning(f"[{task_id}] 客户端已断开,停止流式合成")
+                return
+
+            audio_array = resample_audio_array(audio_array, native_sr, target_sr)
+
+            if format.upper() == "PCM":
+                yield self._convert_audio_to_pcm(audio_array, target_sr)
+            else:
+                yield self._convert_audio_to_wav(audio_array, target_sr)
+
+            await asyncio.sleep(0.01)
 
     async def _stream_preset_voice_with_engine(
         self, text: str, voice: str, speed: float, format: str, target_sr: int, task_id: str, websocket, engine

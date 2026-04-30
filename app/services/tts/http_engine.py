@@ -439,6 +439,81 @@ class CosyVoiceHttpEngine:
             self._pool.release(idx)
 
 
+    # ---------------------------------------------------------- WS 流式
+
+    async def iter_stream_audio_chunks(
+        self,
+        text: str,
+        voice: str,
+        speed: float = 1.0,
+        prompt: str = "",
+    ):
+        """异步生成器: 流式合成,逐 chunk yield (audio_array, native_sr)
+
+        内部打开一个内部 WS 到子服务 /tts/stream;子服务侧推 float32 PCM 块,
+        本方法解码后逐 chunk 返回。网关侧(websocket_tts.py)按需做重采样和格式转换。
+        """
+        idx, base_url = self._pool.acquire()
+        ws_url = base_url.replace("http://", "ws://").replace(
+            "https://", "wss://"
+        ) + "/tts/stream"
+
+        if self._internal_token:
+            sep = "&" if "?" in ws_url else "?"
+            ws_url = f"{ws_url}{sep}token={self._internal_token}"
+
+        # 用 websockets.asyncio.client 异步实现, 不阻塞事件循环
+        from websockets.asyncio.client import connect
+
+        try:
+            async with connect(ws_url, open_timeout=self._timeout) as ws:
+                await ws.send(
+                    json.dumps(
+                        {
+                            "text": text,
+                            "voice": voice,
+                            "speed": speed,
+                            "prompt": prompt,
+                        }
+                    )
+                )
+                # 第 1 帧 JSON: started + sample_rate
+                first = await ws.recv()
+                if isinstance(first, (bytes, bytearray)):
+                    raise DefaultServerErrorException(
+                        "cosyvoice ws started 帧非文本"
+                    )
+                meta = json.loads(first)
+                if meta.get("type") == "error":
+                    raise DefaultServerErrorException(
+                        f"cosyvoice stream error: {meta.get('message')}"
+                    )
+                if meta.get("type") != "started":
+                    raise DefaultServerErrorException(
+                        f"cosyvoice stream unexpected first frame: {meta}"
+                    )
+                native_sr = int(meta.get("sample_rate", 24000))
+
+                while True:
+                    msg = await ws.recv()
+                    if isinstance(msg, (bytes, bytearray)):
+                        chunk = np.frombuffer(msg, dtype=np.float32)
+                        if chunk.size == 0:
+                            continue
+                        # 与本地 inference_sft 输出 shape 一致: (1, N)
+                        yield chunk.reshape(1, -1), native_sr
+                    else:
+                        evt = json.loads(msg)
+                        if evt.get("type") == "done":
+                            return
+                        if evt.get("type") == "error":
+                            raise DefaultServerErrorException(
+                                f"cosyvoice stream error: {evt.get('message')}"
+                            )
+        finally:
+            self._pool.release(idx)
+
+
 def make_cosyvoice_http_engine() -> CosyVoiceHttpEngine:
     urls = _split_urls(settings.COSYVOICE_SERVICE_URLS)
     if not urls:
