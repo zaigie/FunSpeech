@@ -535,3 +535,202 @@ def make_dolphin_http_engine() -> DolphinHttpEngine:
         internal_token=settings.INTERNAL_SERVICE_TOKEN or "",
         timeout=settings.SERVICE_REQUEST_TIMEOUT,
     )
+
+
+class _Qwen3RealtimeASRSession(_RealtimeASRSession):
+    """qwen3-asr 子服务的内部 WS 会话
+
+    协议字段名与 funasr 兼容(text / text_punc / is_silence),
+    qwen3 不产 text_punc(模型自带标点)。
+    """
+
+
+class _Qwen3HttpRealtimeModel:
+    """qwen3-asr 用的伪 funasr.realtime_model"""
+
+    _SESSION_KEY = "__qwen3_asr_http_session__"
+
+    def __init__(self, engine: "Qwen3AsrVllmHttpEngine"):
+        self._engine = engine
+
+    def generate(self, *, input, cache, is_final, chunk_size=None, **kwargs):
+        params = {
+            "sample_rate": int(kwargs.get("sample_rate", 16000)),
+            "format": kwargs.get("format", "pcm"),
+            "unfixed_chunk_num": int(kwargs.get("unfixed_chunk_num", 2)),
+            "unfixed_token_num": int(kwargs.get("unfixed_token_num", 5)),
+            "chunk_size_sec": float(kwargs.get("chunk_size_sec", 2.0)),
+        }
+
+        session = cache.get(self._SESSION_KEY)
+        if session is None:
+            session = self._engine._open_realtime_session(params)
+            cache[self._SESSION_KEY] = session
+
+        if is_final:
+            text = session.flush()
+            try:
+                session.close()
+            except Exception:
+                pass
+            cache.pop(self._SESSION_KEY, None)
+            return [{"text": text}] if text else []
+
+        result = session.send_chunk(np.asarray(input, dtype=np.float32))
+        return [
+            {
+                "text": result["text"],
+                "_text_punc": result.get("text_punc", ""),
+                "_is_silence": result["is_silence"],
+            }
+        ]
+
+
+class Qwen3AsrVllmHttpEngine(RealTimeASREngine):
+    """Qwen3-ASR vLLM 子服务 HTTP 客户端"""
+
+    def __init__(
+        self,
+        urls: List[str],
+        internal_token: str = "",
+        timeout: float = 60.0,
+    ):
+        if not urls:
+            raise ValueError("Qwen3AsrVllmHttpEngine requires at least one replica URL")
+        self._pool = _HttpReplicaPool(urls)
+        self._timeout = timeout
+        self._internal_token = internal_token
+        self._headers: Dict[str, str] = {}
+        if internal_token:
+            self._headers["X-Internal-Token"] = internal_token
+
+        self.realtime_model = _Qwen3HttpRealtimeModel(self)
+
+    def _open_realtime_session(self, params: Dict[str, Any]) -> _Qwen3RealtimeASRSession:
+        idx, base_url = self._pool.acquire()
+        ws_url = base_url.replace("http://", "ws://").replace(
+            "https://", "wss://"
+        ) + "/asr/stream/v1"
+        try:
+            session = _Qwen3RealtimeASRSession(
+                ws_url=ws_url,
+                params=params,
+                internal_token=self._internal_token,
+                timeout=self._timeout,
+            )
+        except Exception:
+            self._pool.release(idx)
+            raise
+
+        original_close = session.close
+
+        def close_and_release():
+            try:
+                original_close()
+            finally:
+                self._pool.release(idx)
+
+        session.close = close_and_release  # type: ignore[method-assign]
+        return session
+
+    @property
+    def supports_realtime(self) -> bool:
+        return True
+
+    @property
+    def device(self) -> str:
+        return f"remote:{','.join(self._pool._urls)}"
+
+    def is_model_loaded(self) -> bool:
+        for url in self._pool._urls:
+            try:
+                r = httpx.get(f"{url}/health", timeout=5.0, headers=self._headers)
+                if r.status_code == 200:
+                    return True
+            except httpx.HTTPError:
+                continue
+        return False
+
+    def transcribe_file(
+        self,
+        audio_path: str,
+        hotwords: str = "",
+        enable_punctuation: bool = False,  # qwen3 模型自带标点,此参数忽略
+        enable_itn: bool = False,
+        enable_vad: bool = False,
+        sample_rate: int = 16000,
+        dolphin_lang_sym: str = "zh",
+        dolphin_region_sym: str = "SHANGHAI",
+    ) -> str:
+        idx, base_url = self._pool.acquire()
+        try:
+            with open(audio_path, "rb") as fp:
+                files = {
+                    "audio": (
+                        audio_path.rsplit("/", 1)[-1],
+                        fp,
+                        "application/octet-stream",
+                    )
+                }
+                data = {
+                    "language": dolphin_lang_sym or "",  # 复用现有字段
+                    "sample_rate": str(sample_rate),
+                }
+                resp = httpx.post(
+                    f"{base_url}/asr/file",
+                    files=files,
+                    data=data,
+                    headers=self._headers,
+                    timeout=self._timeout,
+                )
+            resp.raise_for_status()
+            text = resp.json().get("text", "")
+        except httpx.HTTPError as exc:
+            logger.exception("Qwen3-ASR HTTP 调用失败 (%s)", base_url)
+            raise DefaultServerErrorException(f"qwen3-asr service error: {exc}") from exc
+        finally:
+            self._pool.release(idx)
+
+        if enable_itn and text:
+            from ...utils.text_processing import apply_itn_to_text
+
+            text = apply_itn_to_text(text)
+        return text
+
+    def transcribe_websocket(
+        self,
+        audio_chunk: bytes,
+        cache: Optional[Dict] = None,
+        is_final: bool = False,
+        **kwargs,
+    ) -> str:
+        if cache is None:
+            cache = {}
+        if audio_chunk:
+            audio_array = (
+                np.frombuffer(audio_chunk, dtype=np.int16).astype(np.float32) / 32768.0
+            )
+        else:
+            audio_array = np.array([], dtype=np.float32)
+        result = self.realtime_model.generate(
+            input=audio_array,
+            cache=cache,
+            is_final=is_final,
+            **kwargs,
+        )
+        if result and len(result):
+            return result[0].get("text", "")
+        return ""
+
+
+def make_qwen3_asr_http_engine() -> Qwen3AsrVllmHttpEngine:
+    urls = _split_urls(settings.QWEN3_ASR_SERVICE_URLS)
+    if not urls:
+        raise DefaultServerErrorException(
+            "USE_QWEN3_ASR_SERVICE 已启用,但未配置 QWEN3_ASR_SERVICE_URLS"
+        )
+    return Qwen3AsrVllmHttpEngine(
+        urls=urls,
+        internal_token=settings.INTERNAL_SERVICE_TOKEN or "",
+        timeout=settings.SERVICE_REQUEST_TIMEOUT,
+    )

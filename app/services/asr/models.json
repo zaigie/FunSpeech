@@ -40,6 +40,23 @@
             "models": {
                 "offline": "DataoceanAI/dolphin-small"
             }
+        },
+        "qwen3-asr-flash": {
+            "name": "Qwen3-ASR Flash",
+            "engine": "qwen3-asr",
+            "description": "Qwen3-ASR (vLLM 加速) — 多语种,自带标点,流式带 token 修订",
+            "languages": [
+                "zh",
+                "en",
+                "ja",
+                "ko",
+                "yue"
+            ],
+            "supports_realtime": true,
+            "models": {
+                "offline": "Qwen/Qwen3-ASR-1.7B",
+                "realtime": "Qwen/Qwen3-ASR-1.7B"
+            }
         }
     }
 }

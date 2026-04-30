@@ -782,13 +782,17 @@ class AliyunWebSocketASRService:
 
         try:
             from .asr.engine import get_global_punc_model
-            from .asr.http_engine import FunASRHttpEngine
+            from .asr.http_engine import FunASRHttpEngine, Qwen3AsrVllmHttpEngine
 
             # 使用会话级引擎（如果提供），否则使用全局引擎
             if session_engine is not None:
                 asr_engine = session_engine
             else:
                 asr_engine = self._ensure_asr_engine()
+
+            # qwen3-asr 模型自带标点, 直接返回
+            if isinstance(asr_engine, Qwen3AsrVllmHttpEngine):
+                return text
 
             # HTTP 客户端引擎: 调子服务 /asr/punc
             if isinstance(asr_engine, FunASRHttpEngine):
@@ -829,18 +833,19 @@ class AliyunWebSocketASRService:
     def _close_http_session_in_cache(self, cache: Dict) -> None:
         """若 cache 中存在 HTTP 子服务 session,关闭它并移除。
 
-        当使用 FunASRHttpEngine 时,realtime_model.generate 会把内部 WS session
-        以 __funasr_http_session__ 为 key 存进 cache。每次 SentenceEnd 后网关会
-        重置 audio_cache,所以这里需要在重置前显式 close。
+        FunASRHttpEngine 用 __funasr_http_session__,Qwen3AsrVllmHttpEngine
+        用 __qwen3_asr_http_session__。每次 SentenceEnd 后网关会重置
+        audio_cache,所以这里需要在重置前显式 close,避免内部 WS 泄漏。
         """
         if not cache:
             return
-        session = cache.pop("__funasr_http_session__", None)
-        if session is not None:
-            try:
-                session.close()
-            except Exception as exc:
-                logger.debug(f"关闭 HTTP session 异常: {exc}")
+        for key in ("__funasr_http_session__", "__qwen3_asr_http_session__"):
+            session = cache.pop(key, None)
+            if session is not None:
+                try:
+                    session.close()
+                except Exception as exc:
+                    logger.debug(f"关闭 HTTP session 异常 ({key}): {exc}")
 
     def _convert_audio_bytes_to_array(
         self, audio_bytes: bytes, audio_format: str, sample_rate: int, task_id: str

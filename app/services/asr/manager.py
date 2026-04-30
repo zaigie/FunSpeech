@@ -206,6 +206,21 @@ class ModelManager:
             )
             return make_dolphin_http_engine()
 
+        if engine_type == "qwen3-asr":
+            # qwen3-asr 必须走子服务 — 没有进程内实现
+            if not settings.USE_QWEN3_ASR_SERVICE:
+                raise InvalidParameterException(
+                    "qwen3-asr 模型需要 USE_QWEN3_ASR_SERVICE=true 并配置 "
+                    "QWEN3_ASR_SERVICE_URLS"
+                )
+            from .http_engine import make_qwen3_asr_http_engine
+
+            logger.info(
+                "qwen3-asr 走 HTTP 子服务 (urls=%s)",
+                settings.QWEN3_ASR_SERVICE_URLS,
+            )
+            return make_qwen3_asr_http_engine()
+
         if engine_type == "funasr":
             engine_factory = FunASREngine
             engine_kwargs = {
