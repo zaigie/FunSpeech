@@ -937,23 +937,27 @@ _tts_engine: Optional[MultiGPUTTSEngine] = None
 _tts_engine_lock = threading.Lock()
 
 
-def get_tts_engine() -> MultiGPUTTSEngine:
+def get_tts_engine():
     """
-    获取TTS引擎实例（根据环境变量TTS_MODEL_MODE和TTS_GPUS决定加载策略）
+    获取TTS引擎实例
 
-    TTS_GPUS配置:
-        - "" 或 "auto": 自动检测设备
-        - "cpu": 使用CPU
-        - "0": 使用单卡GPU 0
-        - "0,1,2": 使用多卡负载均衡
-
-    Returns:
-        MultiGPUTTSEngine: TTS引擎实例（支持单设备和多GPU模式）
+    USE_COSYVOICE_SERVICE=true 时返回 HTTP 客户端引擎(走 services/cosyvoice/),
+    否则按 TTS_MODEL_MODE / TTS_GPUS 走进程内 MultiGPUTTSEngine。
     """
     global _tts_engine
 
     with _tts_engine_lock:
         if _tts_engine is None:
+            if settings.USE_COSYVOICE_SERVICE:
+                from .http_engine import make_cosyvoice_http_engine
+
+                logger.info(
+                    "USE_COSYVOICE_SERVICE=true,使用 HTTP 客户端引擎 (urls=%s)",
+                    settings.COSYVOICE_SERVICE_URLS,
+                )
+                _tts_engine = make_cosyvoice_http_engine()
+                return _tts_engine
+
             model_mode = settings.TTS_MODEL_MODE.lower()
             load_sft = model_mode in ("all", "sft")
             load_clone = model_mode in ("all", "clone")

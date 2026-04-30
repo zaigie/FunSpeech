@@ -71,6 +71,7 @@ class Settings:
     USE_FUNASR_SERVICE: bool = False  # 旗标: True 走 services/funasr/, False 进程内 (默认)
     USE_DOLPHIN_SERVICE: bool = False
     USE_QWEN3_ASR_SERVICE: bool = False  # qwen3-asr 没有进程内实现, True 时启用
+    USE_COSYVOICE_SERVICE: bool = False  # 旗标: True 走 services/cosyvoice/, False 进程内
     FUNASR_SERVICE_URLS: str = ""  # 逗号分隔, 如 http://funasr-0:8001,http://funasr-1:8001
     DOLPHIN_SERVICE_URLS: str = ""
     QWEN3_ASR_SERVICE_URLS: str = ""
@@ -183,6 +184,9 @@ class Settings:
         )
         self.USE_QWEN3_ASR_SERVICE = (
             os.getenv("USE_QWEN3_ASR_SERVICE", "false").lower() == "true"
+        )
+        self.USE_COSYVOICE_SERVICE = (
+            os.getenv("USE_COSYVOICE_SERVICE", "false").lower() == "true"
         )
         self.FUNASR_SERVICE_URLS = os.getenv(
             "FUNASR_SERVICE_URLS", self.FUNASR_SERVICE_URLS
