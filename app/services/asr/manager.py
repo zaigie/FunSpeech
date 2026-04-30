@@ -197,6 +197,15 @@ class ModelManager:
             )
             return make_funasr_http_engine()
 
+        if engine_type == "dolphin" and settings.USE_DOLPHIN_SERVICE:
+            from .http_engine import make_dolphin_http_engine
+
+            logger.info(
+                "USE_DOLPHIN_SERVICE=true,使用 HTTP 客户端引擎 (urls=%s)",
+                settings.DOLPHIN_SERVICE_URLS,
+            )
+            return make_dolphin_http_engine()
+
         if engine_type == "funasr":
             engine_factory = FunASREngine
             engine_kwargs = {

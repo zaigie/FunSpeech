@@ -69,6 +69,7 @@ class Settings:
     SERVICE_REQUEST_TIMEOUT: float = 60.0  # 子服务 HTTP 调用超时(秒)
     SERVICE_HEALTHCHECK_INTERVAL: float = 5.0
     USE_FUNASR_SERVICE: bool = False  # 旗标: True 走 services/funasr/, False 进程内 (默认)
+    USE_DOLPHIN_SERVICE: bool = False
     FUNASR_SERVICE_URLS: str = ""  # 逗号分隔, 如 http://funasr-0:8001,http://funasr-1:8001
     DOLPHIN_SERVICE_URLS: str = ""
     QWEN3_ASR_SERVICE_URLS: str = ""
@@ -175,6 +176,9 @@ class Settings:
         )
         self.USE_FUNASR_SERVICE = (
             os.getenv("USE_FUNASR_SERVICE", "false").lower() == "true"
+        )
+        self.USE_DOLPHIN_SERVICE = (
+            os.getenv("USE_DOLPHIN_SERVICE", "false").lower() == "true"
         )
         self.FUNASR_SERVICE_URLS = os.getenv(
             "FUNASR_SERVICE_URLS", self.FUNASR_SERVICE_URLS

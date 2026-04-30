@@ -410,3 +410,128 @@ def make_funasr_http_engine() -> FunASRHttpEngine:
         internal_token=settings.INTERNAL_SERVICE_TOKEN or "",
         timeout=settings.SERVICE_REQUEST_TIMEOUT,
     )
+
+
+class DolphinHttpEngine(BaseASREngine):
+    """Dolphin 子服务 HTTP 客户端 — 仅离线"""
+
+    def __init__(
+        self,
+        urls: List[str],
+        internal_token: str = "",
+        timeout: float = 60.0,
+    ):
+        if not urls:
+            raise ValueError("DolphinHttpEngine requires at least one replica URL")
+        self._pool = _HttpReplicaPool(urls)
+        self._timeout = timeout
+        self._headers: Dict[str, str] = {}
+        if internal_token:
+            self._headers["X-Internal-Token"] = internal_token
+
+    @property
+    def supports_realtime(self) -> bool:
+        return False
+
+    @property
+    def device(self) -> str:
+        return f"remote:{','.join(self._pool._urls)}"
+
+    def is_model_loaded(self) -> bool:
+        for url in self._pool._urls:
+            try:
+                r = httpx.get(f"{url}/health", timeout=5.0, headers=self._headers)
+                if r.status_code == 200:
+                    return True
+            except httpx.HTTPError:
+                continue
+        return False
+
+    def transcribe_file(
+        self,
+        audio_path: str,
+        hotwords: str = "",
+        enable_punctuation: bool = False,
+        enable_itn: bool = False,
+        enable_vad: bool = False,
+        sample_rate: int = 16000,
+        dolphin_lang_sym: str = "zh",
+        dolphin_region_sym: str = "SHANGHAI",
+    ) -> str:
+        idx, base_url = self._pool.acquire()
+        try:
+            with open(audio_path, "rb") as fp:
+                files = {
+                    "audio": (
+                        audio_path.rsplit("/", 1)[-1],
+                        fp,
+                        "application/octet-stream",
+                    )
+                }
+                data = {
+                    "lang_sym": dolphin_lang_sym,
+                    "region_sym": dolphin_region_sym,
+                    "sample_rate": str(sample_rate),
+                }
+                resp = httpx.post(
+                    f"{base_url}/asr/file",
+                    files=files,
+                    data=data,
+                    headers=self._headers,
+                    timeout=self._timeout,
+                )
+            resp.raise_for_status()
+            text = resp.json().get("text", "")
+        except httpx.HTTPError as exc:
+            logger.exception("Dolphin HTTP 调用失败 (%s)", base_url)
+            raise DefaultServerErrorException(f"dolphin service error: {exc}") from exc
+        finally:
+            self._pool.release(idx)
+
+        # 标点 / ITN: dolphin 子服务不做, 委托给 funasr 子服务
+        if enable_punctuation and text:
+            text = self._punctuate_via_funasr(text)
+        if enable_itn and text:
+            from ...utils.text_processing import apply_itn_to_text
+
+            text = apply_itn_to_text(text)
+        return text
+
+    def _punctuate_via_funasr(self, text: str) -> str:
+        """复用 funasr 子服务的 /asr/punc 给 dolphin 输出加标点"""
+        urls = _split_urls(settings.FUNASR_SERVICE_URLS)
+        if not urls:
+            logger.debug(
+                "dolphin 启用 punctuation 但未配置 FUNASR_SERVICE_URLS,跳过"
+            )
+            return text
+
+        funasr_url = urls[0]
+        headers = {}
+        if settings.INTERNAL_SERVICE_TOKEN:
+            headers["X-Internal-Token"] = settings.INTERNAL_SERVICE_TOKEN
+        try:
+            resp = httpx.post(
+                f"{funasr_url}/asr/punc",
+                json={"text": text, "mode": "offline"},
+                headers=headers,
+                timeout=self._timeout,
+            )
+            resp.raise_for_status()
+            return resp.json().get("text", text)
+        except httpx.HTTPError as exc:
+            logger.warning("dolphin 借 funasr 加标点失败: %s", exc)
+            return text
+
+
+def make_dolphin_http_engine() -> DolphinHttpEngine:
+    urls = _split_urls(settings.DOLPHIN_SERVICE_URLS)
+    if not urls:
+        raise DefaultServerErrorException(
+            "USE_DOLPHIN_SERVICE 已启用,但未配置 DOLPHIN_SERVICE_URLS"
+        )
+    return DolphinHttpEngine(
+        urls=urls,
+        internal_token=settings.INTERNAL_SERVICE_TOKEN or "",
+        timeout=settings.SERVICE_REQUEST_TIMEOUT,
+    )
