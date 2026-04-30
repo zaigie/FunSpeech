@@ -147,6 +147,12 @@ class CosyVoiceHttpEngine:
     保留与原进程内 CosyVoiceTTSEngine 一致的公开方法签名(
     synthesize_speech / get_voices / voice_manager 等),网关代码无需感知
     底层是进程内还是 HTTP。流式合成走 iter_stream_audio_chunks (内部 WS)。
+
+    多副本写副本约定:
+      - URL 列表第一个 = 主写副本 (primary), 接收所有音色 CRUD
+      - 写完成后向其它副本广播 POST /voices/reload, 让它们从磁盘热重载
+        spk2info.pt 与 voice_registry.json
+      - 读 / 合成请求仍走副本池调度
     """
 
     def __init__(
@@ -156,6 +162,8 @@ class CosyVoiceHttpEngine:
         timeout: float = 120.0,
     ):
         self._pool = _HttpReplicaPool(urls)
+        self._urls = list(urls)
+        self._primary_url = urls[0] if urls else ""
         self._timeout = timeout
         self._internal_token = internal_token
         self._headers: Dict[str, str] = {}
@@ -165,6 +173,32 @@ class CosyVoiceHttpEngine:
         self._sft_loaded = False
         self._clone_loaded = False
         self._cached_health_at = 0.0
+
+    def _broadcast_reload(self) -> None:
+        """向除 primary 外的所有副本广播 /voices/reload。
+
+        失败仅打 warning,不抛异常 — 其它副本最坏只是看不到刚写的音色,
+        重启或下次广播会同步。
+        """
+        targets = [u for u in self._urls if u != self._primary_url]
+        if not targets:
+            return
+        for url in targets:
+            try:
+                r = httpx.post(
+                    f"{url}/voices/reload",
+                    headers=self._headers,
+                    timeout=min(self._timeout, 30.0),
+                )
+                if r.status_code != 200:
+                    logger.warning(
+                        "广播 reload 到 %s 返回 %s: %s",
+                        url, r.status_code, r.text[:200],
+                    )
+                else:
+                    logger.debug("已广播 reload 到 %s", url)
+            except httpx.HTTPError as exc:
+                logger.warning("广播 reload 到 %s 失败: %s", url, exc)
 
     # ---------------------------------------------------------- 公共接口
 
@@ -396,48 +430,43 @@ class CosyVoiceHttpEngine:
             self._pool.release(idx)
 
     def _post_voice(self, name: str, prompt_text: str, wav_path) -> Dict[str, Any]:
-        idx, base_url = self._pool.acquire()
-        try:
-            with open(wav_path, "rb") as fp:
-                files = {"audio": (wav_path.name, fp, "audio/wav")}
-                data = {"name": name, "prompt_text": prompt_text}
-                r = httpx.post(
-                    f"{base_url}/voices",
-                    files=files,
-                    data=data,
-                    headers=self._headers,
-                    timeout=self._timeout,
-                )
-            r.raise_for_status()
-            return r.json()
-        finally:
-            self._pool.release(idx)
+        # 写操作必须打到 primary 副本, 否则 spk2info.pt 会冲突
+        with open(wav_path, "rb") as fp:
+            files = {"audio": (wav_path.name, fp, "audio/wav")}
+            data = {"name": name, "prompt_text": prompt_text}
+            r = httpx.post(
+                f"{self._primary_url}/voices",
+                files=files,
+                data=data,
+                headers=self._headers,
+                timeout=self._timeout,
+            )
+        r.raise_for_status()
+        result = r.json()
+        self._broadcast_reload()
+        return result
 
     def _delete_voice(self, name: str) -> Dict[str, Any]:
-        idx, base_url = self._pool.acquire()
-        try:
-            r = httpx.delete(
-                f"{base_url}/voices/{name}",
-                headers=self._headers,
-                timeout=self._timeout,
-            )
-            r.raise_for_status()
-            return r.json()
-        finally:
-            self._pool.release(idx)
+        r = httpx.delete(
+            f"{self._primary_url}/voices/{name}",
+            headers=self._headers,
+            timeout=self._timeout,
+        )
+        r.raise_for_status()
+        result = r.json()
+        self._broadcast_reload()
+        return result
 
     def _post_voices_refresh(self) -> Dict[str, Any]:
-        idx, base_url = self._pool.acquire()
-        try:
-            r = httpx.post(
-                f"{base_url}/voices/refresh",
-                headers=self._headers,
-                timeout=self._timeout,
-            )
-            r.raise_for_status()
-            return r.json()
-        finally:
-            self._pool.release(idx)
+        r = httpx.post(
+            f"{self._primary_url}/voices/refresh",
+            headers=self._headers,
+            timeout=self._timeout,
+        )
+        r.raise_for_status()
+        result = r.json()
+        self._broadcast_reload()
+        return result
 
 
     # ---------------------------------------------------------- WS 流式

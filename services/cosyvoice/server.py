@@ -172,6 +172,7 @@ def _custom_save_spkinfo(self) -> None:
 
 
 def _load_existing_spkinfo(cosyvoice) -> None:
+    """启动时把磁盘上已有的 spk2info.pt 合并进新加载的模型。"""
     if not SPKINFO_FILE.exists():
         return
     try:
@@ -185,6 +186,71 @@ def _load_existing_spkinfo(cosyvoice) -> None:
             logger.info("已合并 %d 个保存的音色", len(existing))
     except Exception as exc:
         logger.warning("加载已存 spkinfo 失败: %s", exc)
+
+
+def reload_voices_from_disk() -> Dict[str, Any]:
+    """运行期热重载: 用磁盘上的 spk2info.pt + registry 覆盖内存状态。
+
+    多副本部署时, 写副本 (cosyvoice-0) 修改音色后, 其它只读副本调用本函数
+    即可立刻感知, 无需重启。
+
+    与 _load_existing_spkinfo 不同, 这里是**替换**语义 — 磁盘上没有的
+    音色会从内存里删掉, 保证 cosyvoice-0 的删除操作能传播到其它副本。
+    """
+    global _registry
+
+    if _cosyvoice_clone is None:
+        # 没加载 clone 模型, 没什么可重载的(预设音色不通过 spk2info 管理)
+        _registry = _load_registry_from_disk()
+        return {"clone_voices": 0, "registry_voices": 0, "clone_loaded": False}
+
+    with _load_lock:
+        # 1) 重新读取注册表
+        _registry = _load_registry_from_disk()
+
+        # 2) 重新读取 spk2info.pt, 替换内存 dict
+        spk2info = getattr(_cosyvoice_clone.frontend, "spk2info", None)
+        if spk2info is None:
+            return {
+                "clone_voices": 0,
+                "registry_voices": len(_registry.get("voices", {})),
+                "clone_loaded": False,
+            }
+
+        if SPKINFO_FILE.exists():
+            try:
+                import torch
+
+                disk_state = torch.load(str(SPKINFO_FILE), map_location="cpu")
+            except Exception as exc:
+                logger.warning("reload 时加载 spkinfo 失败: %s", exc)
+                disk_state = {}
+        else:
+            disk_state = {}
+
+        # 替换语义: 删掉内存里磁盘没有的 zero-shot 音色, 但保留预设音色
+        # (预设音色由模型自身在初始化时加载, 不在磁盘 spk2info.pt 内)
+        registered = set(_registry.get("voices", {}).keys())
+        for name in list(spk2info.keys()):
+            if name in PRESET_VOICES:
+                continue
+            if name not in registered and name not in disk_state:
+                del spk2info[name]
+
+        # 把磁盘状态合并/覆盖进内存
+        spk2info.update(disk_state)
+
+        clone_count = len(_registry.get("voices", {}))
+        logger.info(
+            "音色已热重载: %d clone (来自 spk2info.pt), %d registry",
+            len(disk_state),
+            clone_count,
+        )
+        return {
+            "clone_voices": len(disk_state),
+            "registry_voices": clone_count,
+            "clone_loaded": True,
+        }
 
 
 def _load_models() -> None:
@@ -679,6 +745,17 @@ async def voices_refresh(request: Request) -> dict:
     _check_token(request)
     success, total = voice_refresh_from_dir()
     return {"added": success, "total": total}
+
+
+@app.post("/voices/reload")
+async def voices_reload(request: Request) -> dict:
+    """从磁盘热重载 spk2info + registry, 用于多副本同步.
+
+    典型用法: cosyvoice-0 (主写副本) 写完音色后, 由网关广播到其它只读副本,
+    其它副本调本接口立刻感知; 不重启进程.
+    """
+    _check_token(request)
+    return reload_voices_from_disk()
 
 
 @app.post("/text/normalize")
