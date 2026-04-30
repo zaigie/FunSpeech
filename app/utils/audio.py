@@ -9,8 +9,6 @@ import tempfile
 import requests
 import librosa
 import soundfile as sf
-import torchaudio
-import torch
 import numpy as np
 import subprocess
 import logging
@@ -338,18 +336,13 @@ def save_audio_array(
             if audio_array.ndim == 1:
                 audio_array = audio_array[np.newaxis, :]
 
-        # 根据格式选择保存方法
-        if format.lower() == "wav":
-            # 使用torchaudio保存WAV格式
-            audio_tensor = torch.from_numpy(audio_array)
-            torchaudio.save(output_path, audio_tensor, sample_rate)
+        # 统一用 soundfile 保存(单声道 mean,(N,) 形状)
+        if audio_array.shape[0] > 1:
+            audio_array = np.mean(audio_array, axis=0)
         else:
-            # 使用soundfile保存其他格式
-            # 确保音频数据是单声道
-            if audio_array.shape[0] > 1:
-                audio_array = np.mean(audio_array, axis=0)
+            audio_array = audio_array[0]
 
-            sf.write(output_path, audio_array.T, sample_rate, format=format.upper())
+        sf.write(output_path, audio_array, sample_rate, format=format.upper())
 
         return output_path
 

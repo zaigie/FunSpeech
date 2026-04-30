@@ -142,10 +142,11 @@ class _RemoteVoiceManager:
 
 
 class CosyVoiceHttpEngine:
-    """HTTP 客户端引擎 — 公开方法签名与 CosyVoiceTTSEngine 兼容
+    """HTTP 客户端引擎 — 子服务 services/cosyvoice 的网关侧 facade
 
-    仅实现网关 API 层会调用的方法集; 直接 import cosyvoice_sft / cosyvoice_clone
-    的代码路径(即 websocket_tts.py 里的流式合成)需要单独迁移。
+    保留与原进程内 CosyVoiceTTSEngine 一致的公开方法签名(
+    synthesize_speech / get_voices / voice_manager 等),网关代码无需感知
+    底层是进程内还是 HTTP。流式合成走 iter_stream_audio_chunks (内部 WS)。
     """
 
     def __init__(
@@ -518,7 +519,8 @@ def make_cosyvoice_http_engine() -> CosyVoiceHttpEngine:
     urls = _split_urls(settings.COSYVOICE_SERVICE_URLS)
     if not urls:
         raise DefaultServerErrorException(
-            "USE_COSYVOICE_SERVICE 已启用,但未配置 COSYVOICE_SERVICE_URLS"
+            "COSYVOICE_SERVICE_URLS 未配置 — 网关需要通过 services/cosyvoice "
+            "子服务才能使用 TTS"
         )
     return CosyVoiceHttpEngine(
         urls=urls,

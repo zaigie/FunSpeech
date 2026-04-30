@@ -1,111 +1,32 @@
 [project]
 name = "funspeech"
-version = "0.1.0"
-description = "开箱即用的本地私有化部署语音服务（ASR + TTS），兼容阿里云/OpenAI API"
+version = "2.0.0"
+description = "微服务化语音网关 (ASR + TTS),兼容阿里云/OpenAI API。模型推理由 services/* 子服务承载。"
 readme = "README.md"
 requires-python = ">=3.10,<3.11"
 
+# 网关只负责 HTTP/WS 协议层、句子状态机、采样率/格式转换、ITN(轻量) 和 HTTP 客户端调用,
+# 不再 import funasr / dolphin / cosyvoice / torch / transformers 等重模型库。
 dependencies = [
     "fastapi==0.115.6",
     "uvicorn[standard]==0.30.0",
     "python-multipart==0.0.6",
-    "funasr==1.2.6",
-    "librosa==0.9.2",
-    "requests==2.32.4",
-    "modelscope==1.20.0",
-    "soundfile==0.12.1",
-    "pydub==0.25.1",
     "websockets==11.0",
-    "addict==2.4.0",
-    "datasets==4.0.0",
-    "dataoceanai-dolphin==20250716",
+    "httpx==0.28.1",
+    "requests==2.32.4",
+    "openai>=1.40.0",
+    # 音频处理 — 网关侧做重采样、PCM/WAV 转换、ITN
     "numpy==1.23.5",
     "scipy==1.15.3",
-    "httpx==0.28.1",
-    "openai>=1.40.0",
-    # openai-whisper 用 no-build-isolation 构建,需要这两个在 venv 中
-    "setuptools<70",
+    "soundfile==0.12.1",
+    "librosa==0.9.2",
+    "pydub==0.25.1",
+    "wetext==0.0.4",  # ITN
+    # 同步流式时用 websockets.sync
+    "setuptools<70",  # wetext / 老 sdist 构建期需要
     "wheel",
-    # CosyVoice runtime deps（直接放主依赖,因为 CosyVoice 是 submodule 直接 import 进主进程）
-    "conformer==0.3.2",
-    "diffusers==0.29.0",
-    "transformers==4.51.3",
-    "HyperPyYAML==1.2.2",
-    "lightning==2.2.4",
-    "matplotlib==3.7.5",
-    "x-transformers==2.12.2",
-    "openai-whisper==20231117",
-    "inflect==7.0.0",
-    "wetext==0.0.4",
-    "onnx==1.16.0",
-    "protobuf==4.25",
-    "gdown==5.1.0",
-    "rich==13.7.1",
-    "wget==3.2",
-]
-
-[project.optional-dependencies]
-# CPU 部署:从 PyTorch CPU 索引拉 torch
-cpu = [
-    "torch==2.3.1",
-    "torchaudio==2.3.1",
-    "onnxruntime==1.18.0",
-]
-
-# GPU 部署:从默认 PyPI 拉（带 CUDA 的 torch wheel）
-gpu = [
-    "torch==2.3.1",
-    "torchaudio==2.3.1",
-    "onnxruntime-gpu==1.18.0",
-]
-
-# TensorRT 加速（可选,需要 TTS_LOAD_TRT=True 才用到）
-# 单独 extra,避免拖慢默认构建（包构建脚本会调 pip 装 sub-packages,容易失败）
-tensorrt = [
-    "tensorrt-cu12==10.0.1",
-    "tensorrt-cu12-bindings==10.0.1",
-    "tensorrt-cu12-libs==10.0.1",
 ]
 
 [tool.uv]
 package = false
-conflicts = [
-    [
-        { extra = "cpu" },
-        { extra = "gpu" },
-    ],
-    [
-        { extra = "cpu" },
-        { extra = "tensorrt" },
-    ],
-]
-# openai-whisper 的 setup.py 顶层 import pkg_resources，
-# 但 uv 默认隔离构建环境会拉最新 setuptools（>=80 不再带 pkg_resources）。
-# 改为 no-build-isolation,直接使用项目 venv 中的 setuptools<70（见 [project.dependencies]）。
-no-build-isolation-package = ["openai-whisper"]
-
-[[tool.uv.dependency-metadata]]
-name = "openai-whisper"
-version = "20231117"
-requires-dist = [
-    "numba",
-    "numpy",
-    "torch",
-    "tqdm",
-    "more-itertools",
-    "tiktoken",
-    "triton>=2.0.0,<3; sys_platform == 'linux' and platform_machine == 'x86_64'",
-]
-
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
-[tool.uv.sources]
-torch = [
-    { index = "pytorch-cpu", extra = "cpu" },
-]
-torchaudio = [
-    { index = "pytorch-cpu", extra = "cpu" },
-]
+no-build-isolation-package = ["wetext"]

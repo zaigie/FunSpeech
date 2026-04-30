@@ -49,7 +49,13 @@ from ..models.websocket_asr import (
     AliyunASRMessageName,
     AliyunASRStatus,
 )
-from .asr.engine import MultiGPUASREngine
+# 进程内 MultiGPUASREngine 已删除; 用辅助函数检测引擎是否支持会话级
+# 负载均衡(只有进程内多 GPU 引擎需要),HTTP 客户端引擎自己处理副本调度。
+def _has_session_engine_pool(engine) -> bool:
+    return (
+        hasattr(engine, "get_engine_for_session")
+        and hasattr(engine, "release_session_engine")
+    )
 
 logger = logging.getLogger(__name__)
 
@@ -165,11 +171,11 @@ class AliyunWebSocketASRService:
                                 if transcription_params:
                                     task_id = message_task_id or task_id
 
-                                    # 多GPU会话级负载均衡：在会话开始时选择引擎
+                                    # 进程内多 GPU 副本池(若引擎支持) — HTTP 客户端引擎自己处理调度
                                     asr_engine = self._ensure_asr_engine()
-                                    if isinstance(asr_engine, MultiGPUASREngine):
+                                    if _has_session_engine_pool(asr_engine):
                                         session_engine_index, session_engine = asr_engine.get_engine_for_session()
-                                        logger.info(f"[{task_id}] 分配会话引擎 {session_engine_index} ({asr_engine._devices[session_engine_index]})")
+                                        logger.info(f"[{task_id}] 分配会话引擎 {session_engine_index}")
                                     else:
                                         session_engine = asr_engine
 
@@ -556,10 +562,10 @@ class AliyunWebSocketASRService:
             # 关闭 HTTP 子服务的内部 WS session(若有)
             self._close_http_session_in_cache(audio_cache)
 
-            # 释放会话级引擎（多GPU负载均衡）
+            # 释放会话级引擎(若引擎支持)
             if session_engine_index is not None:
                 asr_engine = self._ensure_asr_engine()
-                if isinstance(asr_engine, MultiGPUASREngine):
+                if _has_session_engine_pool(asr_engine):
                     asr_engine.release_session_engine(session_engine_index)
                     logger.debug(f"[{task_id}] 释放会话引擎 {session_engine_index}")
 
@@ -724,38 +730,13 @@ class AliyunWebSocketASRService:
                 result_text_raw = result[0].get("text", "").strip()
                 result_text_with_punc = result_text_raw
 
-                # 如果启用实时标点且用户要求标点，则应用实时标点恢复（仅用于中间结果展示）
+                # 实时标点: HTTP 引擎返回 _text_punc(子服务侧已应用 settings.ASR_ENABLE_REALTIME_PUNC)
+                punc_from_http = (result[0].get("_text_punc") or "").strip()
                 if (
-                    result_text_raw
-                    and settings.ASR_ENABLE_REALTIME_PUNC
+                    punc_from_http
                     and params.get("enable_punctuation_prediction", True)
                 ):
-                    try:
-                        from .asr.engine import get_global_punc_realtime_model
-
-                        # 使用全局实时PUNC模型
-                        punc_realtime_model = get_global_punc_realtime_model(
-                            asr_engine.device
-                        )
-                        if punc_realtime_model:
-                            # 使用线程池执行标点模型推理
-                            punc_result = await run_sync(
-                                punc_realtime_model.generate,
-                                input=result_text_raw,
-                                cache=punc_cache,
-                            )
-                            if punc_result and len(punc_result) > 0:
-                                result_text_with_punc = (
-                                    punc_result[0].get("text", result_text_raw).strip()
-                                )
-                    except Exception as e:
-                        logger.warning(f"[{task_id}] 实时标点恢复失败: {e}")
-
-                # 注释掉句末标点符号触发句子结束的逻辑，避免与静音帧检测冲突
-                # if result_text_with_punc and self._is_sentence_boundary(
-                #     result_text_with_punc
-                # ):
-                #     is_sentence_end = True
+                    result_text_with_punc = punc_from_http
 
             if result_text_with_punc:
                 logger.debug(f"[{task_id}] 识别: '{result_text_with_punc}'")
@@ -776,51 +757,30 @@ class AliyunWebSocketASRService:
     async def _apply_final_punctuation_to_sentence(
         self, text: str, task_id: str, session_engine=None
     ) -> str:
-        """对完整句子应用最终标点恢复（使用离线标点模型添加完整标点包括句末标点）"""
+        """对完整句子应用离线标点恢复
+
+        全部走子服务: FunASRHttpEngine.punc_offline 调子服务 /asr/punc;
+        Qwen3AsrVllmHttpEngine 模型自带标点直接返回;其余引擎退化为原文。
+        """
         if not text:
             return text
 
         try:
-            from .asr.engine import get_global_punc_model
             from .asr.http_engine import FunASRHttpEngine, Qwen3AsrVllmHttpEngine
 
-            # 使用会话级引擎（如果提供），否则使用全局引擎
-            if session_engine is not None:
-                asr_engine = session_engine
-            else:
-                asr_engine = self._ensure_asr_engine()
+            asr_engine = session_engine or self._ensure_asr_engine()
 
-            # qwen3-asr 模型自带标点, 直接返回
             if isinstance(asr_engine, Qwen3AsrVllmHttpEngine):
                 return text
 
-            # HTTP 客户端引擎: 调子服务 /asr/punc
             if isinstance(asr_engine, FunASRHttpEngine):
                 logger.debug(f"[{task_id}] 通过 HTTP 子服务应用标点: '{text}'")
-                punctuated_text = await run_sync(asr_engine.punc_offline, text)
-                logger.debug(f"[{task_id}] 标点恢复结果: '{punctuated_text}'")
-                return punctuated_text or text
+                return await run_sync(asr_engine.punc_offline, text) or text
 
-            # 使用全局PUNC模型
-            punc_model = get_global_punc_model(asr_engine.device)
-
-            if punc_model is None:
-                logger.info(f"[{task_id}] 标点模型未加载，返回原文本")
-                return text
-
-            logger.debug(f"[{task_id}] 应用标点恢复: '{text}'")
-            # 使用线程池执行标点模型推理
-            result = await run_sync(punc_model.generate, input=text)
-
-            if result and len(result) > 0:
-                punctuated_text = result[0].get("text", text).strip()
-                logger.debug(f"[{task_id}] 标点恢复结果: '{punctuated_text}'")
-                return punctuated_text
-            else:
-                return text
-
-        except Exception as e:
-            logger.warning(f"[{task_id}] 标点恢复失败: {e}")
+            logger.debug(f"[{task_id}] 当前引擎类型不支持离线 PUNC,返回原文")
+            return text
+        except Exception as exc:
+            logger.warning(f"[{task_id}] 标点恢复失败: {exc}")
             return text
 
     def _is_sentence_boundary(self, text: str) -> bool:

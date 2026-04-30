@@ -403,7 +403,8 @@ def make_funasr_http_engine() -> FunASRHttpEngine:
     urls = _split_urls(settings.FUNASR_SERVICE_URLS)
     if not urls:
         raise DefaultServerErrorException(
-            "USE_FUNASR_SERVICE 已启用,但未配置 FUNASR_SERVICE_URLS"
+            "FUNASR_SERVICE_URLS 未配置 — 网关需要通过 services/funasr 子服务"
+            "才能使用 funasr 引擎"
         )
     return FunASRHttpEngine(
         urls=urls,
@@ -528,7 +529,8 @@ def make_dolphin_http_engine() -> DolphinHttpEngine:
     urls = _split_urls(settings.DOLPHIN_SERVICE_URLS)
     if not urls:
         raise DefaultServerErrorException(
-            "USE_DOLPHIN_SERVICE 已启用,但未配置 DOLPHIN_SERVICE_URLS"
+            "DOLPHIN_SERVICE_URLS 未配置 — 网关需要通过 services/dolphin 子服务"
+            "才能使用 dolphin 引擎"
         )
     return DolphinHttpEngine(
         urls=urls,
@@ -727,7 +729,8 @@ def make_qwen3_asr_http_engine() -> Qwen3AsrVllmHttpEngine:
     urls = _split_urls(settings.QWEN3_ASR_SERVICE_URLS)
     if not urls:
         raise DefaultServerErrorException(
-            "USE_QWEN3_ASR_SERVICE 已启用,但未配置 QWEN3_ASR_SERVICE_URLS"
+            "QWEN3_ASR_SERVICE_URLS 未配置 — 网关需要通过 "
+            "services/qwen3_asr_vllm 子服务才能使用 qwen3-asr 引擎"
         )
     return Qwen3AsrVllmHttpEngine(
         urls=urls,

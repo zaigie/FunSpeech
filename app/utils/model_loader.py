@@ -1,390 +1,122 @@
 # -*- coding: utf-8 -*-
-"""
-模型预加载工具
-在应用启动时预加载所有需要的模型,避免首次请求时的延迟
+"""模型 / 子服务可达性预检
+
+进程内模型预加载(VAD / PUNC / SFT / Clone)已迁到 services/* 子服务的
+lifespan 中,网关只需校验 HTTP 客户端能与子服务握手即可。
 """
 
+from __future__ import annotations
+
 import logging
+from typing import Any, Dict
 
 logger = logging.getLogger(__name__)
 
 
-def _get_default_asr_device() -> str:
-    """获取默认ASR设备"""
-    from ..services.asr.engine import parse_gpu_config
+def _check_engine(engine_name: str, engine) -> Dict[str, Any]:
+    record: Dict[str, Any] = {"loaded": False, "error": None, "device": ""}
+    try:
+        record["device"] = getattr(engine, "device", "")
+        record["loaded"] = bool(engine.is_model_loaded())
+        if not record["loaded"]:
+            record["error"] = "is_model_loaded() == False"
+            logger.warning("⚠️  %s 子服务未就绪: %s", engine_name, record["device"])
+        else:
+            logger.info("✅ %s 子服务就绪: %s", engine_name, record["device"])
+    except Exception as exc:
+        record["error"] = str(exc)
+        logger.error("❌ %s 子服务连接失败: %s", engine_name, exc)
+    return record
+
+
+def preload_models() -> Dict[str, Any]:
+    """预热 — 校验默认 ASR / TTS 子服务可达,但不阻塞启动失败的网关。"""
     from ..core.config import settings
-    _, device = parse_gpu_config(settings.ASR_GPUS)
-    return device
+    from ..services.asr.manager import get_model_manager
+    from ..services.tts.engine import get_tts_engine
+
+    result: Dict[str, Any] = {
+        "asr_default_model": {"loaded": False, "model_id": None, "error": None},
+        "asr_custom_models": {},
+        "tts_engine": {"loaded": False, "error": None},
+    }
+
+    # ASR 默认模型(根据 models.json 中的 default 字段)
+    try:
+        manager = get_model_manager()
+        config = manager.get_model_config()
+        engine = manager.get_asr_engine()
+        result["asr_default_model"] = {
+            "loaded": engine.is_model_loaded(),
+            "model_id": config.model_id,
+            "error": None,
+        }
+        if result["asr_default_model"]["loaded"]:
+            logger.info("✅ 默认 ASR(%s) 子服务就绪 [%s]", config.model_id, engine.device)
+        else:
+            logger.warning("⚠️  默认 ASR(%s) 子服务尚不可达", config.model_id)
+    except Exception as exc:
+        result["asr_default_model"]["error"] = str(exc)
+        logger.error("❌ 默认 ASR 子服务校验失败: %s", exc)
+
+    # 自定义 ASR(env: AUTO_LOAD_CUSTOM_ASR_MODELS=funasr-xxx,dolphin-xxx)
+    auto_models_str = (settings.AUTO_LOAD_CUSTOM_ASR_MODELS or "").strip()
+    if auto_models_str:
+        for model_id in [m.strip() for m in auto_models_str.split(",") if m.strip()]:
+            try:
+                manager = get_model_manager()
+                engine = manager.get_asr_engine(model_id)
+                ok = engine.is_model_loaded()
+                result["asr_custom_models"][model_id] = {
+                    "loaded": ok,
+                    "error": None if ok else "is_model_loaded() == False",
+                }
+                if ok:
+                    logger.info("✅ 自定义 ASR(%s) 就绪", model_id)
+                else:
+                    logger.warning("⚠️  自定义 ASR(%s) 尚不可达", model_id)
+            except Exception as exc:
+                result["asr_custom_models"][model_id] = {
+                    "loaded": False,
+                    "error": str(exc),
+                }
+                logger.error("❌ 自定义 ASR(%s) 校验失败: %s", model_id, exc)
+
+    # TTS
+    try:
+        tts_engine = get_tts_engine()
+        result["tts_engine"] = _check_engine("TTS", tts_engine)
+    except Exception as exc:
+        result["tts_engine"]["error"] = str(exc)
+        logger.error("❌ TTS 子服务校验失败: %s", exc)
+
+    return result
 
 
-def _get_all_asr_devices() -> list:
-    """获取所有配置的ASR设备列表"""
-    from ..services.asr.engine import parse_gpu_config
-    from ..core.config import settings
-    devices, _ = parse_gpu_config(settings.ASR_GPUS)
-    return devices
-
-
-def print_model_statistics(result: dict, use_logger: bool = True):
-    """
-    打印模型加载统计信息
-
-    Args:
-        result: preload_models() 返回的结果字典
-        use_logger: True使用logger输出（记录到日志），False使用print输出（显示到控制台）
-    """
+def print_model_statistics(result: Dict[str, Any], use_logger: bool = True) -> None:
+    """打印预热结果统计"""
     output = logger.info if use_logger else print
 
     output("=" * 60)
-    output("📊 模型加载统计：")
+    output("📊 子服务连接统计:")
     output("-" * 60)
 
-    loaded_models = []
-    failed_models = []
-    skipped_models = []
-
-    # 统计默认ASR模型
     if result["asr_default_model"]["loaded"]:
-        model_id = result["asr_default_model"]["model_id"]
-        loaded_models.append(f"默认ASR模型({model_id})")
-        output(f"   ✅ 默认ASR模型({model_id}): 已加载")
-    elif result["asr_default_model"]["error"] is not None:
-        failed_models.append("默认ASR模型")
-        if use_logger:
-            logger.error(f"   ❌ 默认ASR模型: {result['asr_default_model']['error']}")
-        else:
-            output(f"   ❌ 默认ASR模型: {result['asr_default_model']['error']}")
-
-    # 统计自定义ASR模型
-    for model_id, status in result["asr_custom_models"].items():
-        if status["loaded"]:
-            loaded_models.append(f"自定义ASR模型({model_id})")
-            output(f"   ✅ 自定义ASR模型({model_id}): 已加载")
-        elif status["error"] is not None:
-            failed_models.append(f"自定义ASR模型({model_id})")
-            if use_logger:
-                logger.error(f"   ❌ 自定义ASR模型({model_id}): {status['error']}")
-            else:
-                output(f"   ❌ 自定义ASR模型({model_id}): {status['error']}")
-
-    # 统计TTS SFT模型
-    if result["tts_sft_model"]["loaded"]:
-        loaded_models.append("TTS SFT模型(CosyVoice1)")
-        output(f"   ✅ TTS SFT模型(CosyVoice1): 已加载")
-    elif result["tts_sft_model"]["error"] is not None:
-        failed_models.append("TTS SFT模型(CosyVoice1)")
-        if use_logger:
-            logger.error(f"   ❌ TTS SFT模型(CosyVoice1): {result['tts_sft_model']['error']}")
-        else:
-            output(f"   ❌ TTS SFT模型(CosyVoice1): {result['tts_sft_model']['error']}")
-    else:
-        skipped_models.append("TTS SFT模型(CosyVoice1)")
-        output(f"   ⏭️  TTS SFT模型(CosyVoice1): 已跳过")
-
-    # 统计TTS零样本克隆模型
-    if result["tts_clone_model"]["loaded"]:
-        loaded_models.append("TTS零样本克隆模型(CosyVoice2)")
-        output(f"   ✅ TTS零样本克隆模型(CosyVoice2): 已加载")
-    elif result["tts_clone_model"]["error"] is not None:
-        failed_models.append("TTS零样本克隆模型(CosyVoice2)")
-        if use_logger:
-            logger.error(
-                f"   ❌ TTS零样本克隆模型(CosyVoice2): {result['tts_clone_model']['error']}"
-            )
-        else:
-            output(
-                f"   ❌ TTS零样本克隆模型(CosyVoice2): {result['tts_clone_model']['error']}"
-            )
-    else:
-        skipped_models.append("TTS零样本克隆模型(CosyVoice2)")
-        output(f"   ⏭️  TTS零样本克隆模型(CosyVoice2): 已跳过")
-
-    # 统计其他模型
-    other_models = {
-        "vad_model": "VAD模型",
-        "punc_model": "标点符号模型(离线)",
-        "punc_realtime_model": "标点符号模型(实时)",
-    }
-
-    for key, name in other_models.items():
-        if result[key]["loaded"]:
-            loaded_models.append(name)
-            output(f"   ✅ {name}: 已加载")
-        elif result[key]["error"] is not None:
-            failed_models.append(name)
-            if use_logger:
-                logger.error(f"   ❌ {name}: {result[key]['error']}")
-            else:
-                output(f"   ❌ {name}: {result[key]['error']}")
-        else:
-            skipped_models.append(name)
-            output(f"   ⏭️  {name}: 已跳过")
-
-    output("-" * 60)
-    loaded_count = len(loaded_models)
-    total_count = loaded_count + len(failed_models)
-
-    if loaded_count == total_count and total_count > 0:
         output(
-            f"🎉 所有模型加载完成! (成功: {loaded_count}, 跳过: {len(skipped_models)})"
+            "   ✅ 默认 ASR(%s)" % result["asr_default_model"]["model_id"]
         )
-    elif total_count > 0:
-        if use_logger:
-            logger.warning(
-                f"⚠️  部分模型加载失败 (成功: {loaded_count}/{total_count}, 失败: {len(failed_models)}, 跳过: {len(skipped_models)})"
-            )
-        else:
-            output(
-                f"⚠️  部分模型加载失败 (成功: {loaded_count}/{total_count}, 失败: {len(failed_models)}, 跳过: {len(skipped_models)})"
-            )
-    else:
-        if use_logger:
-            logger.warning("⚠️  没有模型被加载")
-        else:
-            output("⚠️  没有模型被加载")
+    elif result["asr_default_model"]["error"]:
+        output("   ❌ 默认 ASR: %s" % result["asr_default_model"]["error"])
+
+    for mid, status in result["asr_custom_models"].items():
+        if status["loaded"]:
+            output(f"   ✅ 自定义 ASR({mid})")
+        elif status["error"]:
+            output(f"   ❌ 自定义 ASR({mid}): {status['error']}")
+
+    if result["tts_engine"]["loaded"]:
+        output("   ✅ TTS")
+    elif result["tts_engine"]["error"]:
+        output("   ❌ TTS: %s" % result["tts_engine"]["error"])
 
     output("=" * 60)
-
-
-def preload_models() -> dict:
-    """
-    预加载所有需要的模型
-
-    Returns:
-        dict: 包含加载状态的字典
-    """
-    result = {
-        "asr_default_model": {"loaded": False, "error": None, "model_id": None},
-        "asr_custom_models": {},  # 动态添加自定义ASR模型
-        "tts_sft_model": {"loaded": False, "error": None},
-        "tts_clone_model": {"loaded": False, "error": None},
-        "vad_model": {"loaded": False, "error": None},
-        "punc_model": {"loaded": False, "error": None},
-        "punc_realtime_model": {"loaded": False, "error": None},
-    }
-
-    from ..core.config import settings
-
-    logger.info("=" * 60)
-    logger.info("🔄 开始预加载模型...")
-    logger.info("=" * 60)
-
-    # 1. 预加载默认ASR模型
-    try:
-        logger.info("📥 正在加载默认ASR模型...")
-        from ..services.asr.manager import get_model_manager
-
-        model_manager = get_model_manager()
-        asr_engine = model_manager.get_asr_engine()  # 加载默认模型
-
-        if asr_engine.is_model_loaded():
-            default_model_id = model_manager._default_model_id
-            result["asr_default_model"]["loaded"] = True
-            result["asr_default_model"]["model_id"] = default_model_id
-            logger.info(f"✅ 默认ASR模型加载成功: {default_model_id}")
-
-            # 根据ASR_MODEL_MODE显示加载的模型类型
-            mode = settings.ASR_MODEL_MODE.lower()
-            if mode == "all":
-                logger.info(
-                    f"   - 离线模型: {'✓' if hasattr(asr_engine, 'offline_model') and asr_engine.offline_model else '✗'}"
-                )
-                logger.info(
-                    f"   - 实时模型: {'✓' if hasattr(asr_engine, 'realtime_model') and asr_engine.realtime_model else '✗'}"
-                )
-            elif mode == "offline":
-                logger.info(f"   - 离线模型: ✓")
-            elif mode == "realtime":
-                logger.info(f"   - 实时模型: ✓")
-        else:
-            result["asr_default_model"]["error"] = "ASR模型加载后未正确初始化"
-            logger.warning("⚠️  默认ASR模型加载后未正确初始化")
-
-    except Exception as e:
-        result["asr_default_model"]["error"] = str(e)
-        logger.error(f"❌ 默认ASR模型加载失败: {e}")
-
-    # 2. 预加载自定义ASR模型（如果配置了AUTO_LOAD_CUSTOM_ASR_MODELS）
-    if settings.AUTO_LOAD_CUSTOM_ASR_MODELS:
-        custom_model_ids = [
-            m.strip()
-            for m in settings.AUTO_LOAD_CUSTOM_ASR_MODELS.split(",")
-            if m.strip()
-        ]
-
-        logger.info(
-            f"📥 配置了自定义ASR模型加载: {', '.join(custom_model_ids)}"
-        )
-
-        for model_id in custom_model_ids:
-            result["asr_custom_models"][model_id] = {"loaded": False, "error": None}
-
-            try:
-                logger.info(f"📥 正在加载自定义ASR模型: {model_id}...")
-                from ..services.asr.manager import get_model_manager
-
-                model_manager = get_model_manager()
-
-                # 检查模型是否在配置中
-                try:
-                    model_config = model_manager.get_model_config(model_id)
-                except Exception as config_error:
-                    result["asr_custom_models"][model_id]["error"] = (
-                        f"模型配置不存在: {config_error}"
-                    )
-                    logger.error(f"❌ 自定义ASR模型 {model_id} 配置不存在: {config_error}")
-                    continue
-
-                # 加载模型
-                custom_engine = model_manager.get_asr_engine(model_id)
-
-                if custom_engine.is_model_loaded():
-                    result["asr_custom_models"][model_id]["loaded"] = True
-                    logger.info(f"✅ 自定义ASR模型加载成功: {model_id}")
-                    logger.info(f"   - 引擎: {model_config.engine}")
-                    logger.info(f"   - 支持实时: {model_config.supports_realtime}")
-                else:
-                    result["asr_custom_models"][model_id]["error"] = "模型加载后未正确初始化"
-                    logger.warning(f"⚠️  自定义ASR模型 {model_id} 加载后未正确初始化")
-
-            except Exception as e:
-                result["asr_custom_models"][model_id]["error"] = str(e)
-                logger.error(f"❌ 自定义ASR模型 {model_id} 加载失败: {e}")
-    else:
-        logger.info("⏭️  未配置自定义ASR模型加载 (AUTO_LOAD_CUSTOM_ASR_MODELS为空)")
-
-    # 3. 预加载VAD模型 (如果ASR模式包含离线模型)
-    if settings.ASR_MODEL_MODE.lower() in ["all", "offline"]:
-        try:
-            logger.info("📥 正在加载VAD模型...")
-            from ..services.asr.engine import get_global_vad_model
-
-            # VAD模型按设备加载，支持多GPU
-            devices = _get_all_asr_devices()
-            loaded_devices = []
-            for device in devices:
-                vad_model = get_global_vad_model(device)
-                if vad_model:
-                    loaded_devices.append(device)
-
-            if loaded_devices:
-                result["vad_model"]["loaded"] = True
-                logger.info(f"✅ VAD模型加载成功 (设备: {', '.join(loaded_devices)})")
-            else:
-                result["vad_model"]["error"] = "VAD模型加载后返回None"
-                logger.warning("⚠️  VAD模型加载后返回None")
-
-        except Exception as e:
-            result["vad_model"]["error"] = str(e)
-            logger.error(f"❌ VAD模型加载失败: {e}")
-    else:
-        logger.info("⏭️  跳过VAD模型加载 (ASR_MODEL_MODE=realtime)")
-
-    # 4. 预加载标点符号模型 (离线版)
-    try:
-        logger.info("📥 正在加载标点符号模型(离线)...")
-        from ..services.asr.engine import get_global_punc_model
-
-        # 标点模型按设备加载，支持多GPU
-        devices = _get_all_asr_devices()
-        loaded_devices = []
-        for device in devices:
-            punc_model = get_global_punc_model(device)
-            if punc_model:
-                loaded_devices.append(device)
-
-        if loaded_devices:
-            result["punc_model"]["loaded"] = True
-            logger.info(f"✅ 标点符号模型(离线)加载成功 (设备: {', '.join(loaded_devices)})")
-        else:
-            result["punc_model"]["error"] = "标点符号模型加载后返回None"
-            logger.warning("⚠️  标点符号模型(离线)加载后返回None")
-
-    except Exception as e:
-        result["punc_model"]["error"] = str(e)
-        logger.error(f"❌ 标点符号模型(离线)加载失败: {e}")
-
-    # 5. 预加载实时标点符号模型 (如果启用)
-    if settings.ASR_ENABLE_REALTIME_PUNC:
-        try:
-            logger.info("📥 正在加载实时标点符号模型...")
-            from ..services.asr.engine import get_global_punc_realtime_model
-
-            # 实时标点模型按设备加载，支持多GPU
-            devices = _get_all_asr_devices()
-            loaded_devices = []
-            for device in devices:
-                punc_realtime_model = get_global_punc_realtime_model(device)
-                if punc_realtime_model:
-                    loaded_devices.append(device)
-
-            if loaded_devices:
-                result["punc_realtime_model"]["loaded"] = True
-                logger.info(f"✅ 实时标点符号模型加载成功 (设备: {', '.join(loaded_devices)})")
-            else:
-                result["punc_realtime_model"]["error"] = "实时标点符号模型加载后返回None"
-                logger.warning("⚠️  实时标点符号模型加载后返回None")
-
-        except Exception as e:
-            result["punc_realtime_model"]["error"] = str(e)
-            logger.error(f"❌ 实时标点符号模型加载失败: {e}")
-    else:
-        logger.info("⏭️  跳过实时标点符号模型加载 (ASR_ENABLE_REALTIME_PUNC=False)")
-
-    # 6. 预加载TTS模型
-    tts_mode = settings.TTS_MODEL_MODE.lower()
-
-    # 6.1 加载SFT模型 (CosyVoice1)
-    if tts_mode in ["all", "sft"]:
-        try:
-            logger.info("📥 正在加载TTS SFT模型(CosyVoice1)...")
-            from ..services.tts.engine import get_tts_engine
-
-            tts_engine = get_tts_engine()
-
-            if tts_engine.is_sft_model_loaded():
-                result["tts_sft_model"]["loaded"] = True
-                logger.info("✅ TTS SFT模型(CosyVoice1)加载成功")
-                logger.info(f"   - 模型ID: {settings.SFT_MODEL_ID}")
-            else:
-                result["tts_sft_model"]["error"] = "SFT模型未加载"
-                logger.warning("⚠️  TTS SFT模型(CosyVoice1)未加载")
-
-        except Exception as e:
-            result["tts_sft_model"]["error"] = str(e)
-            logger.error(f"❌ TTS SFT模型(CosyVoice1)加载失败: {e}")
-    else:
-        logger.info("⏭️  跳过TTS SFT模型加载 (TTS_MODEL_MODE=clone)")
-
-    # 6.2 加载零样本克隆模型 (CosyVoice2/3)
-    if tts_mode in ["all", "clone"]:
-        try:
-            clone_version = settings.CLONE_MODEL_VERSION
-            logger.info(f"📥 正在加载TTS零样本克隆模型({clone_version})...")
-            from ..services.tts.engine import get_tts_engine
-
-            tts_engine = get_tts_engine()
-
-            if tts_engine.is_clone_model_loaded():
-                result["tts_clone_model"]["loaded"] = True
-                logger.info(f"✅ TTS零样本克隆模型({clone_version})加载成功")
-                model_id = settings.COSYVOICE3_MODEL_ID if clone_version == "cosyvoice3" else settings.CLONE_MODEL_ID
-                logger.info(f"   - 模型ID: {model_id}")
-
-                # 显示可用音色数量
-                voices = tts_engine.get_voices()
-                logger.info(f"   - 可用音色: {len(voices)} 个")
-            else:
-                result["tts_clone_model"]["error"] = "零样本克隆模型未加载"
-                logger.warning(f"⚠️  TTS零样本克隆模型({clone_version})未加载")
-
-        except Exception as e:
-            result["tts_clone_model"]["error"] = str(e)
-            logger.error(f"❌ TTS零样本克隆模型加载失败: {e}")
-    else:
-        logger.info("⏭️  跳过TTS零样本克隆模型加载 (TTS_MODEL_MODE=sft)")
-
-    # 打印统计结果到日志
-    print_model_statistics(result, use_logger=True)
-
-    return result
