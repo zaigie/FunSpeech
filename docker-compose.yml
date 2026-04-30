@@ -1,83 +1,197 @@
+# FunSpeech 微服务编排
+#
+# 服务拓扑:
+#   gateway       (CPU)  -> 8000 -> 对外 HTTP/WS API (Aliyun + OpenAI 兼容)
+#   funasr-0      (GPU)  -> 8001 -> Paraformer / SenseVoice + VAD/PUNC
+#   dolphin-0     (GPU)  -> 8002 -> Dolphin 离线
+#   qwen3-asr-0   (GPU)  -> 8003 -> Qwen3-ASR (vLLM 内嵌加速)
+#   cosyvoice-0   (GPU)  -> 8004 -> CosyVoice2/3 + 音色管理
+#
+# 启动 (本地有 http://127.0.0.1:7890 代理时):
+#   HTTP_PROXY=http://host.docker.internal:7890 \
+#   HTTPS_PROXY=http://host.docker.internal:7890 \
+#   docker compose build --build-arg HTTP_PROXY --build-arg HTTPS_PROXY
+#   docker compose up -d
+#
+# 单独跑 ASR (不要 cosyvoice):
+#   docker compose up -d gateway funasr-0
+#
+# 多副本 (多 GPU):
+#   docker compose up -d --scale funasr-0=2  ... (需先把 gpu device_ids 改成 deploy.resources)
+
+x-gateway-env: &gateway-env
+  # 网关到子服务的 URL — 在 docker network 内通过 service name 互访
+  FUNASR_SERVICE_URLS: http://funasr-0:8001
+  DOLPHIN_SERVICE_URLS: http://dolphin-0:8002
+  QWEN3_ASR_SERVICE_URLS: http://qwen3-asr-0:8003
+  COSYVOICE_SERVICE_URLS: http://cosyvoice-0:8004
+  INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-funspeech-internal}
+  SERVICE_REQUEST_TIMEOUT: "120"
+
+x-subservice-env: &subservice-env
+  INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-funspeech-internal}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+x-build-args: &build-args
+  HTTP_PROXY: ${HTTP_PROXY:-}
+  HTTPS_PROXY: ${HTTPS_PROXY:-}
+  NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,*.local}
+
+x-modelscope-cache: &modelscope-cache
+  type: bind
+  source: ${MODELSCOPE_CACHE:-~/.cache/modelscope}
+  target: /root/.cache/modelscope
+
+x-gpu-deploy: &gpu-deploy
+  deploy:
+    resources:
+      reservations:
+        devices:
+          - driver: nvidia
+            count: 1
+            capabilities: [gpu]
+
+
 services:
-  funspeech:
-    image: docker.cnb.cool/nexa/funspeech:latest
-    container_name: funspeech
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args: *build-args
+    image: funspeech/gateway:latest
+    container_name: funspeech-gateway
     ports:
-      - "8000:8000"
-    volumes:
-      # 模型缓存目录（ModelScope默认缓存路径）
-      - ~/.cache/modelscope:/root/.cache/modelscope
-      # 临时文件目录（ASR和TTS共用）
-      - ./temp:/app/temp
-      # 数据持久化目录（数据库等）
-      - ./data:/app/data
-      # 日志目录
-      - ./logs:/app/logs
-      # 零样本音色文件目录（用户数据）
-      - ./voices:/app/voices
+      - "${GATEWAY_PORT:-8000}:8000"
     environment:
-      # 服务器配置
-      - DEBUG=false
-      - LOG_LEVEL=INFO
-
-      # GPU配置（统一格式）
-      # 支持: "" (自动检测), "cpu" (使用CPU), "0" (单卡), "0,1,2" (多卡负载均衡)
-      # - TTS_GPUS=0          # TTS使用的GPU（默认自动检测）
-      # - ASR_GPUS=0          # ASR使用的GPU（默认自动检测）
-
-      # ASR 模型按需加载配置（可选，默认为 all）
-      # - ASR_MODEL_MODE=all          # 加载默认模型的离线和实时版本（默认）
-      # - ASR_MODEL_MODE=offline      # 仅加载离线模型
-      # - ASR_MODEL_MODE=realtime     # 仅加载实时流式模型
-
-      # ASR 自定义模型预加载（可选，默认为空）
-      # 配置后在启动时自动加载指定的自定义模型，避免首次调用时的等待
-      # 可用模型: sensevoice-small, dolphin-small
-      # - AUTO_LOAD_CUSTOM_ASR_MODELS=sensevoice-small              # 单个模型
-      # - AUTO_LOAD_CUSTOM_ASR_MODELS=sensevoice-small,dolphin-small  # 多个模型（逗号分隔）
-
-      # ASR 实时标点符号模型（可选，默认为 false）
-      # - ASR_ENABLE_REALTIME_PUNC=true  # 启用实时标点符号模型（用于流式识别中间结果）
-
-      # 流式ASR远场声音过滤配置（可选，默认已启用）
-      # 自动过滤远场声音和环境音，减少误触发，详见 docs/nearfield_filter.md
-      # - ASR_ENABLE_NEARFIELD_FILTER=true              # 总开关（默认启用）
-      # - ASR_NEARFIELD_RMS_THRESHOLD=0.01              # RMS能量阈值（默认宽松模式）
-      # - ASR_NEARFIELD_FILTER_LOG_ENABLED=true         # 调试日志（默认启用，调优后可关闭）
-
-      # TTS 模型按需加载配置（可选，默认为 all）
-      # - TTS_MODEL_MODE=all          # 加载所有模型（默认）
-      # - TTS_MODEL_MODE=sft          # 仅加载SFT模型，用于预设音色
-      # - TTS_MODEL_MODE=clone        # 仅加载零样本克隆模型，用于音色克隆
-
-      # 克隆模型版本选择（可选，默认为 cosyvoice3）
-      # - CLONE_MODEL_VERSION=cosyvoice3   # 使用 Fun-CosyVoice3-0.5B-2512（默认）
-      # - CLONE_MODEL_VERSION=cosyvoice2   # 使用 CosyVoice2-0.5B
-      # - COSYVOICE3_MODEL_ID=FunAudioLLM/Fun-CosyVoice3-0.5B-2512  # CosyVoice3 模型 ID（可选）
-
-      # TTS 推理加速配置（可选，默认都为 false）
-      # - TTS_LOAD_TRT=false      # 是否启用 TensorRT 加速
-      # - TTS_ENABLE_FP16=false   # 是否启用 FP16 推理（CosyVoice3 的 FP16 存在数值溢出问题，建议保持 false）
-
-      # 推理线程池配置（可选，默认为 max(4, CPU核心数)）
-      # 用于实现多路并发推理，每个请求的模型推理在独���线程中执行
-      # - INFERENCE_THREAD_POOL_SIZE=8
-
-      # Worker 进程数配置（可选，默认为 1）
-      # 多 Worker 可实现真正的并行计算，但每个 Worker 都会加载独立的模型副本
-      # 注意：会成倍增加内存/显存占用，请确保资源充足
-      # - WORKERS=2
-
-      # 鉴权配置（可选，不设置则鉴权为可选）
-      # - APPTOKEN=your_secret_token
-      # - APPKEY=your_app_key
+      <<: *gateway-env
+      DEBUG: "false"
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      WORKERS: "1"
+      ASR_MODEL_MODE: ${ASR_MODEL_MODE:-all}
+      TTS_MODEL_MODE: ${TTS_MODEL_MODE:-all}
+      ASR_ENABLE_REALTIME_PUNC: ${ASR_ENABLE_REALTIME_PUNC:-false}
+      AUTO_LOAD_CUSTOM_ASR_MODELS: ${AUTO_LOAD_CUSTOM_ASR_MODELS:-}
+      APPTOKEN: ${APPTOKEN:-}
+      APPKEY: ${APPKEY:-}
+    volumes:
+      - ./temp:/app/temp
+      - ./data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      # funasr 和 cosyvoice 是默认服务,但用 service_started 而非 service_healthy:
+      # 即便子服务还没装好模型,网关也允许启动并对外报 503,避免一处出问题全栈不可用。
+      # 想要严格依赖时改为 service_healthy。
+      funasr-0:
+        condition: service_started
+      cosyvoice-0:
+        condition: service_started
     restart: unless-stopped
-    
-    # GPU支持（如果需要，取消注释以下配置并将image替换为docker.cnb.cool/nexa/funspeech:gpu-latest）
-    # deploy:
-    #   resources:
-    #     reservations:
-    #       devices:
-    #         - driver: nvidia
-    #           count: all
-    #           capabilities: [gpu]
+
+  funasr-0:
+    build:
+      context: ./services/funasr
+      dockerfile: Dockerfile
+      args: *build-args
+    image: funspeech/funasr:latest
+    container_name: funspeech-funasr-0
+    environment:
+      <<: *subservice-env
+      PORT: "8001"
+      ASR_MODEL_MODE: ${ASR_MODEL_MODE:-all}
+      ASR_DEVICE: cuda:0
+      CUDA_VISIBLE_DEVICES: "0"
+    volumes:
+      - *modelscope-cache
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8001/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 180s
+    <<: *gpu-deploy
+    restart: unless-stopped
+
+  dolphin-0:
+    build:
+      context: ./services/dolphin
+      dockerfile: Dockerfile
+      args: *build-args
+    image: funspeech/dolphin:latest
+    container_name: funspeech-dolphin-0
+    environment:
+      <<: *subservice-env
+      PORT: "8002"
+      DOLPHIN_DEVICE: cuda
+      CUDA_VISIBLE_DEVICES: "0"
+    volumes:
+      - *modelscope-cache
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8002/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 180s
+    <<: *gpu-deploy
+    restart: unless-stopped
+    profiles: ["dolphin"]  # 默认不启动, 通过 --profile dolphin 启用
+
+  qwen3-asr-0:
+    build:
+      context: ./services/qwen3_asr_vllm
+      dockerfile: Dockerfile
+      args: *build-args
+    image: funspeech/qwen3-asr:latest
+    container_name: funspeech-qwen3-asr-0
+    environment:
+      <<: *subservice-env
+      PORT: "8003"
+      QWEN3_ASR_MODEL_ID: ${QWEN3_ASR_MODEL_ID:-Qwen/Qwen3-ASR-1.7B}
+      QWEN3_ASR_GPU_MEM: ${QWEN3_ASR_GPU_MEM:-0.8}
+      CUDA_VISIBLE_DEVICES: "0"
+    volumes:
+      - *modelscope-cache
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8003/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 300s  # vLLM 加载较慢
+    <<: *gpu-deploy
+    restart: unless-stopped
+    profiles: ["qwen3-asr"]
+
+  cosyvoice-0:
+    build:
+      context: ./services/cosyvoice
+      dockerfile: Dockerfile
+      args: *build-args
+    image: funspeech/cosyvoice:latest
+    container_name: funspeech-cosyvoice-0
+    environment:
+      <<: *subservice-env
+      PORT: "8004"
+      TTS_MODEL_MODE: ${TTS_MODEL_MODE:-all}
+      TTS_DEVICE: cuda:0
+      CLONE_MODEL_VERSION: ${CLONE_MODEL_VERSION:-cosyvoice3}
+      COSYVOICE3_MODEL_ID: ${COSYVOICE3_MODEL_ID:-FunAudioLLM/Fun-CosyVoice3-0.5B-2512}
+      TTS_LOAD_TRT: ${TTS_LOAD_TRT:-false}
+      TTS_ENABLE_FP16: ${TTS_ENABLE_FP16:-false}
+      TTS_LOAD_VLLM: ${TTS_LOAD_VLLM:-false}
+      VOICES_DIR: /app/voices
+      CUDA_VISIBLE_DEVICES: "0"
+    volumes:
+      - *modelscope-cache
+      - ./voices:/app/voices
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8004/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 300s
+    <<: *gpu-deploy
+    restart: unless-stopped
+
+
+networks:
+  default:
+    name: funspeech-net

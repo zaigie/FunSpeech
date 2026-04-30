@@ -1,5 +1,16 @@
 FROM pytorch/pytorch:2.3.1-cuda12.1-cudnn8-runtime
 
+# ---------- 构建期 HTTP 代理 ----------
+ARG HTTP_PROXY=""
+ARG HTTPS_PROXY=""
+ARG NO_PROXY="localhost,127.0.0.1,*.local"
+ENV http_proxy=$HTTP_PROXY \
+    https_proxy=$HTTPS_PROXY \
+    HTTP_PROXY=$HTTP_PROXY \
+    HTTPS_PROXY=$HTTPS_PROXY \
+    no_proxy=$NO_PROXY \
+    NO_PROXY=$NO_PROXY
+
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -24,6 +35,11 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project
 
 COPY . .
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen
+
+# 清掉运行期代理
+ENV http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY="" no_proxy="" NO_PROXY=""
 
 EXPOSE 8001
 

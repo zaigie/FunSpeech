@@ -1,6 +1,17 @@
 # vLLM 自带 CUDA wheel,基础镜像选用 Python + CUDA runtime 即可
 FROM nvidia/cuda:12.4.1-cudnn-runtime-ubuntu22.04
 
+# ---------- 构建期 HTTP 代理 ----------
+ARG HTTP_PROXY=""
+ARG HTTPS_PROXY=""
+ARG NO_PROXY="localhost,127.0.0.1,*.local"
+ENV http_proxy=$HTTP_PROXY \
+    https_proxy=$HTTPS_PROXY \
+    HTTP_PROXY=$HTTP_PROXY \
+    HTTPS_PROXY=$HTTPS_PROXY \
+    no_proxy=$NO_PROXY \
+    NO_PROXY=$NO_PROXY
+
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -26,6 +37,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project
 
 COPY . .
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv sync --frozen
+
+ENV http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY="" no_proxy="" NO_PROXY=""
 
 EXPOSE 8003
 

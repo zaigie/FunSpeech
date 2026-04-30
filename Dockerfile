@@ -2,6 +2,19 @@
 
 FROM python:3.10-slim AS runtime
 
+# ---------- 构建期 HTTP 代理 ----------
+# 用法: docker build --build-arg HTTP_PROXY=http://host.docker.internal:7890 ...
+# 或在 docker-compose.yml 的 build.args 里集中配
+ARG HTTP_PROXY=""
+ARG HTTPS_PROXY=""
+ARG NO_PROXY="localhost,127.0.0.1,*.local"
+ENV http_proxy=$HTTP_PROXY \
+    https_proxy=$HTTPS_PROXY \
+    HTTP_PROXY=$HTTP_PROXY \
+    HTTPS_PROXY=$HTTPS_PROXY \
+    no_proxy=$NO_PROXY \
+    NO_PROXY=$NO_PROXY
+
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
@@ -11,7 +24,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
     UV_PROJECT_ENVIRONMENT=/app/.venv \
     PATH=/app/.venv/bin:$PATH
 
-# 系统依赖: ffmpeg/sox/libsndfile 给 librosa/soundfile 用
+# 系统依赖
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ffmpeg \
         sox \
@@ -26,7 +39,6 @@ COPY --from=ghcr.io/astral-sh/uv:0.11.8 /uv /uvx /usr/local/bin/
 
 WORKDIR /app
 
-# lock + pyproject 单独 COPY 提升缓存命中
 COPY pyproject.toml uv.lock ./
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project
@@ -35,7 +47,6 @@ COPY . .
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen
 
-# 清掉构建工具
 RUN apt-get update && apt-get remove -y build-essential \
     && apt-get autoremove -y \
     && apt-get clean \
@@ -43,6 +54,9 @@ RUN apt-get update && apt-get remove -y build-essential \
 
 RUN mkdir -p /app/temp /app/data /app/logs \
     && chmod +x start.py
+
+# 清掉运行期代理 ENV
+ENV http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY="" no_proxy="" NO_PROXY=""
 
 EXPOSE 8000
 
