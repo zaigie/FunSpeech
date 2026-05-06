@@ -38,9 +38,13 @@ x-build-args: &build-args
   NO_PROXY: ${NO_PROXY:-localhost,127.0.0.1,*.local}
 
 x-modelscope-cache: &modelscope-cache
+  # 直接 mount 宿主机的 hub/models/ 到容器的 hub/ 位置:
+  # - 新版 modelscope (>=1.30) 下到 hub/models/<org>/<model>
+  # - 旧版 modelscope (1.20, 子服务用) 下到 hub/<org>/<model>
+  # 把宿主机的 models/ 当作容器的 hub/, 两边路径就都对上了。
   type: bind
-  source: ${MODELSCOPE_CACHE:-~/.cache/modelscope}
-  target: /root/.cache/modelscope
+  source: ${MODELSCOPE_CACHE:-~/.cache/modelscope/hub/models}
+  target: /root/.cache/modelscope/hub
 
 x-gpu-deploy: &gpu-deploy
   deploy:
@@ -77,14 +81,9 @@ services:
       - ./temp:/app/temp
       - ./data:/app/data
       - ./logs:/app/logs
-    depends_on:
-      # funasr 和 cosyvoice 是默认服务,但用 service_started 而非 service_healthy:
-      # 即便子服务还没装好模型,网关也允许启动并对外报 503,避免一处出问题全栈不可用。
-      # 想要严格依赖时改为 service_healthy。
-      funasr-0:
-        condition: service_started
-      cosyvoice-0:
-        condition: service_started
+    # 不写硬 depends_on: 让网关无论子服务是否就绪都能启动 (对外报 503),
+    # 避免一处问题全栈不可用; 哪些子服务真起取决于 docker compose up 实参 +
+    # profile, 网关在路由时基于 *_SERVICE_URLS env 决定是否走它们。
     restart: unless-stopped
 
   funasr-0:

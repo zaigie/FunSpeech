@@ -7,7 +7,6 @@
             "languages": [
                 "zh"
             ],
-            "default": true,
             "supports_realtime": true,
             "models": {
                 "offline": "iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch",
@@ -52,6 +51,7 @@
                 "ko",
                 "yue"
             ],
+            "default": true,
             "supports_realtime": true,
             "models": {
                 "offline": "Qwen/Qwen3-ASR-1.7B",
