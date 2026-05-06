@@ -115,6 +115,9 @@ ENV/
 env.bak/
 venv.bak/
 
+# 本机特定的 docker-compose 覆盖 (GPU 选卡等), 生产 / 不同机器值不一样
+docker-compose.override.yml
+
 # Spyder project settings
 .spyderproject
 .spyproject
