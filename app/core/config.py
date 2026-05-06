@@ -106,9 +106,9 @@ class Settings:
             os.getenv("LOG_BACKUP_COUNT", str(self.LOG_BACKUP_COUNT))
         )
 
-        # 鉴权
-        self.APPTOKEN = os.getenv("APPTOKEN", self.APPTOKEN)
-        self.APPKEY = os.getenv("APPKEY", self.APPKEY)
+        # 鉴权 — 空字符串视为未配置 (docker compose 的 ${APPTOKEN:-} 默认塞空串)
+        self.APPTOKEN = os.getenv("APPTOKEN", self.APPTOKEN) or None
+        self.APPKEY = os.getenv("APPKEY", self.APPKEY) or None
 
         # ASR
         self.ASR_MODEL_MODE = os.getenv("ASR_MODEL_MODE", self.ASR_MODEL_MODE)

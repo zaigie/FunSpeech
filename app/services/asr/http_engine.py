@@ -322,7 +322,7 @@ class FunASRHttpEngine(RealTimeASREngine):
                     "enable_punctuation": str(enable_punctuation).lower(),
                     "enable_itn": str(enable_itn).lower(),
                     "enable_vad": str(enable_vad).lower(),
-                    "sample_rate": str(sample_rate),
+                    "sample_rate": str(int(sample_rate)),
                 }
                 resp = httpx.post(
                     f"{base_url}/asr/file",
@@ -444,7 +444,7 @@ class DolphinHttpEngine(BaseASREngine):
                 data = {
                     "lang_sym": dolphin_lang_sym,
                     "region_sym": dolphin_region_sym,
-                    "sample_rate": str(sample_rate),
+                    "sample_rate": str(int(sample_rate)),
                 }
                 resp = httpx.post(
                     f"{base_url}/asr/file",
@@ -648,7 +648,7 @@ class Qwen3AsrVllmHttpEngine(RealTimeASREngine):
                 }
                 data = {
                     "language": dolphin_lang_sym or "",  # 复用现有字段
-                    "sample_rate": str(sample_rate),
+                    "sample_rate": str(int(sample_rate)),
                 }
                 resp = httpx.post(
                     f"{base_url}/asr/file",
