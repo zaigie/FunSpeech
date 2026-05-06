@@ -45,7 +45,9 @@ dependencies = [
     "wetext==0.0.4",
     "wget==3.2",
     # GPU 部署专属(linux only)
-    "deepspeed==0.15.1; sys_platform == 'linux'",
+    # 不装 deepspeed: 仅训练用, 推理不需要;
+    # 装上反而会触发 transformers import 链上的 CUDA_HOME 检测失败
+    # (pytorch runtime base 不带 nvcc); 与主分支单体保持一致。
     "onnxruntime-gpu==1.18.0; sys_platform == 'linux'",
     "tensorrt-cu12==10.13.3.9; sys_platform == 'linux'",
     "tensorrt-cu12-bindings==10.13.3.9; sys_platform == 'linux'",

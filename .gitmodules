@@ -1,3 +1,4 @@
 [submodule "services/cosyvoice/third_party/CosyVoice"]
 	path = services/cosyvoice/third_party/CosyVoice
-	url = https://github.com/FunAudioLLM/CosyVoice.git
+	url = https://cnb.cool/nexa/CosyVoice.git
+	branch = multi-gpu-support
