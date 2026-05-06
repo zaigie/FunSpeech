@@ -34,7 +34,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
         python3.10 python3.10-venv python3.10-dev python3-pip \
-        ffmpeg libsndfile1 curl ca-certificates git
+        ffmpeg libsndfile1 curl ca-certificates git \
+        gcc g++
 
 # uv 装到 apt 装的 python3.10 (本 base 是裸 CUDA 镜像, 不自带 python)
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
@@ -54,4 +55,5 @@ ENV http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY="" no_proxy="" NO_PRO
 
 EXPOSE 8003
 
-CMD ["uv", "run", "python", "server.py"]
+# 直接走 venv 里的 python, 跳过 `uv run` 的 bytecode 校验
+CMD ["/app/.venv/bin/python", "server.py"]

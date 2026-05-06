@@ -52,7 +52,10 @@ logging.basicConfig(
 
 MODEL_PATH = os.getenv("QWEN3_ASR_MODEL_ID", "Qwen/Qwen3-ASR-1.7B")
 GPU_MEMORY_UTILIZATION = float(os.getenv("QWEN3_ASR_GPU_MEM", "0.8"))
-MAX_NEW_TOKENS = int(os.getenv("QWEN3_ASR_MAX_NEW_TOKENS", "32"))
+# 官方推荐 max_new_tokens=4096, max_inference_batch_size=128
+# 见 https://github.com/QwenLM/Qwen3-ASR
+MAX_NEW_TOKENS = int(os.getenv("QWEN3_ASR_MAX_NEW_TOKENS", "4096"))
+MAX_INFERENCE_BATCH_SIZE = int(os.getenv("QWEN3_ASR_MAX_BATCH", "128"))
 SAMPLE_RATE = 16000  # qwen3-asr 固定 16kHz
 INTERNAL_SERVICE_TOKEN = os.getenv("INTERNAL_SERVICE_TOKEN", "")
 
@@ -85,6 +88,7 @@ def _load_model():
         model=MODEL_PATH,
         gpu_memory_utilization=GPU_MEMORY_UTILIZATION,
         max_new_tokens=MAX_NEW_TOKENS,
+        max_inference_batch_size=MAX_INFERENCE_BATCH_SIZE,
     )
     return _model
 
