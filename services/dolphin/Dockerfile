@@ -52,4 +52,5 @@ ENV http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY="" no_proxy="" NO_PRO
 
 EXPOSE 8002
 
-CMD ["uv", "run", "python", "server.py"]
+# 直接走 venv 里的 python, 跳过 `uv run` 的 bytecode 校验
+CMD ["/app/.venv/bin/python", "server.py"]
