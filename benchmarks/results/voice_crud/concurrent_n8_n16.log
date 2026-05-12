@@ -1,0 +1,28 @@
+
+=== Round 1/2 ===
+并发 POST /voices × 8
+  wall=6.46s ok=8/8
+  registry 里有 8/8 个音色
+  GET /voices/{name}: 8/8 正确
+  清理本轮音色
+  delete: 8/8
+
+=== Round 2/2 ===
+并发 POST /voices × 8
+  wall=6.39s ok=8/8
+  registry 里有 8/8 个音色
+  GET /voices/{name}: 8/8 正确
+  清理本轮音色
+  delete: 8/8
+
+=== 最终磁盘检查 ===
+
+=== Round 1/1 ===
+并发 POST /voices × 16
+  wall=13.02s ok=16/16
+  registry 里有 16/16 个音色
+  GET /voices/{name}: 16/16 正确
+  清理本轮音色
+  delete: 16/16
+
+=== 最终磁盘检查 ===

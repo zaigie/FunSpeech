@@ -14,6 +14,8 @@ dependencies = [
     "torchaudio==2.3.1",
     "soundfile==0.12.1",
     "numpy==1.23.5",
+    # setuptools < 80: librosa 与 modelscope 都用了已被 setuptools 80+ 移除的 pkg_resources
+    "setuptools<80",
     # Dolphin 输出含 <lang><region> 标记,有标点需求时通过 funasr 子服务 /asr/punc 完成
 ]
 

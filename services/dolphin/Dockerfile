@@ -32,7 +32,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     rm -f /etc/apt/apt.conf.d/docker-clean \
     && apt-get update \
     && apt-get install -y --no-install-recommends \
-        ffmpeg libsndfile1 curl ca-certificates
+        ffmpeg libsndfile1 curl ca-certificates \
+        gcc g++  # espnet/ctc-segmentation 需要编译, 见 2701777
 
 # uv 装到 base 自带的 python (pytorch/pytorch:*-runtime 自带 python + pip)
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
