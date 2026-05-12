@@ -14,9 +14,9 @@
 #   docker compose up -d
 #
 # 启用更多 ASR 引擎:
+#   docker compose --profile funasr up -d                        # +funasr (paraformer/sensevoice)
 #   docker compose --profile dolphin up -d                       # +dolphin
-#   docker compose --profile qwen3-asr up -d                     # +qwen3-asr
-#   docker compose --profile dolphin --profile qwen3-asr up -d   # 全部
+#   docker compose --profile funasr --profile dolphin up -d      # 全部 ASR 引擎
 #
 # 多副本 / 多卡:
 #   用 scripts/plan_deployment.py 算出配置, 生成 docker-compose.override.yml
@@ -118,6 +118,7 @@ services:
       start_period: 180s
     <<: *gpu-deploy
     restart: unless-stopped
+    profiles: ["funasr"]  # 默认不启动, 通过 --profile funasr 启用
 
   dolphin-0:
     build:
@@ -171,7 +172,7 @@ services:
       start_period: 300s  # vLLM 加载较慢
     <<: *gpu-deploy
     restart: unless-stopped
-    profiles: ["qwen3-asr"]
+    # qwen3-asr 是默认 ASR 引擎 (见 app/services/asr/models.json 的 default 字段)
 
   cosyvoice-0:
     build:

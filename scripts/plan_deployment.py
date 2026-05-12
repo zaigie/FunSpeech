@@ -447,10 +447,10 @@ def render(gpus: List[GPU], services: List[ServiceRequest],
     out.append("\n## 启动")
     profiles = set()
     for s in services:
+        if s.name == "funasr":
+            profiles.add("funasr")
         if s.name == "dolphin":
             profiles.add("dolphin")
-        if s.name == "qwen3-asr":
-            profiles.add("qwen3-asr")
     profile_args = "".join(f" --profile {p}" for p in sorted(profiles))
     out.append(
         f"  docker compose{profile_args} up -d\n"

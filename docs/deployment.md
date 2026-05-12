@@ -55,11 +55,11 @@ HTTPS_PROXY=http://host.docker.internal:7890
 
 ```bash
 docker compose build              # 首次或 Dockerfile 变更后
-docker compose up -d              # 默认: gateway + funasr + cosyvoice
+docker compose up -d              # 默认: gateway + qwen3-asr + cosyvoice
 
-docker compose --profile dolphin up -d                              # 加 dolphin
-docker compose --profile qwen3-asr up -d                            # 加 qwen3-asr-vllm
-docker compose --profile dolphin --profile qwen3-asr up -d          # 全部启动
+docker compose --profile funasr up -d                              # 加 funasr (paraformer/sensevoice)
+docker compose --profile dolphin up -d                             # 加 dolphin
+docker compose --profile funasr --profile dolphin up -d            # 全部 ASR 引擎
 ```
 
 并行加速 build (子服务镜像之间互相独立):
@@ -77,9 +77,9 @@ docker compose build --parallel
 | 服务 | 端口 | GPU | 默认启动 | profile |
 |---|---|---|---|---|
 | `gateway` | 8000 | ❌ | ✅ | (默认) |
-| `funasr-0` | 8001 | ✅ | ✅ | (默认) |
+| `funasr-0` | 8001 | ✅ | ❌ | `funasr` |
 | `dolphin-0` | 8002 | ✅ | ❌ | `dolphin` |
-| `qwen3-asr-0` | 8003 | ✅ | ❌ | `qwen3-asr` |
+| `qwen3-asr-0` | 8003 | ✅ | ✅ | (默认, 默认 ASR 引擎) |
 | `cosyvoice-0` | 8004 | ✅ | ✅ | (默认) |
 
 每个 GPU 子服务通过 `deploy.resources.reservations.devices` 申明 nvidia 设备,容器内通过 `CUDA_VISIBLE_DEVICES` 选卡。
@@ -248,7 +248,7 @@ cosyvoice 子服务暴露 `POST /voices/reload`, 用磁盘上的 `spk2info.pt` +
 
 下面分子服务列出独有的 env。
 
-### 6.1 funasr-0 (端口 8001)
+### 6.1 funasr-0 (端口 8001,profile=funasr)
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
@@ -274,7 +274,7 @@ cosyvoice 子服务暴露 `POST /voices/reload`, 用磁盘上的 `spk2info.pt` +
 
 显存约 0.6 GB,可与 funasr 同卡共置。
 
-### 6.3 qwen3-asr-0 (端口 8003,profile=qwen3-asr)
+### 6.3 qwen3-asr-0 (端口 8003,默认启动)
 
 | 变量 | 默认 | 说明 |
 |---|---|---|

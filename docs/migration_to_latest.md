@@ -141,10 +141,10 @@ mv ~/.cache/modelscope/hub/models_new ~/.cache/modelscope/hub/models
 INTERNAL_SERVICE_TOKEN=funspeech-internal
 
 # 子服务 URL (单机部署默认即可, 多副本时逗号分隔)
-FUNASR_SERVICE_URLS=http://funasr-0:8001
+QWEN3_ASR_SERVICE_URLS=http://qwen3-asr-0:8003   # 默认 ASR 引擎
 COSYVOICE_SERVICE_URLS=http://cosyvoice-0:8004
+FUNASR_SERVICE_URLS=http://funasr-0:8001         # 用 --profile funasr 才生效
 DOLPHIN_SERVICE_URLS=http://dolphin-0:8002       # 用 --profile dolphin 才生效
-QWEN3_ASR_SERVICE_URLS=http://qwen3-asr-0:8003   # 用 --profile qwen3-asr 才生效
 
 # qwen3-asr 离线场景务必加 (有外网就不用)
 HF_HUB_OFFLINE=1
@@ -177,17 +177,17 @@ HTTP_PROXY=http://host.docker.internal:7890 \
 HTTPS_PROXY=http://host.docker.internal:7890 \
 docker compose build
 
-# 3. 启动 (默认 = gateway + funasr-0 + cosyvoice-0)
+# 3. 启动 (默认 = gateway + qwen3-asr-0 + cosyvoice-0)
 docker compose up -d
 
-# 等子服务模型加载完 (funasr ~30s, cosyvoice ~60s)
+# 等子服务模型加载完 (qwen3-asr / vLLM ~60-120s, cosyvoice ~60s)
 docker compose ps    # 等所有都 (healthy)
 ```
 
-启用 dolphin / qwen3-asr (不是默认的, 要加 profile):
+启用 funasr / dolphin (不是默认的, 要加 profile):
 
 ```bash
-docker compose --profile dolphin --profile qwen3-asr up -d
+docker compose --profile funasr --profile dolphin up -d
 ```
 
 ### 6.2 Smoke 验证

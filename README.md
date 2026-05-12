@@ -75,10 +75,10 @@ export COMPOSE_DOCKER_CLI_BUILD=1
 
 ```bash
 docker compose build                         # 重 build 时 apt/uv 走本机缓存,极快
-docker compose up -d                         # 默认: gateway + funasr + cosyvoice
+docker compose up -d                         # 默认: gateway + qwen3-asr + cosyvoice
+docker compose --profile funasr up -d        # 加上 funasr (paraformer/sensevoice)
 docker compose --profile dolphin up -d       # 加上 dolphin
-docker compose --profile qwen3-asr up -d     # 加上 qwen3-asr-vllm
-docker compose --profile dolphin --profile qwen3-asr up -d   # 全开
+docker compose --profile funasr --profile dolphin up -d   # 全部 ASR 引擎
 ```
 
 服务暴露在 `http://localhost:${GATEWAY_PORT:-8000}`。
@@ -112,9 +112,9 @@ WebSocket 测试页:
 | 服务 | 端口 | 镜像 | GPU | 默认启动 | profile |
 |---|---|---|---|---|---|
 | gateway | 8000 | funspeech/gateway | ❌ | ✅ | (默认) |
-| funasr-0 | 8001 | funspeech/funasr | ✅ | ✅ | (默认) |
+| funasr-0 | 8001 | funspeech/funasr | ✅ | ❌ | `funasr` |
 | dolphin-0 | 8002 | funspeech/dolphin | ✅ | ❌ | `dolphin` |
-| qwen3-asr-0 | 8003 | funspeech/qwen3-asr | ✅ | ❌ | `qwen3-asr` |
+| qwen3-asr-0 | 8003 | funspeech/qwen3-asr | ✅ | ✅ | (默认, 默认 ASR 引擎) |
 | cosyvoice-0 | 8004 | funspeech/cosyvoice | ✅ | ✅ | (默认) |
 
 每个子服务暴露 `GET /health` + 自有业务端点(详见各 `services/*/README.md`)。
@@ -130,7 +130,7 @@ WebSocket 测试页:
 | `/stream/v1/asr/health` | GET | 健康检查 |
 | `/ws/v1/asr` | WS | 流式识别(Aliyun 协议) |
 
-可识别模型(`models.json`):`paraformer-large`、`sensevoice-small`、`dolphin-small`、`qwen3-asr-flash`(后两者需要起对应 profile)。
+可识别模型(`models.json`):`qwen3-asr-flash`(默认)、`paraformer-large`、`sensevoice-small`(后两者需 `--profile funasr`)、`dolphin-small`(需 `--profile dolphin`)。
 
 ### TTS
 
