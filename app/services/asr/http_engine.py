@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import random
 import threading
 from typing import Any, Dict, List, Optional, Tuple
@@ -31,6 +32,45 @@ logger = logging.getLogger(__name__)
 
 def _split_urls(raw: str) -> List[str]:
     return [u.strip().rstrip("/") for u in raw.split(",") if u.strip()]
+
+
+# ---------------------------------------------------------------------------
+# 全局 httpx 客户端 — 共享连接池, 替代每次调用新建 client
+# ---------------------------------------------------------------------------
+
+_HTTPX_MAX_CONN = int(os.getenv("HTTPX_MAX_CONNECTIONS", "200"))
+_HTTPX_MAX_KEEPALIVE = int(os.getenv("HTTPX_MAX_KEEPALIVE", "50"))
+_httpx_client: Optional[httpx.Client] = None
+_httpx_async_client: Optional[httpx.AsyncClient] = None
+_httpx_client_lock = threading.Lock()
+
+
+def _get_httpx_client() -> httpx.Client:
+    """同步 httpx.Client (在 run_sync 线程里调用), 单例 + 连接池"""
+    global _httpx_client
+    if _httpx_client is None:
+        with _httpx_client_lock:
+            if _httpx_client is None:
+                limits = httpx.Limits(
+                    max_connections=_HTTPX_MAX_CONN,
+                    max_keepalive_connections=_HTTPX_MAX_KEEPALIVE,
+                )
+                _httpx_client = httpx.Client(limits=limits)
+    return _httpx_client
+
+
+def get_async_httpx_client() -> httpx.AsyncClient:
+    """异步 httpx.AsyncClient, 用于 async handler 内直接 await 的场景"""
+    global _httpx_async_client
+    if _httpx_async_client is None:
+        with _httpx_client_lock:
+            if _httpx_async_client is None:
+                limits = httpx.Limits(
+                    max_connections=_HTTPX_MAX_CONN,
+                    max_keepalive_connections=_HTTPX_MAX_KEEPALIVE,
+                )
+                _httpx_async_client = httpx.AsyncClient(limits=limits)
+    return _httpx_async_client
 
 
 class _HttpReplicaPool:
@@ -82,6 +122,7 @@ class _RealtimeASRSession:
         self._ws = ws_connect(full_url, open_timeout=timeout, close_timeout=5.0)
         self._lock = threading.Lock()
         self._closed = False
+        self._timeout = timeout
 
         # 发送 start 帧
         start = {"op": "start", **params}
@@ -104,8 +145,9 @@ class _RealtimeASRSession:
             self._ws.send(pcm_int16.tobytes())
 
             # 读直到收到 partial 或 error
+            # 每个 recv 都带超时, 上游子服务卡死时不会让网关线程永久阻塞
             while True:
-                raw = self._ws.recv()
+                raw = self._ws.recv(timeout=self._timeout)
                 if isinstance(raw, (bytes, bytearray)):
                     continue  # 子服务不应发二进制,忽略
                 msg = json.loads(raw)
@@ -128,7 +170,7 @@ class _RealtimeASRSession:
                 return ""
             self._ws.send(json.dumps({"op": "flush"}))
             while True:
-                raw = self._ws.recv()
+                raw = self._ws.recv(timeout=self._timeout)
                 if isinstance(raw, (bytes, bytearray)):
                     continue
                 msg = json.loads(raw)
@@ -270,7 +312,7 @@ class FunASRHttpEngine(RealTimeASREngine):
             return text
         idx, base_url = self._pool.acquire()
         try:
-            resp = httpx.post(
+            resp = _get_httpx_client().post(
                 f"{base_url}/asr/punc",
                 json={"text": text, "mode": "offline"},
                 headers=self._headers,
@@ -295,7 +337,7 @@ class FunASRHttpEngine(RealTimeASREngine):
     def is_model_loaded(self) -> bool:
         for url in self._pool._urls:
             try:
-                r = httpx.get(f"{url}/health", timeout=5.0, headers=self._headers)
+                r = _get_httpx_client().get(f"{url}/health", timeout=5.0, headers=self._headers)
                 if r.status_code == 200:
                     return True
             except httpx.HTTPError:
@@ -324,7 +366,7 @@ class FunASRHttpEngine(RealTimeASREngine):
                     "enable_vad": str(enable_vad).lower(),
                     "sample_rate": str(int(sample_rate)),
                 }
-                resp = httpx.post(
+                resp = _get_httpx_client().post(
                     f"{base_url}/asr/file",
                     files=files,
                     data=data,
@@ -413,7 +455,7 @@ class DolphinHttpEngine(BaseASREngine):
     def is_model_loaded(self) -> bool:
         for url in self._pool._urls:
             try:
-                r = httpx.get(f"{url}/health", timeout=5.0, headers=self._headers)
+                r = _get_httpx_client().get(f"{url}/health", timeout=5.0, headers=self._headers)
                 if r.status_code == 200:
                     return True
             except httpx.HTTPError:
@@ -446,7 +488,7 @@ class DolphinHttpEngine(BaseASREngine):
                     "region_sym": dolphin_region_sym,
                     "sample_rate": str(int(sample_rate)),
                 }
-                resp = httpx.post(
+                resp = _get_httpx_client().post(
                     f"{base_url}/asr/file",
                     files=files,
                     data=data,
@@ -484,7 +526,7 @@ class DolphinHttpEngine(BaseASREngine):
         if settings.INTERNAL_SERVICE_TOKEN:
             headers["X-Internal-Token"] = settings.INTERNAL_SERVICE_TOKEN
         try:
-            resp = httpx.post(
+            resp = _get_httpx_client().post(
                 f"{funasr_url}/asr/punc",
                 json={"text": text, "mode": "offline"},
                 headers=headers,
@@ -618,7 +660,7 @@ class Qwen3AsrVllmHttpEngine(RealTimeASREngine):
     def is_model_loaded(self) -> bool:
         for url in self._pool._urls:
             try:
-                r = httpx.get(f"{url}/health", timeout=5.0, headers=self._headers)
+                r = _get_httpx_client().get(f"{url}/health", timeout=5.0, headers=self._headers)
                 if r.status_code == 200:
                     return True
             except httpx.HTTPError:
@@ -650,7 +692,7 @@ class Qwen3AsrVllmHttpEngine(RealTimeASREngine):
                     "language": dolphin_lang_sym or "",  # 复用现有字段
                     "sample_rate": str(int(sample_rate)),
                 }
-                resp = httpx.post(
+                resp = _get_httpx_client().post(
                     f"{base_url}/asr/file",
                     files=files,
                     data=data,

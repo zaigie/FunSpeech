@@ -26,6 +26,8 @@ import soundfile as sf
 from ...core.config import settings
 from ...core.exceptions import DefaultServerErrorException
 from ...utils.audio import generate_temp_audio_path, save_audio_array
+# 复用 asr 模块的 httpx 单例: 同一进程一份连接池, 不重复维护
+from ..asr.http_engine import _get_httpx_client, get_async_httpx_client
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +187,7 @@ class CosyVoiceHttpEngine:
             return
         for url in targets:
             try:
-                r = httpx.post(
+                r = _get_httpx_client().post(
                     f"{url}/voices/reload",
                     headers=self._headers,
                     timeout=min(self._timeout, 30.0),
@@ -353,7 +355,7 @@ class CosyVoiceHttpEngine:
 
         for url in self._urls:
             try:
-                r = httpx.get(f"{url}/health", timeout=5.0, headers=self._headers)
+                r = _get_httpx_client().get(f"{url}/health", timeout=5.0, headers=self._headers)
                 if r.status_code == 200:
                     body = r.json()
                     self._sft_loaded = bool(body.get("sft_loaded"))
@@ -372,7 +374,7 @@ class CosyVoiceHttpEngine:
     ) -> Tuple[bytes, int, Optional[List[Dict[str, Any]]]]:
         idx, base_url = self._pool.acquire()
         try:
-            resp = httpx.post(
+            resp = _get_httpx_client().post(
                 f"{base_url}/tts/file",
                 json={
                     "text": text,
@@ -405,7 +407,7 @@ class CosyVoiceHttpEngine:
     def _get_voices_listing(self) -> Dict[str, Any]:
         idx, base_url = self._pool.acquire()
         try:
-            r = httpx.get(
+            r = _get_httpx_client().get(
                 f"{base_url}/voices",
                 headers=self._headers,
                 timeout=self._timeout,
@@ -421,7 +423,7 @@ class CosyVoiceHttpEngine:
     def _get_voice_info(self, name: str) -> Dict[str, Any]:
         idx, base_url = self._pool.acquire()
         try:
-            r = httpx.get(
+            r = _get_httpx_client().get(
                 f"{base_url}/voices/{name}",
                 headers=self._headers,
                 timeout=self._timeout,
@@ -436,7 +438,7 @@ class CosyVoiceHttpEngine:
         with open(wav_path, "rb") as fp:
             files = {"audio": (wav_path.name, fp, "audio/wav")}
             data = {"name": name, "prompt_text": prompt_text}
-            r = httpx.post(
+            r = _get_httpx_client().post(
                 f"{self._primary_url}/voices",
                 files=files,
                 data=data,
@@ -449,7 +451,7 @@ class CosyVoiceHttpEngine:
         return result
 
     def _delete_voice(self, name: str) -> Dict[str, Any]:
-        r = httpx.delete(
+        r = _get_httpx_client().delete(
             f"{self._primary_url}/voices/{name}",
             headers=self._headers,
             timeout=self._timeout,
@@ -460,7 +462,7 @@ class CosyVoiceHttpEngine:
         return result
 
     def _post_voices_refresh(self) -> Dict[str, Any]:
-        r = httpx.post(
+        r = _get_httpx_client().post(
             f"{self._primary_url}/voices/refresh",
             headers=self._headers,
             timeout=self._timeout,
@@ -495,6 +497,9 @@ class CosyVoiceHttpEngine:
             ws_url = f"{ws_url}{sep}token={self._internal_token}"
 
         # 用 websockets.asyncio.client 异步实现, 不阻塞事件循环
+        # 每个 recv 都包 asyncio.wait_for, 上游卡死时不会让客户端永久 hang
+        import asyncio as _asyncio
+
         from websockets.asyncio.client import connect
 
         try:
@@ -510,7 +515,12 @@ class CosyVoiceHttpEngine:
                     )
                 )
                 # 第 1 帧 JSON: started + sample_rate
-                first = await ws.recv()
+                try:
+                    first = await _asyncio.wait_for(ws.recv(), timeout=self._timeout)
+                except _asyncio.TimeoutError as exc:
+                    raise DefaultServerErrorException(
+                        "cosyvoice ws started 帧超时"
+                    ) from exc
                 if isinstance(first, (bytes, bytearray)):
                     raise DefaultServerErrorException(
                         "cosyvoice ws started 帧非文本"
@@ -527,7 +537,14 @@ class CosyVoiceHttpEngine:
                 native_sr = int(meta.get("sample_rate", 24000))
 
                 while True:
-                    msg = await ws.recv()
+                    try:
+                        msg = await _asyncio.wait_for(
+                            ws.recv(), timeout=self._timeout
+                        )
+                    except _asyncio.TimeoutError as exc:
+                        raise DefaultServerErrorException(
+                            "cosyvoice stream recv 超时"
+                        ) from exc
                     if isinstance(msg, (bytes, bytearray)):
                         chunk = np.frombuffer(msg, dtype=np.float32)
                         if chunk.size == 0:

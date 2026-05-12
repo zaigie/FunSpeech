@@ -404,10 +404,10 @@ async def health_check(request: Request):
     try:
         model_manager = get_model_manager()
 
-        # 尝试获取默认模型的引擎
+        # 尝试获取默认模型的引擎; is_model_loaded 内部走同步 httpx, 放线程池
         try:
             asr_engine = model_manager.get_asr_engine()
-            model_loaded = asr_engine.is_model_loaded()
+            model_loaded = await run_sync(asr_engine.is_model_loaded)
             device = asr_engine.device
         except Exception:
             model_loaded = False

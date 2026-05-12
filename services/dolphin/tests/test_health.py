@@ -22,9 +22,9 @@ def client(monkeypatch):
 
 def test_health(client):
     r = client.get("/health")
-    assert r.status_code == 200
+    assert r.status_code == 503
     body = r.json()
-    assert body["status"] == "healthy"
+    assert body["status"] == "starting"
 
 
 def test_asr_file_requires_token(client):

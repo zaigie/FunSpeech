@@ -682,6 +682,8 @@ class AliyunWebSocketASRService:
             )
 
             # 使用线程池执行模型推理，避免阻塞事件循环
+            # 透传 sample_rate / format, 避免 _HttpRealtimeModel 硬编码 16000/pcm
+            # 否则客户端送 8kHz 时, 子服务会按 16kHz 解析得到错乱采样
             result = await run_sync(
                 asr_engine.realtime_model.generate,
                 input=audio_array,
@@ -690,6 +692,8 @@ class AliyunWebSocketASRService:
                 chunk_size=chunk_size,
                 encoder_chunk_look_back=encoder_chunk_look_back,
                 decoder_chunk_look_back=decoder_chunk_look_back,
+                sample_rate=sample_rate,
+                format=audio_format,
             )
 
             logger.debug(f"[{task_id}] ASR模型返回结果: {result}")

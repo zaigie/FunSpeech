@@ -31,10 +31,12 @@ def client(monkeypatch):
 
 
 def test_health_no_token_required(client):
+    # lifespan 被绕过, 模型未加载 → /health 应返回 503 status="starting"
+    # 表示服务还没就绪 (但端点是公开的, 不需 token)
     r = client.get("/health")
-    assert r.status_code == 200
+    assert r.status_code == 503
     body = r.json()
-    assert body["status"] == "healthy"
+    assert body["status"] == "starting"
     assert "device" in body
 
 

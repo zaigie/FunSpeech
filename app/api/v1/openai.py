@@ -6,6 +6,7 @@ OpenAI兼容API路由
 
 from fastapi import APIRouter, Request, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
+from starlette.background import BackgroundTask
 import logging
 
 from ...core.config import settings
@@ -15,7 +16,7 @@ from ...core.security import validate_bearer_token, mask_sensitive_data
 from ...models.tts import OpenAITTSRequest
 from ...models.common import AudioFormat
 from ...utils.common import generate_task_id, clean_text_for_tts
-from ...utils.audio import validate_audio_format
+from ...utils.audio import validate_audio_format, cleanup_temp_file
 from ...services.tts.engine import get_tts_engine
 
 # 配置日志
@@ -119,11 +120,13 @@ async def openai_compatible_tts(request_body: OpenAITTSRequest, request: Request
         logger.debug(f"[{task_id}] OpenAI兼容接口合成完成: {output_path}")
 
         # 统一使用audio/mpeg作为Content-Type，客户端根据response_format参数自行保存对应格式
+        # 响应发送完毕后由 BackgroundTask 清理 temp 文件
         return FileResponse(
             output_path,
             media_type="audio/mpeg",
             filename=f"speech_{task_id}.{request_body.response_format}",
             headers={"task_id": task_id},
+            background=BackgroundTask(cleanup_temp_file, output_path),
         )
 
     except (InvalidParameterException, DefaultServerErrorException) as e:
