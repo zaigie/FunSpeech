@@ -19,7 +19,7 @@
 #   docker compose --profile funasr --profile dolphin up -d      # 全部 ASR 引擎
 #
 # 多副本 / 多卡:
-#   用 scripts/plan_deployment.py 算出配置, 生成 docker-compose.override.yml
+#   用 scripts/plan_deployment.py 算出配置, 生成完整 docker-compose.generated.yml
 #   见 docs/deployment.md §4.3 / §5
 
 x-gateway-env: &gateway-env

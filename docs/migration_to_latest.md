@@ -246,7 +246,7 @@ python3 scripts/plan_deployment.py --list-presets
 - ASR (funasr / dolphin / qwen3-asr): 目标**并发数** (同时活跃客户端数)
 - TTS (cosyvoice): 想同时支持几路**实时 TTS** (RTF ≤ 1)
 
-输出可直接粘贴的 `docker-compose.override.yml` 和 `.env` 片段。完整说明见 [`deployment.md §4.3`](./deployment.md)。
+输出完整 `docker-compose.generated.yml`; 若重名会自动写成 `.1`、`.2` 后缀, 不覆盖已有部署文件。完整说明见 [`deployment.md §4.3`](./deployment.md)。
 
 ---
 

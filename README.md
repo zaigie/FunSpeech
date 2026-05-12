@@ -206,7 +206,7 @@ uv run python start.py
 
 **横向扩展 = 多卡多副本**, 不是单卡多副本 (同一服务两副本绑同一张卡, 实测总容量不升反降)。
 
-用规划脚本一键算出应该开几副本 / 怎么绑卡 / `docker-compose.override.yml` 怎么写:
+用规划脚本一键算出应该开几副本 / 怎么绑卡, 并在当前目录生成完整 `docker-compose.generated.yml`:
 
 ```bash
 python3 scripts/plan_deployment.py                  # 交互式

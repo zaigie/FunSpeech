@@ -141,8 +141,19 @@ python3 scripts/plan_deployment.py --json my_setup.json
 - 每个服务需要几副本 (ASR 按 max_queue_sec 反推, TTS 按 RTF 实时容量反推)
 - 每个副本绑哪张卡 (worst-fit 启发, 让显存均匀分布)
 - 显存预算表 (含 vLLM KV pool 估算)
-- 直接可粘贴的 `docker-compose.override.yml` 片段 + 网关 `.env` 片段
+- 当前目录下的完整 `docker-compose.generated.yml`
+  (如已存在则写成 `docker-compose.generated.1.yml`、`.2.yml` 等, 不覆盖)
 - 哪些目标因卡数/显存不够达不到 → 给出明确的扩容建议
+
+生成后先做静态检查, 再用生成文件启动:
+
+```bash
+docker compose -f docker-compose.generated.yml config
+docker compose -f docker-compose.generated.yml up -d
+
+# 如果规划里包含 funasr / dolphin, 按脚本最后打印的命令带上 profile:
+docker compose -f docker-compose.generated.yml --profile funasr up -d
+```
 
 **典型例子** (摘自脚本输出):
 
@@ -158,7 +169,7 @@ python3 scripts/plan_deployment.py --json my_setup.json
 
 **方式 A — 全部贴卡 0(默认):** `docker-compose.yml` 里所有 GPU 子服务的 `CUDA_VISIBLE_DEVICES: "0"`,适合单卡或想让所有模型共置。
 
-**方式 B — 跨卡分布:** 直接用上面 `plan_deployment.py` 的输出, 把生成的 `docker-compose.override.yml` 写进项目根。Docker Compose 自动 merge override。
+**方式 B — 跨卡分布:** 直接运行 `plan_deployment.py`, 用生成的完整 `docker-compose.generated.yml` 启动。这个文件不依赖 override merge, 新副本会带齐 `image`、`volumes`、`healthcheck`、`restart`、`ulimits`、`profiles` 等字段。
 
 注意 `device_ids: ["0", "1"]` 不会在子服务进程内启用张量并行(那需要 vLLM 的 `tensor_parallel_size`,且只对装不下的大模型有意义,本项目模型都是 0.5B–1.7B,装得下,不需要切)。多卡的正确用法是**多副本**(§5)。
 
@@ -166,33 +177,15 @@ python3 scripts/plan_deployment.py --json my_setup.json
 
 ### 5.1 添加副本
 
-**推荐**: 用 `scripts/plan_deployment.py` 一键生成 `docker-compose.override.yml` 片段和网关 `.env` (见 §4.3)。
+**推荐**: 用 `scripts/plan_deployment.py` 一键生成完整 `docker-compose.generated.yml` (见 §4.3)。
 
-**手动**: 每张额外的卡 = 一个新副本。两步:
+**手动**: 每张额外的卡 = 一个新副本。不要只写 `environment` + `deploy`: 新服务不会继承 `funasr-0` / `cosyvoice-0` 的字段。手写时应从生成的 `docker-compose.generated.yml` 或基础服务复制完整服务定义, 再改:
 
-1. 在 `docker-compose.override.yml` 加新服务条目(`funasr-1`),把 `CUDA_VISIBLE_DEVICES` 设成另一张卡, **不要**给 `-0` 的容器名碰撞 (要给新副本不同的 `container_name`):
-   ```yaml
-   services:
-     funasr-1:
-       image: funspeech/funasr:latest
-       container_name: funspeech-funasr-1
-       environment:
-         CUDA_VISIBLE_DEVICES: "1"
-         INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-funspeech-internal}
-         PORT: "8001"
-       volumes:
-         - ${MODELSCOPE_CACHE:-~/.cache/modelscope/hub/models}:/root/.cache/modelscope/hub
-       deploy:
-         resources:
-           reservations:
-             devices:
-               - {driver: nvidia, device_ids: ["1"], capabilities: [gpu]}
-       restart: unless-stopped
-   ```
-2. 网关 env 里把对应 URL 列表逗号分隔:
-   ```
-   FUNASR_SERVICE_URLS=http://funasr-0:8001,http://funasr-1:8001
-   ```
+- `service` 名称与 `container_name` (例如 `funasr-1` / `funspeech-funasr-1`)
+- `CUDA_VISIBLE_DEVICES` 与 `deploy.resources.reservations.devices[].device_ids`
+- 网关 `*_SERVICE_URLS` 列表, 例如 `FUNASR_SERVICE_URLS=http://funasr-0:8001,http://funasr-1:8001`
+
+`funasr` / `dolphin` 新副本还要保留对应 `profiles`, 否则会从可选服务变成默认启动服务。
 
 网关侧 `_HttpReplicaPool` 会做最少连接 + 随机选副本调度;每个外部 WS 会话**绑定固定副本**(session 级亲和性),保证 cache 状态不串。
 
