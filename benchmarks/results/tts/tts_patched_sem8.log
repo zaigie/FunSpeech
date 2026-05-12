@@ -1,0 +1,9 @@
+--- 测试 concurrency=1 ---
+  wall=3.44s  ok=1/1  req/s=0.29  rtf=1.47  p50=3.44s  p95=3.44s  max=3.44s
+--- 测试 concurrency=2 ---
+  wall=5.94s  ok=2/2  req/s=0.34  rtf=1.64  p50=5.36s  p95=5.94s  max=5.94s
+--- 测试 concurrency=4 ---
+  wall=18.55s  ok=4/4  req/s=0.22  rtf=0.96  p50=18.36s  p95=18.55s  max=18.55s
+--- 测试 concurrency=8 ---
+  wall=58.62s  ok=8/8  req/s=0.14  rtf=0.63  p50=57.10s  p95=58.61s  max=58.61s
+-> benchmarks/tts_patched_sem8.json

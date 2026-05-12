@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
@@ -25,6 +26,7 @@ from fastapi import (
     Request,
     UploadFile,
 )
+from fastapi.responses import JSONResponse
 
 
 logger = logging.getLogger("dolphin_service")
@@ -45,6 +47,8 @@ MODELSCOPE_PATH = os.path.expanduser(
     os.getenv("MODELSCOPE_PATH", "~/.cache/modelscope/hub")
 )
 INTERNAL_SERVICE_TOKEN = os.getenv("INTERNAL_SERVICE_TOKEN", "")
+# GPU 串行进入 (同 funasr 理由), 横向扩展用多副本
+GPU_INFERENCE_CONCURRENCY = 1
 
 
 def _detect_device(device_hint: str) -> str:
@@ -129,12 +133,34 @@ def transcribe(
 # ---------------------------------------------------------------------------
 
 
+_gpu_semaphore: Optional[asyncio.Semaphore] = None
+_load_failed: bool = False
+_load_error_msg: str = ""
+
+
+def _get_gpu_semaphore() -> asyncio.Semaphore:
+    global _gpu_semaphore
+    if _gpu_semaphore is None:
+        _gpu_semaphore = asyncio.Semaphore(GPU_INFERENCE_CONCURRENCY)
+    return _gpu_semaphore
+
+
+async def _run_inference(func, *args, **kwargs):
+    sem = _get_gpu_semaphore()
+    async with sem:
+        return await asyncio.to_thread(func, *args, **kwargs)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _load_failed, _load_error_msg
     try:
         _load_model()
+        _get_gpu_semaphore()
         logger.info("Dolphin 子服务就绪 (device=%s)", DEVICE)
     except Exception as exc:
+        _load_failed = True
+        _load_error_msg = str(exc)
         logger.error("Dolphin 模型预加载失败: %s", exc, exc_info=True)
     yield
 
@@ -152,12 +178,20 @@ def _check_internal_token(request: Request) -> None:
 
 @app.get("/health")
 async def health() -> dict:
-    return {
+    body = {
         "status": "healthy",
         "device": DEVICE,
         "size": DOLPHIN_SIZE,
         "model_loaded": _model is not None,
     }
+    if _load_failed:
+        body["status"] = "unhealthy"
+        body["error"] = _load_error_msg
+        return JSONResponse(status_code=503, content=body)
+    if _model is None:
+        body["status"] = "starting"
+        return JSONResponse(status_code=503, content=body)
+    return body
 
 
 @app.post("/asr/file")
@@ -176,7 +210,8 @@ async def asr_file(
         tmp_path = tmp.name
 
     try:
-        text = transcribe(
+        text = await _run_inference(
+            transcribe,
             audio_path=tmp_path,
             lang_sym=lang_sym,
             region_sym=region_sym,

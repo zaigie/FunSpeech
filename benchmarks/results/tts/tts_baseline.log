@@ -1,0 +1,9 @@
+--- 测试 concurrency=1 ---
+  wall=3.67s  ok=1/1  req/s=0.27  rtf=1.38  p50=3.67s  p95=3.67s  max=3.67s
+--- 测试 concurrency=2 ---
+  wall=6.71s  ok=2/2  req/s=0.30  rtf=1.40  p50=3.52s  p95=6.71s  max=6.71s
+--- 测试 concurrency=4 ---
+  wall=14.47s  ok=4/4  req/s=0.28  rtf=1.40  p50=10.16s  p95=14.47s  max=14.47s
+--- 测试 concurrency=8 ---
+  wall=28.69s  ok=8/8  req/s=0.28  rtf=1.42  p50=17.90s  p95=28.69s  max=28.69s
+-> benchmarks/tts_baseline.json

@@ -13,11 +13,14 @@
 #   docker compose build --build-arg HTTP_PROXY --build-arg HTTPS_PROXY
 #   docker compose up -d
 #
-# 单独跑 ASR (不要 cosyvoice):
-#   docker compose up -d gateway funasr-0
+# 启用更多 ASR 引擎:
+#   docker compose --profile dolphin up -d                       # +dolphin
+#   docker compose --profile qwen3-asr up -d                     # +qwen3-asr
+#   docker compose --profile dolphin --profile qwen3-asr up -d   # 全部
 #
-# 多副本 (多 GPU):
-#   docker compose up -d --scale funasr-0=2  ... (需先把 gpu device_ids 改成 deploy.resources)
+# 多副本 / 多卡:
+#   用 scripts/plan_deployment.py 算出配置, 生成 docker-compose.override.yml
+#   见 docs/deployment.md §4.3 / §5
 
 x-gateway-env: &gateway-env
   # 网关到子服务的 URL — 在 docker network 内通过 service name 互访
@@ -54,6 +57,12 @@ x-gpu-deploy: &gpu-deploy
           - driver: nvidia
             count: 1
             capabilities: [gpu]
+  # uv run 启动时会做 bytecode 编译, 短时 fd 用量很高 (commit 00fbeff)。
+  # 默认 docker ulimit 偏低, 这里显式调高以防 "Too many open files"。
+  ulimits:
+    nofile:
+      soft: 65535
+      hard: 65535
 
 
 services:
@@ -144,8 +153,13 @@ services:
     environment:
       <<: *subservice-env
       PORT: "8003"
+      # 在线场景: 写 modelscope id, 容器首次启动会自动下载到 mount 的 hub/
+      # 离线场景: 改成 /root/.cache/modelscope/hub/Qwen/Qwen3-ASR-1.7B
+      # 同时务必设置下面两个 OFFLINE 环境变量, 否则 vLLM 会尝试连 huggingface
       QWEN3_ASR_MODEL_ID: ${QWEN3_ASR_MODEL_ID:-Qwen/Qwen3-ASR-1.7B}
       QWEN3_ASR_GPU_MEM: ${QWEN3_ASR_GPU_MEM:-0.8}
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-}
+      TRANSFORMERS_OFFLINE: ${TRANSFORMERS_OFFLINE:-}
       CUDA_VISIBLE_DEVICES: "0"
     volumes:
       - *modelscope-cache

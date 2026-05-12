@@ -17,6 +17,7 @@ finish_streaming_transcribe API,具备跨段上下文与 token 修订能力,
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import logging
@@ -37,6 +38,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from fastapi.responses import JSONResponse
 
 
 logger = logging.getLogger("qwen3_asr_service")
@@ -146,12 +148,46 @@ def transcribe_file_offline(
 # ---------------------------------------------------------------------------
 
 
+_vllm_lock: Optional[asyncio.Lock] = None
+_load_failed: bool = False
+_load_error_msg: str = ""
+
+
+def _get_vllm_lock() -> asyncio.Lock:
+    """vLLM 的 Python LLM 入口 (Qwen3ASRModel.LLM().streaming_transcribe / generate)
+    不是线程安全的 — 多线程同时调用会让 vLLM 内部 scheduler 死锁。
+    用一把全局 asyncio.Lock 保证任何时刻只有 1 个调用进入 vLLM。
+
+    这不影响 vLLM 的吞吐: vLLM 自身的 continuous batching 会在 engine 内部
+    把多个 sequence 拼成一个 GPU batch — 我们只是把"提交请求"这个动作串行化,
+    实际 GPU 上同时跑多少 sequence 是 vLLM 自己决定的。
+    """
+    global _vllm_lock
+    if _vllm_lock is None:
+        _vllm_lock = asyncio.Lock()
+    return _vllm_lock
+
+
+async def _run_inference(func, *args, **kwargs):
+    """qwen3-asr / vLLM 推理 offload。
+    - to_thread: 避免 sync 调用阻塞 event loop, /health 等仍可正常响应
+    - asyncio.Lock: 保证 vLLM LLM 入口串行调用, 避免线程安全 bug
+    """
+    lock = _get_vllm_lock()
+    async with lock:
+        return await asyncio.to_thread(func, *args, **kwargs)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _load_failed, _load_error_msg
     try:
         _load_model()
+        _get_vllm_lock()
         logger.info("Qwen3-ASR 子服务就绪")
     except Exception as exc:
+        _load_failed = True
+        _load_error_msg = str(exc)
         logger.error("Qwen3-ASR 模型预加载失败: %s", exc, exc_info=True)
     yield
 
@@ -176,12 +212,20 @@ def _ws_check_token(websocket: WebSocket) -> bool:
 
 @app.get("/health")
 async def health() -> dict:
-    return {
+    body = {
         "status": "healthy",
         "model": MODEL_PATH,
         "model_loaded": _model is not None,
         "sample_rate": SAMPLE_RATE,
     }
+    if _load_failed:
+        body["status"] = "unhealthy"
+        body["error"] = _load_error_msg
+        return JSONResponse(status_code=503, content=body)
+    if _model is None:
+        body["status"] = "starting"
+        return JSONResponse(status_code=503, content=body)
+    return body
 
 
 @app.post("/asr/file")
@@ -200,7 +244,8 @@ async def asr_file(
     )
 
     try:
-        result = transcribe_file_offline(
+        result = await _run_inference(
+            transcribe_file_offline,
             audio_bytes=audio_bytes,
             audio_format=audio_format,
             language=language or None,
@@ -255,7 +300,8 @@ async def asr_stream(websocket: WebSocket) -> None:
                     )
 
                     model = _load_model()
-                    state = model.init_streaming_state(
+                    state = await _run_inference(
+                        model.init_streaming_state,
                         unfixed_chunk_num=unfixed_chunk_num,
                         unfixed_token_num=unfixed_token_num,
                         chunk_size_sec=chunk_size_sec,
@@ -270,7 +316,7 @@ async def asr_stream(websocket: WebSocket) -> None:
                         await websocket.send_json({"type": "error", "message": "not started"})
                         continue
                     model = _load_model()
-                    model.finish_streaming_transcribe(state)
+                    await _run_inference(model.finish_streaming_transcribe, state)
                     final_text = getattr(state, "text", "") or ""
                     await websocket.send_json({"type": "flushed", "text": final_text})
                     # 重置 state, 下一句重新 init
@@ -314,7 +360,9 @@ async def asr_stream(websocket: WebSocket) -> None:
 
                 try:
                     model = _load_model()
-                    model.streaming_transcribe(audio_array, state)
+                    await _run_inference(
+                        model.streaming_transcribe, audio_array, state
+                    )
                     cur_text = getattr(state, "text", "") or ""
                     cur_lang = getattr(state, "language", "") or ""
                 except Exception as exc:

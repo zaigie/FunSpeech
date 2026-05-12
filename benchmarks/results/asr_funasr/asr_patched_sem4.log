@@ -1,0 +1,14 @@
+使用 16 段音频
+--- 测试 concurrency=1 ---
+  wall=0.08s ok=1/1 req/s=12.51 p50=0.08s p95=0.08s max=0.08s
+--- 测试 concurrency=2 ---
+  wall=0.20s ok=2/2 req/s=9.88 p50=0.18s p95=0.20s max=0.20s
+--- 测试 concurrency=4 ---
+  wall=0.52s ok=4/4 req/s=7.75 p50=0.51s p95=0.51s max=0.51s
+--- 测试 concurrency=8 ---
+  wall=0.88s ok=8/8 req/s=9.10 p50=0.85s p95=0.88s max=0.88s
+--- 测试 concurrency=16 ---
+  wall=1.99s ok=16/16 req/s=8.03 p50=1.52s p95=1.98s max=1.99s
+--- 测试 concurrency=32 ---
+  wall=3.23s ok=32/32 req/s=9.91 p50=1.81s p95=3.17s max=3.22s
+-> benchmarks/asr_patched_sem4.json

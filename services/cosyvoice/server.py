@@ -22,11 +22,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import io
 import json
 import logging
 import os
+import re
 import sys
 import tempfile
 import threading
@@ -47,7 +49,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
-from fastapi.responses import Response
+from fastapi.responses import JSONResponse, Response
 
 
 logger = logging.getLogger("cosyvoice_service")
@@ -76,6 +78,26 @@ MODELSCOPE_PATH = os.path.expanduser(
     os.getenv("MODELSCOPE_PATH", "~/.cache/modelscope/hub")
 )
 INTERNAL_SERVICE_TOKEN = os.getenv("INTERNAL_SERVICE_TOKEN", "")
+# CosyVoice 推理 3-4 秒, 比 ASR 长得多, 单卡上让 2 个推理交叠跑能榨出 ~20% 吞吐
+# (实测见 benchmarks/results/tts/tts_patched_sem2.json)。sem 调更大会因
+# CUDA 上下文切换反而变慢。横向扩展用多副本。
+GPU_INFERENCE_CONCURRENCY = 2
+
+# voice CRUD 名称白名单: 字母数字 + 中文 + 常见标点; 长度 1-64
+# 防止路径穿越 (`..`, `/`) 以及拼接进 spk2info 的非法 key
+_VOICE_NAME_RE = re.compile(r"^[A-Za-z0-9一-鿿._-]{1,64}$")
+
+
+def _validate_voice_name(name: str) -> None:
+    """音色名校验, 不合法时抛 HTTPException 400"""
+    if not name or not _VOICE_NAME_RE.fullmatch(name):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "invalid voice name: only A-Za-z0-9, 中文, '.', '_', '-' allowed, "
+                "length 1-64"
+            ),
+        )
 
 # 音色与注册表存储位置(由 docker-compose 通过卷 mount 进 /app/voices)
 VOICES_DIR = Path(os.getenv("VOICES_DIR", "/app/voices"))
@@ -152,22 +174,45 @@ def _load_registry_from_disk() -> Dict[str, Any]:
     }
 
 
+def _atomic_write_bytes(target: Path, data: bytes) -> None:
+    """tempfile + os.replace 原子写, 防止崩溃时写半截内容。"""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=target.name + ".", suffix=".tmp", dir=str(target.parent)
+    )
+    try:
+        with os.fdopen(fd, "wb") as fp:
+            fp.write(data)
+            fp.flush()
+            os.fsync(fp.fileno())
+        os.replace(tmp_path, target)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+
+
 def _save_registry() -> None:
     _ensure_voices_dirs()
     now = datetime.datetime.now().isoformat()
     _registry["updated_at"] = now
     if not _registry.get("created_at"):
         _registry["created_at"] = now
-    with open(REGISTRY_FILE, "w", encoding="utf-8") as f:
-        json.dump(_registry, f, ensure_ascii=False, indent=2)
+    payload = json.dumps(_registry, ensure_ascii=False, indent=2).encode("utf-8")
+    _atomic_write_bytes(REGISTRY_FILE, payload)
 
 
 def _custom_save_spkinfo(self) -> None:
-    """monkey-patch 进 cosyvoice 实例 — 把 spk2info.pt 存到 VOICES_DIR/spk/"""
+    """monkey-patch 进 cosyvoice 实例 — 把 spk2info.pt 存到 VOICES_DIR/spk/
+    通过 BytesIO + 原子写; 防止半写出现的 spk2info.pt 把进程下次启动卡死。"""
     import torch
 
     _ensure_voices_dirs()
-    torch.save(self.frontend.spk2info, str(SPKINFO_FILE))
+    buf = io.BytesIO()
+    torch.save(self.frontend.spk2info, buf)
+    _atomic_write_bytes(SPKINFO_FILE, buf.getvalue())
     logger.info("spkinfo 已保存到: %s", SPKINFO_FILE)
 
 
@@ -514,47 +559,53 @@ def voice_add(
 
     import torchaudio
 
-    info = torchaudio.info(str(wav_path))
-    duration = info.num_frames / info.sample_rate
-    if duration < 1.0:
-        raise ValueError(f"音频过短 ({duration:.2f}s), 至少 1 秒")
-    if duration > 30.0:
-        logger.warning("音频较长 (%.2fs), 建议 ≤30s", duration)
+    # 全过程持锁: add_zero_shot_spk / save_spkinfo / _registry 写都不能并发,
+    # 否则 spk2info.pt 与 voice_registry.json 会出现半写或丢失记录
+    with _load_lock:
+        info = torchaudio.info(str(wav_path))
+        duration = info.num_frames / info.sample_rate
+        if duration < 1.0:
+            raise ValueError(f"音频过短 ({duration:.2f}s), 至少 1 秒")
+        if duration > 30.0:
+            logger.warning("音频较长 (%.2fs), 建议 ≤30s", duration)
 
-    success = _cosyvoice_clone.add_zero_shot_spk(
-        prompt_text, str(wav_path), name
-    )
-    if not success:
-        raise RuntimeError(f"add_zero_shot_spk 返回 False: {name}")
+        success = _cosyvoice_clone.add_zero_shot_spk(
+            prompt_text, str(wav_path), name
+        )
+        if not success:
+            raise RuntimeError(f"add_zero_shot_spk 返回 False: {name}")
 
-    _cosyvoice_clone.save_spkinfo()
+        _cosyvoice_clone.save_spkinfo()
 
-    record = {
-        "name": name,
-        "reference_text": prompt_text,
-        "audio_file": wav_path.name,
-        "file_size": os.path.getsize(wav_path),
-        "audio_duration": duration,
-        "added_at": datetime.datetime.now().isoformat(),
-        "status": "active",
-    }
-    _registry["voices"][name] = record
-    _save_registry()
-    return record
+        record = {
+            "name": name,
+            "reference_text": prompt_text,
+            "audio_file": wav_path.name,
+            "file_size": os.path.getsize(wav_path),
+            "audio_duration": duration,
+            "added_at": datetime.datetime.now().isoformat(),
+            "status": "active",
+        }
+        _registry["voices"][name] = record
+        _save_registry()
+        return record
 
 
 def voice_remove(name: str) -> bool:
     if _cosyvoice_clone is None:
         return False
-    spk2info = getattr(_cosyvoice_clone.frontend, "spk2info", {})
-    if name in spk2info:
-        del spk2info[name]
-        _cosyvoice_clone.save_spkinfo()
-    if name in _registry.get("voices", {}):
-        del _registry["voices"][name]
-        _save_registry()
-        return True
-    return False
+    with _load_lock:
+        spk2info = getattr(_cosyvoice_clone.frontend, "spk2info", {})
+        removed = False
+        if name in spk2info:
+            del spk2info[name]
+            _cosyvoice_clone.save_spkinfo()
+            removed = True
+        if name in _registry.get("voices", {}):
+            del _registry["voices"][name]
+            _save_registry()
+            removed = True
+        return removed
 
 
 def voice_list_all() -> List[str]:
@@ -611,12 +662,35 @@ def text_normalize(text: str) -> List[str]:
 # ---------------------------------------------------------------------------
 
 
+_gpu_semaphore: Optional[asyncio.Semaphore] = None
+_load_failed: bool = False
+_load_error_msg: str = ""
+
+
+def _get_gpu_semaphore() -> asyncio.Semaphore:
+    global _gpu_semaphore
+    if _gpu_semaphore is None:
+        _gpu_semaphore = asyncio.Semaphore(GPU_INFERENCE_CONCURRENCY)
+    return _gpu_semaphore
+
+
+async def _run_inference(func, *args, **kwargs):
+    """整段合成: offload 到线程 + GPU 并发限制"""
+    sem = _get_gpu_semaphore()
+    async with sem:
+        return await asyncio.to_thread(func, *args, **kwargs)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _load_failed, _load_error_msg
     try:
         _load_models()
+        _get_gpu_semaphore()
         logger.info("CosyVoice 子服务就绪 (device=%s)", DEVICE)
     except Exception as exc:
+        _load_failed = True
+        _load_error_msg = str(exc)
         logger.error("CosyVoice 模型预加载失败: %s", exc, exc_info=True)
     yield
 
@@ -639,7 +713,7 @@ def _ws_check_token(websocket: WebSocket) -> bool:
 
 @app.get("/health")
 async def health() -> dict:
-    return {
+    body = {
         "status": "healthy",
         "device": DEVICE,
         "mode": TTS_MODEL_MODE,
@@ -651,6 +725,18 @@ async def health() -> dict:
         "vllm": TTS_LOAD_VLLM,
         "trt": TTS_LOAD_TRT,
     }
+    if _load_failed:
+        body["status"] = "unhealthy"
+        body["error"] = _load_error_msg
+        return JSONResponse(status_code=503, content=body)
+    expected_sft = TTS_MODEL_MODE in ("all", "sft")
+    expected_clone = TTS_MODEL_MODE in ("all", "clone")
+    if (expected_sft and _cosyvoice_sft is None) or (
+        expected_clone and _cosyvoice_clone is None
+    ):
+        body["status"] = "starting"
+        return JSONResponse(status_code=503, content=body)
+    return body
 
 
 @app.post("/tts/file")
@@ -667,7 +753,8 @@ async def tts_file(request: Request) -> Response:
         raise HTTPException(status_code=400, detail="text required")
 
     try:
-        wav_bytes, native_sr, sentences = synthesize_offline(
+        wav_bytes, native_sr, sentences = await _run_inference(
+            synthesize_offline,
             text=text,
             voice=voice,
             speed=speed,
@@ -699,6 +786,7 @@ async def voices_list(request: Request) -> dict:
 @app.get("/voices/{name}")
 async def voice_info(request: Request, name: str) -> dict:
     _check_token(request)
+    _validate_voice_name(name)
     info = voice_get_info(name)
     if info is None:
         # 预设音色没有 registry 条目, 返回默认
@@ -716,15 +804,34 @@ async def voice_create(
     audio: UploadFile = File(...),
 ) -> dict:
     _check_token(request)
+    _validate_voice_name(name)
 
     _ensure_voices_dirs()
-    suffix = os.path.splitext(audio.filename or "voice.wav")[1] or ".wav"
+    suffix_raw = os.path.splitext(audio.filename or "voice.wav")[1] or ".wav"
+    # 限制后缀字符集 — 进一步防 `..` / 路径分隔符
+    suffix = re.sub(r"[^A-Za-z0-9.]", "", suffix_raw)[:8] or ".wav"
     target = VOICES_DIR / f"{name}{suffix}"
+
+    # 双重保险: resolve 后必须仍位于 VOICES_DIR 之内
+    try:
+        target_resolved = target.resolve()
+        voices_resolved = VOICES_DIR.resolve()
+        target_resolved.relative_to(voices_resolved)
+    except (ValueError, OSError):
+        raise HTTPException(status_code=400, detail="invalid voice path")
+
+    audio_bytes = await audio.read()
     with open(target, "wb") as fp:
-        fp.write(await audio.read())
+        fp.write(audio_bytes)
 
     try:
-        record = voice_add(name=name, prompt_text=prompt_text, wav_path=target)
+        # voice_add 内部要做 torchaudio.info + add_zero_shot_spk (GPU) + 落盘
+        # 全部走 _run_inference 一是不阻塞 event loop, 二是和合成 GPU 推理共用 semaphore
+        record = await _run_inference(
+            voice_add, name=name, prompt_text=prompt_text, wav_path=target
+        )
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("注册音色失败")
         raise HTTPException(status_code=400, detail=str(exc))
@@ -734,7 +841,9 @@ async def voice_create(
 @app.delete("/voices/{name}")
 async def voice_delete(request: Request, name: str) -> dict:
     _check_token(request)
-    ok = voice_remove(name)
+    _validate_voice_name(name)
+    # voice_remove 内含 _load_lock + torch.save 落盘, offload 到线程
+    ok = await asyncio.to_thread(voice_remove, name)
     if not ok:
         raise HTTPException(status_code=404, detail=f"voice not found: {name}")
     return {"removed": name}
@@ -826,11 +935,15 @@ async def tts_stream(websocket: WebSocket) -> None:
     native_sr = int(engine.sample_rate)
     await websocket.send_json({"type": "started", "sample_rate": native_sr})
 
-    try:
+    # GPU 信号量: 整段流式合成期间持有 — 防止同一时刻多条 inference 抢同一张卡
+    sem = _get_gpu_semaphore()
+    _SENTINEL = object()
+
+    def _make_gen():
         if use_clone:
             formatted_prompt = _format_prompt_for_clone(prompt)
             if prompt:
-                gen = engine.inference_instruct2(
+                return engine.inference_instruct2(
                     text,
                     formatted_prompt,
                     None,
@@ -838,24 +951,44 @@ async def tts_stream(websocket: WebSocket) -> None:
                     stream=True,
                     speed=speed,
                 )
-            else:
-                gen = engine.inference_zero_shot(
-                    text,
-                    "",
-                    None,
-                    zero_shot_spk_id=voice,
-                    stream=True,
-                    speed=speed,
-                )
-        else:
-            gen = engine.inference_sft(text, voice, stream=True, speed=speed)
+            return engine.inference_zero_shot(
+                text,
+                "",
+                None,
+                zero_shot_spk_id=voice,
+                stream=True,
+                speed=speed,
+            )
+        return engine.inference_sft(text, voice, stream=True, speed=speed)
 
-        for audio_data in gen:
-            chunk = audio_data["tts_speech"].numpy()
-            if chunk.ndim == 2:
-                chunk = chunk[0]
-            chunk_f32 = np.asarray(chunk, dtype=np.float32)
-            await websocket.send_bytes(chunk_f32.tobytes())
+    def _next_chunk(it):
+        """逐帧 next() — 在工作线程里跑, 每帧 = 一次 GPU 推理"""
+        try:
+            return next(it)
+        except StopIteration:
+            return _SENTINEL
+
+    try:
+        async with sem:
+            # 在线程里创建生成器 (CosyVoice 的 inference_* 在第一帧之前可能做不少
+            # 同步 CPU 工作: 文本归一化 / token 化), 这里也 offload 出 event loop
+            gen = await asyncio.to_thread(_make_gen)
+
+            while True:
+                # 客户端断开 → 跳出, 不再消耗 GPU
+                if websocket.client_state.name != "CONNECTED":
+                    logger.info("TTS WS 客户端已断开, 停止合成")
+                    break
+
+                audio_data = await asyncio.to_thread(_next_chunk, gen)
+                if audio_data is _SENTINEL:
+                    break
+
+                chunk = audio_data["tts_speech"].numpy()
+                if chunk.ndim == 2:
+                    chunk = chunk[0]
+                chunk_f32 = np.asarray(chunk, dtype=np.float32)
+                await websocket.send_bytes(chunk_f32.tobytes())
 
         await websocket.send_json({"type": "done"})
 

@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import logging
@@ -34,6 +35,7 @@ from fastapi import (
     WebSocket,
     WebSocketDisconnect,
 )
+from fastapi.responses import JSONResponse
 
 
 logger = logging.getLogger("funasr_service")
@@ -53,6 +55,12 @@ MODELSCOPE_PATH = os.path.expanduser(
     os.getenv("MODELSCOPE_PATH", "~/.cache/modelscope/hub")
 )
 INTERNAL_SERVICE_TOKEN = os.getenv("INTERNAL_SERVICE_TOKEN", "")
+
+# GPU 上同一时刻允许并发推理的最大数量 — funasr 是 torch 模型, 同卡上多线程并发
+# 通常无加速, 反而增加上下文切换。固定 = 1 (串行化进 GPU)。
+# event loop 由 to_thread 保证不阻塞, 多客户端的 HTTP/WS 解析仍可并行。
+# 横向扩展请用多副本 (docker compose up --scale funasr-0=N), 不要调这个。
+GPU_INFERENCE_CONCURRENCY = 1
 
 OFFLINE_MODEL = os.getenv(
     "FUNASR_OFFLINE_MODEL",
@@ -311,16 +319,42 @@ def punc_realtime_apply(text: str, cache: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
+_gpu_semaphore: Optional[asyncio.Semaphore] = None
+_load_failed: bool = False
+_load_error_msg: str = ""
+
+
+def _get_gpu_semaphore() -> asyncio.Semaphore:
+    global _gpu_semaphore
+    if _gpu_semaphore is None:
+        _gpu_semaphore = asyncio.Semaphore(GPU_INFERENCE_CONCURRENCY)
+    return _gpu_semaphore
+
+
+async def _run_inference(func, *args, **kwargs):
+    """把同步推理 offload 到默认线程池, 并用 semaphore 限制 GPU 并发。
+    解决: 同步 torch 推理被直接放在 async handler 里 → 阻塞 event loop, 单 in-flight。
+    """
+    sem = _get_gpu_semaphore()
+    async with sem:
+        return await asyncio.to_thread(func, *args, **kwargs)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # 启动时根据 mode 预加载,避免首次请求长等待
+    global _load_failed, _load_error_msg
     try:
         if ASR_MODEL_MODE in ("all", "offline"):
             _load_offline_model()
         if ASR_MODEL_MODE in ("all", "realtime"):
             _load_realtime_model()
+        # 提前初始化 semaphore (在 running loop 里)
+        _get_gpu_semaphore()
         logger.info("FunASR 子服务就绪 (mode=%s, device=%s)", ASR_MODEL_MODE, DEVICE)
     except Exception as exc:
+        _load_failed = True
+        _load_error_msg = str(exc)
         logger.error("模型预加载失败: %s", exc, exc_info=True)
     yield
 
@@ -338,7 +372,9 @@ def _check_internal_token(request: Request) -> None:
 
 @app.get("/health")
 async def health() -> dict:
-    return {
+    """健康检查。若启动时模型加载失败, 或当前 mode 要求的模型未就绪,
+    返回 503 让 docker healthcheck / 网关侧能感知。"""
+    body = {
         "status": "healthy",
         "device": DEVICE,
         "mode": ASR_MODEL_MODE,
@@ -348,6 +384,18 @@ async def health() -> dict:
         "punc_loaded": _punc_model is not None,
         "punc_realtime_loaded": _punc_realtime_model is not None,
     }
+    if _load_failed:
+        body["status"] = "unhealthy"
+        body["error"] = _load_error_msg
+        return JSONResponse(status_code=503, content=body)
+    expected_offline = ASR_MODEL_MODE in ("all", "offline")
+    expected_realtime = ASR_MODEL_MODE in ("all", "realtime")
+    if (expected_offline and _offline_model is None) or (
+        expected_realtime and _realtime_model is None
+    ):
+        body["status"] = "starting"
+        return JSONResponse(status_code=503, content=body)
+    return body
 
 
 @app.post("/asr/file")
@@ -374,7 +422,8 @@ async def asr_file(
         tmp_path = tmp.name
 
     try:
-        text = transcribe_offline(
+        text = await _run_inference(
+            transcribe_offline,
             audio_path=tmp_path,
             hotwords=hotwords,
             enable_punctuation=enable_punctuation,
@@ -406,11 +455,18 @@ async def asr_punc(
         return {"text": ""}
 
     realtime = (payload.get("mode") or "offline").lower() == "realtime"
-    try:
+
+    def _do_punc() -> Optional[dict]:
         punc_inst = _get_punc_model(realtime=realtime)
-        result = punc_inst.generate(input=text, cache={})
-        if result and len(result):
-            return {"text": result[0].get("text", text)}
+        r = punc_inst.generate(input=text, cache={})
+        if r and len(r):
+            return r[0]
+        return None
+
+    try:
+        item = await _run_inference(_do_punc)
+        if item:
+            return {"text": item.get("text", text)}
     except Exception as exc:
         logger.exception("PUNC 失败")
         raise HTTPException(status_code=500, detail=f"punc error: {exc}")
@@ -524,7 +580,8 @@ async def asr_stream(websocket: WebSocket) -> None:
                         continue
 
                     empty = np.array([], dtype=np.float32)
-                    text = transcribe_realtime_chunk(
+                    text = await _run_inference(
+                        transcribe_realtime_chunk,
                         empty,
                         audio_cache,
                         is_final=True,
@@ -588,7 +645,8 @@ async def asr_stream(websocket: WebSocket) -> None:
                 )
 
                 try:
-                    text_raw = transcribe_realtime_chunk(
+                    text_raw = await _run_inference(
+                        transcribe_realtime_chunk,
                         audio_array,
                         audio_cache,
                         is_final=False,
@@ -606,7 +664,9 @@ async def asr_stream(websocket: WebSocket) -> None:
                 text_punc = ""
                 if enable_realtime_punc and text_raw:
                     try:
-                        text_punc = punc_realtime_apply(text_raw, punc_cache)
+                        text_punc = await _run_inference(
+                            punc_realtime_apply, text_raw, punc_cache
+                        )
                     except Exception as exc:
                         logger.warning("实时 PUNC 失败: %s", exc)
 

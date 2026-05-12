@@ -84,41 +84,63 @@ docker compose build --parallel
 
 每个 GPU 子服务通过 `deploy.resources.reservations.devices` 申明 nvidia 设备,容器内通过 `CUDA_VISIBLE_DEVICES` 选卡。
 
-### 4.2 单卡共置 vs 独占
+### 4.2 资源占用 (基于 4090 24G 实测)
 
-进程内 vLLM 加速 ≠ vLLM serve。CosyVoice 与 Qwen3-ASR 都是"用 vLLM 跑模型里的 LLM 那一段",前后还有自己的 frontend / flow / vocoder / encoder / projector,**整体并发上限 = 副本数 = GPU 卡数**,不像通用 LLM 那样靠 continuous batching 把单卡吃满。
+**单副本吞吐和显存** — 全部数据来自 `benchmarks/results/`:
 
-显存预算粗估(BF16/FP16,**不含 vLLM KV cache 池**):
+| 子服务 | 单副本吞吐 (req/s) | 单条延迟 (示例) | 权重显存 | 实际占卡 |
+|---|---|---|---|---|
+| `funasr-0` (all) | **~12** | 70-80 ms | ~2.5-3 GiB | ~3 GiB |
+| `funasr-0` (offline) | ~12 | ~80 ms | ~0.7 GiB | ~1 GiB |
+| `dolphin-0` | ~12 | ~80 ms | ~0.6 GiB | ~1 GiB |
+| `qwen3-asr-0` | **~5** | ~190 ms | ~4 GiB **权重** | **总 = `QWEN3_ASR_GPU_MEM × 卡显存`** |
+| `cosyvoice-0` (clone) | **~0.34** | ~3.5 s | ~3.5 GiB | ~4 GiB |
+| `cosyvoice-0` (all, sft+clone) | ~0.34 | ~3.5 s | ~5 GiB | ~5.5 GiB |
 
-| 子服务 | 模型权重 | 备注 |
-|---|---|---|
-| `funasr-0` | ~2.5–3 GB | Paraformer-Large + Paraformer-Online + VAD + PUNC × 2 |
-| `dolphin-0` | ~0.6 GB | Dolphin Small |
-| `qwen3-asr-0` | 模型 ~3.5–4 GB **+** KV cache 池 = `QWEN3_ASR_GPU_MEM × 卡显存` | 详见 §6.3 |
-| `cosyvoice-0` | ~3.5 GB(`TTS_LOAD_VLLM=false` 时) | 启用 vLLM 再加 ~1 GB |
+> qwen3-asr 一启动就**直接预占** `QWEN3_ASR_GPU_MEM × 卡显存` (vLLM 把权重 + KV cache 池都放在这一片里), 不是只占权重 4 GiB。这是和 funasr / cosyvoice 最不一样的地方。
 
-**典型组合:**
+**关键约束**:
+1. **同一个服务的多个副本不能放同一张卡** — 它们会抢同一份 GPU SM, 实际吞吐 ≈ 1 副本。横向扩展 = 多卡多副本, 不是单卡多副本。
+2. **不同服务可以共置同一张卡** — 例如 funasr (3 GiB) + cosyvoice (5 GiB) 可以同卡, 共占 ~9 GiB。
+3. **qwen3-asr 占卡霸道**: 独占时 `QWEN3_ASR_GPU_MEM=0.85` 性能最好但吃掉 ~20 GiB; 共置时降到 0.3-0.4 (~7-10 GiB) 但 KV pool 小, 高 QPS 下批处理空间小。
 
-| 场景 | 卡 | 配置 |
-|---|---|---|
-| 8 GB 单卡 | 卡 0 | funasr + cosyvoice (vLLM=off),不开 qwen3-asr |
-| 24 GB 单卡 | 卡 0 | funasr + cosyvoice + dolphin + qwen3-asr (`QWEN3_ASR_GPU_MEM=0.3`) |
-| 24 GB 双卡 | 卡 0 | funasr + cosyvoice + dolphin |
-| | 卡 1 | qwen3-asr 独占(`QWEN3_ASR_GPU_MEM=0.85`,吃满 KV cache 才能体现 vLLM 价值) |
+### 4.3 怎么算自己应该几副本几卡: 用脚本
 
-### 4.3 配卡的两种方式
-
-**方式 A — 全部贴卡 0(默认):** docker-compose.yml 里所有 GPU 子服务的 `CUDA_VISIBLE_DEVICES: "0"`,适合单卡或想让所有模型共置。
-
-**方式 B — 跨卡分布:** 在 `.env` 或直接编辑 docker-compose.yml,把不同子服务指向不同卡:
+不要靠拍脑袋, 直接用 `scripts/plan_deployment.py`:
 
 ```bash
-# 把 qwen3-asr 移到卡 1, 其它留在卡 0
-# 编辑 docker-compose.yml:
-#   qwen3-asr-0:
-#     environment:
-#       CUDA_VISIBLE_DEVICES: "1"
+# 交互式: 一步步问你 GPU + 目标 QPS
+python3 scripts/plan_deployment.py
+
+# 用预设场景看看
+python3 scripts/plan_deployment.py --list-presets
+python3 scripts/plan_deployment.py --preset 4090-quad
+
+# 从 JSON 文件读 (适合 CI / 复用)
+python3 scripts/plan_deployment.py --json my_setup.json
 ```
+
+脚本输入: GPU 列表 (每张卡的显存) + 想启用哪些服务和各自的目标 QPS。
+脚本输出:
+- 每个服务需要几副本 (按吞吐反推)
+- 每个副本绑哪张卡 (worst-fit 启发, 让显存均匀分布)
+- 显存预算表 (含 vLLM KV pool 估算)
+- 直接可粘贴的 `docker-compose.override.yml` 片段 + 网关 `.env` 片段
+- 哪些 QPS 目标因卡数/显存不够达不到 → 给出明确的扩容建议
+
+**典型例子** (摘自脚本输出):
+
+| 场景 | GPU | 建议 |
+|---|---|---|
+| 单 24G 卡, funasr 20 路 + cosyvoice 0.3 路 | 1× 4090 | funasr + cosyvoice 同卡 0, 但只够 1 副本 funasr (12 req/s), 想到 20 需加卡 |
+| 双 24G 卡, qwen3-asr 10 路 + cosyvoice 0.3 路 | 2× 4090 | qwen3-asr 各占 1 张卡 (`GPU_MEM=0.85`), cosyvoice 没地方放 → 加第 3 张卡 |
+| 4× 24G 卡, funasr 24 路 + qwen3-asr 10 路 + cosyvoice 0.6 路 | 4× 4090 | 卡 0/1 跑 qwen3-asr 各 1 副本, 卡 2/3 跑 funasr+cosyvoice 各 1 副本 |
+
+### 4.4 跨卡分布的两种方式
+
+**方式 A — 全部贴卡 0(默认):** `docker-compose.yml` 里所有 GPU 子服务的 `CUDA_VISIBLE_DEVICES: "0"`,适合单卡或想让所有模型共置。
+
+**方式 B — 跨卡分布:** 直接用上面 `plan_deployment.py` 的输出, 把生成的 `docker-compose.override.yml` 写进项目根。Docker Compose 自动 merge override。
 
 注意 `device_ids: ["0", "1"]` 不会在子服务进程内启用张量并行(那需要 vLLM 的 `tensor_parallel_size`,且只对装不下的大模型有意义,本项目模型都是 0.5B–1.7B,装得下,不需要切)。多卡的正确用法是**多副本**(§5)。
 
@@ -126,15 +148,28 @@ docker compose build --parallel
 
 ### 5.1 添加副本
 
-每张额外的卡 = 一个新副本。两步:
+**推荐**: 用 `scripts/plan_deployment.py` 一键生成 `docker-compose.override.yml` 片段和网关 `.env` (见 §4.3)。
 
-1. 在 `docker-compose.yml` 加新服务条目(`funasr-1`),把 `CUDA_VISIBLE_DEVICES` 设成另一张卡:
+**手动**: 每张额外的卡 = 一个新副本。两步:
+
+1. 在 `docker-compose.override.yml` 加新服务条目(`funasr-1`),把 `CUDA_VISIBLE_DEVICES` 设成另一张卡, **不要**给 `-0` 的容器名碰撞 (要给新副本不同的 `container_name`):
    ```yaml
-   funasr-1:
-     <<: *funasr-base   # 假设抽 anchor; 或直接复制 funasr-0 的定义
-     container_name: funspeech-funasr-1
-     environment:
-       CUDA_VISIBLE_DEVICES: "1"
+   services:
+     funasr-1:
+       image: funspeech/funasr:latest
+       container_name: funspeech-funasr-1
+       environment:
+         CUDA_VISIBLE_DEVICES: "1"
+         INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-funspeech-internal}
+         PORT: "8001"
+       volumes:
+         - ${MODELSCOPE_CACHE:-~/.cache/modelscope/hub/models}:/root/.cache/modelscope/hub
+       deploy:
+         resources:
+           reservations:
+             devices:
+               - {driver: nvidia, device_ids: ["1"], capabilities: [gpu]}
+       restart: unless-stopped
    ```
 2. 网关 env 里把对应 URL 列表逗号分隔:
    ```
@@ -142,6 +177,8 @@ docker compose build --parallel
    ```
 
 网关侧 `_HttpReplicaPool` 会做最少连接 + 随机选副本调度;每个外部 WS 会话**绑定固定副本**(session 级亲和性),保证 cache 状态不串。
+
+> ⚠️ **同一服务的多个副本不要绑同一张卡**: 例如不要 `funasr-0` 和 `funasr-1` 都用 `CUDA_VISIBLE_DEVICES: "0"`。两个副本会抢同一份 GPU SM, 总吞吐反而下降 (实测见 `benchmarks/results/`)。 横向扩展 = 多卡多副本。
 
 ### 5.2 cosyvoice 多副本的写副本与同步
 
@@ -207,7 +244,7 @@ cosyvoice 子服务暴露 `POST /voices/reload`, 用磁盘上的 `spk2info.pt` +
 | `PUNC_MODEL_REVISION` | `v2.0.4` | |
 | `PUNC_REALTIME_MODEL` | `iic/punc_ct-transformer_zh-cn-common-vad_realtime-vocab272727` | 实时标点 |
 
-显存:`offline` 模式只占 ~0.7 GB;`all` 模式约 2.5–3 GB(两个 paraformer + VAD + 双 PUNC)。
+显存 (4090 实测):`offline` 模式只占 ~0.7 GB;`all` 模式约 2.5–3 GB(两个 paraformer + VAD + 双 PUNC)。单副本吞吐 ~12 req/s (单条 70-80ms), 高 QPS 用多副本扩。
 
 ### 6.2 dolphin-0 (端口 8002,profile=dolphin)
 
@@ -223,23 +260,26 @@ cosyvoice 子服务暴露 `POST /voices/reload`, 用磁盘上的 `spk2info.pt` +
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `QWEN3_ASR_MODEL_ID` | `Qwen/Qwen3-ASR-1.7B` | vLLM 加载的模型 id |
-| `QWEN3_ASR_GPU_MEM` | `0.8` | **vLLM 启动时直接预留这么大比例的卡显存做 KV cache 池** |
-| `QWEN3_ASR_MAX_NEW_TOKENS` | `32` | 单步生成上限,影响延迟与显存 |
+| `QWEN3_ASR_MODEL_ID` | `Qwen/Qwen3-ASR-1.7B` | vLLM 加载的模型 id (也可指向本地路径) |
+| `QWEN3_ASR_GPU_MEM` | `0.8` | **vLLM 启动时直接预留这么大比例的卡显存做权重+KV pool** |
+| `QWEN3_ASR_MAX_NEW_TOKENS` | `4096` | 单步生成上限 (官方推荐, 影响 KV pool 大小) |
+| `QWEN3_ASR_MAX_BATCH` | `128` | vLLM 内部 continuous batching 最大 batch size |
 | `QWEN3_UNFIXED_CHUNK_NUM` | `2` | 流式状态机 unfixed chunk 数(token 修订窗口) |
 | `QWEN3_UNFIXED_TOKEN_NUM` | `5` | 流式状态机 unfixed token 数 |
 | `QWEN3_CHUNK_SIZE_SEC` | `2.0` | 流式 chunk 时长(秒) |
 
 **`QWEN3_ASR_GPU_MEM` 是显存调度最关键的 env:**
 
-| 卡显存 | 与 funasr+cosyvoice 同卡共置 | 独占整张卡 |
+| 卡显存 | 与其它服务同卡共置 | 独占整张卡 |
 |---|---|---|
-| 8 GB | 不建议(权重 + 共置就快爆) | `0.85`(显存 ≈ 6.8 GB,够 1.7B 模型 + 小 KV) |
+| 8 GB | 不建议 (模型权重 4 GiB + KV pool 起步 1 GiB 就已经挤兑其它服务) | `0.85`(~6.8 GB,够 1.7B 模型 + 小 KV) |
 | 16 GB | `0.4`(预留 ~9.6 GB 给别的) | `0.85` |
-| 24 GB | `0.3`(预留 ~16 GB 给别的) | `0.85`–`0.9` |
+| 24 GB | `0.3`(预留 ~16 GB 给别的, 但 KV pool 小, 高并发会等位) | **`0.85`** (实测最佳, ~5 req/s) |
 | 40+ GB | `0.2`–`0.3` 即可 | `0.85` |
 
-`gpu_memory_utilization` 越大 KV cache 池越大,vLLM 能并行处理的请求越多;但子服务进程内并发仍受 Python GIL + 单进程模型限制,实际收益要看负载。
+`gpu_memory_utilization` 越大 KV cache 池越大,vLLM 能并行处理的请求越多;但子服务进程内的 vLLM 入口是**串行**调用 (Python LLM 接口非线程安全, 见 `services/qwen3_asr_vllm/server.py:156` 的 `_get_vllm_lock` 实现注释), batching 在 vLLM 引擎内部完成, 实际收益要看 KV pool 容量 + 请求长短。
+
+> 关于子服务的"GPU 并发" — 我们曾尝试在子服务 handler 层加 `asyncio.Semaphore(N)` 让多个推理同时进 GPU, 实测**完全负优化** (vLLM 死锁 / torch 模型上下文切换变慢)。现在每个子服务的 GPU 并发数都在代码里**硬编码**, 不通过环境变量暴露 — 想加并发请用多副本 (§5)。
 
 ### 6.4 cosyvoice-0 (端口 8004)
 
@@ -256,13 +296,15 @@ cosyvoice 子服务暴露 `POST /voices/reload`, 用磁盘上的 `spk2info.pt` +
 | `TTS_LOAD_VLLM` | `false` | **进程内 vLLM 加速 LLM 段。vLLM 0.11+ 要求 transformers ≥4.55,与 CosyVoice 主代码 4.51.3 冲突,默认关闭** |
 | `VOICES_DIR` | `/app/voices` | 容器内音色目录(挂载 `./voices`) |
 
-**显存:**
+**显存 (4090 实测):**
 
 - `clone` only(默认 CosyVoice3):~3.5 GB
 - `sft` only:~1.5 GB
 - `all`(双模型同时加载):~5 GB
 - 启用 TRT:加 ~0.5–1 GB
 - 启用 vLLM:加 ~1 GB(LLM 段被 vLLM 接管,有自己的 KV cache)
+
+**吞吐**: 单副本 ~0.34 req/s (单条 3-4 秒), 这是 TTS 的本质 — CosyVoice 是 autoregressive 解码器, 单条音频本身就要 GPU 跑几秒。想要 1 req/s 就要 3 副本, 10 req/s 就要 30 副本。请用 `plan_deployment.py` 实算。
 
 ## 七、网关环境变量参考
 
@@ -275,6 +317,8 @@ cosyvoice 子服务暴露 `POST /voices/reload`, 用磁盘上的 `spk2info.pt` +
 | `INTERNAL_SERVICE_TOKEN` | `funspeech-internal` | 必须与子服务一致 |
 | `SERVICE_REQUEST_TIMEOUT` | `60` | 网关→子服务调用超时(秒) |
 | `SERVICE_HEALTHCHECK_INTERVAL` | `5` | 健康状态缓存窗口(秒) |
+| `HTTPX_MAX_CONNECTIONS` | `200` | 网关→子服务 HTTP 客户端的连接池上限。高 QPS (>100 req/s) 可调到 500+ |
+| `HTTPX_MAX_KEEPALIVE` | `50` | 保活连接数上限 |
 | `FUNASR_SERVICE_URLS` | `http://funasr-0:8001` | 逗号分隔多副本 |
 | `DOLPHIN_SERVICE_URLS` | `http://dolphin-0:8002` | |
 | `QWEN3_ASR_SERVICE_URLS` | `http://qwen3-asr-0:8003` | |
@@ -298,11 +342,24 @@ cosyvoice 子服务暴露 `POST /voices/reload`, 用磁盘上的 `spk2info.pt` +
 
 | 主机路径 | 容器路径 | 用途 | 注意 |
 |---|---|---|---|
-| `${MODELSCOPE_CACHE}` (默认 `~/.cache/modelscope`) | `/root/.cache/modelscope` | 模型权重缓存,所有 GPU 子服务共享 | 提前下载可省首次启动等待 |
+| `${MODELSCOPE_CACHE}` (默认 `~/.cache/modelscope/hub/models`) | `/root/.cache/modelscope/hub` | 模型权重缓存,所有 GPU 子服务共享 | 见下方说明 |
 | `./voices` | `/app/voices`(只在 cosyvoice) | 零样本克隆音色 + spk2info.pt | 持久化用户数据 |
-| `./temp` | `/app/temp`(只在 gateway) | 网关临时音频文件 | |
+| `./temp` | `/app/temp`(只在 gateway) | 网关临时音频文件 | gateway 返回 FileResponse 后会 BackgroundTask 自动删除 |
 | `./data` | `/app/data`(只在 gateway) | 异步 TTS 任务库 | |
 | `./logs` | `/app/logs`(只在 gateway) | 日志 | |
+
+### 9.1 模型缓存目录映射 (重要)
+
+宿主机 `~/.cache/modelscope/hub/models/` **直接** mount 成容器内 `/root/.cache/modelscope/hub/`。这样做的原因是新旧 modelscope 版本的目录布局不同:
+
+- 新版 (≥1.30): `hub/models/<org>/<model>` (例如 `hub/models/Qwen/Qwen3-ASR-1.7B`)
+- 旧版 (=1.20, 各子服务用的版本): `hub/<org>/<model>` (例如 `hub/Qwen/Qwen3-ASR-1.7B`)
+
+把宿主机的 `models/` mount 成容器的 `hub/`, 两边路径就都对上了。
+
+**首次启动**: 子服务会从 modelscope 自动下载所需权重 (具体见各服务 `*_MODEL_ID` env)。提前手动下到 `~/.cache/modelscope/hub/models/<org>/<model>` 可以避开首次启动数分钟的等待。
+
+**离线部署 (无外网)**: 把 `~/.cache/modelscope/hub/models/` 整个 rsync 到目标机, mount 进去即可。**注意 qwen3-asr** 启动时 vLLM 会尝试拉一份 transformers config (即使权重已经在本地), 离线场景务必设 `HF_HUB_OFFLINE=1` + `TRANSFORMERS_OFFLINE=1` 两个 env, 否则容器会 OSError。
 
 ## 十、健康检查与启动顺序
 
@@ -348,6 +405,10 @@ docker compose down -v
 ### 常见问题
 
 - **`out of memory` / `CUDA OOM`**:多半是 qwen3-asr 与别的服务同卡共置但 `QWEN3_ASR_GPU_MEM` 太大,降到 `0.3`–`0.4` 再试。
-- **网关一直报 503,但子服务日志看着正常**:看 `docker compose ps` 是否 `(healthy)`;若 healthcheck 还在 `start_period`,等加载完。
+- **网关一直报 503,但子服务日志看着正常**:看 `docker compose ps` 是否 `(healthy)`;若 healthcheck 还在 `start_period`,等加载完。重构后子服务 `/health` 严格反映模型加载状态:模型没加载完会返回 503 让网关知道。
 - **funasr 子服务挂了**:旧版本 `services/funasr/server.py` 缺 import,WS 流式会 NameError——升级到 `0783c3b` 之后的版本即可。
 - **CosyVoice3 输出全是噪音**:`TTS_ENABLE_FP16=true` + `TTS_LOAD_TRT=true` 同时开会有 NaN,关一个。
+- **不知道几副本几卡才够**: 用 `python3 scripts/plan_deployment.py` (零依赖, 见 §4.3)。
+- **多副本副本同 GPU**: 不要这样做。同一服务的两个副本绑同一张卡, 实测总吞吐不升反降 (GPU SM 抢占)。每个副本一张卡。
+- **qwen3-asr 启动报 `OSError: We couldn't connect to 'https://huggingface.co'`**: 离线场景务必设 `HF_HUB_OFFLINE=1` 和 `TRANSFORMERS_OFFLINE=1`, 见 §9.1。
+- **高 QPS 网关 fd 耗尽 / `Too many open files`**: 容器加 `ulimits: { nofile: 65535 }`; 同时检查 `HTTPX_MAX_CONNECTIONS` 是否够大。

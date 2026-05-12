@@ -1,0 +1,6 @@
+TTS 期间 /health 延迟 (n-tts=2):
+  TTS 开始前 (idle): n=10 mean=2.3ms p50=2.3ms p95=2.7ms max=2.7ms
+  TTS 进行中     : n=6 mean=273.5ms p50=2.5ms p95=1630.4ms max=1630.4ms
+TTS 单条耗时:
+  idx=0  elapsed=6.11s  status=200
+  idx=1  elapsed=11.77s  status=200

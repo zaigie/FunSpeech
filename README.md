@@ -158,8 +158,13 @@ WebSocket 测试页:
 | `QWEN3_ASR_SERVICE_URLS` | `http://qwen3-asr-0:8003` | |
 | `COSYVOICE_SERVICE_URLS` | `http://cosyvoice-0:8004` | |
 | `SERVICE_REQUEST_TIMEOUT` | `60` | 子服务调用超时(秒) |
+| `INFERENCE_THREAD_POOL_SIZE` | `max(4, CPU 核数)` | 网关同步调用线程池大小;高 QPS 调大 |
+| `HTTPX_MAX_CONNECTIONS` | `200` | 网关→子服务 HTTP 连接池上限;>100 req/s 时调到 500+ |
+| `HTTPX_MAX_KEEPALIVE` | `50` | 保活连接数上限 |
 
-子服务专属 env(模型版本、TRT/FP16/vLLM 等)请见 `.env.example` 和各 `services/*/README.md`。
+子服务专属 env(模型版本、TRT/FP16/vLLM 等)请见 `.env.example`、`docs/deployment.md §6` 和各 `services/*/README.md`。
+
+> 关于"GPU 并发数":子服务内部的 GPU 并发已在代码里硬编码 (funasr/dolphin=1, cosyvoice=2, qwen3-asr=Lock+vLLM 内部 batching), **不通过环境变量暴露**。横向扩展请用多副本, 见下文。
 
 ## 开发
 
@@ -181,9 +186,33 @@ INTERNAL_SERVICE_TOKEN=funspeech-internal \
 uv run python start.py
 ```
 
+## 性能与副本规划
+
+在 NVIDIA RTX 4090 24G 上的实测单副本吞吐 (完整数据见 [`benchmarks/`](./benchmarks/README.md)):
+
+| 子服务 | 单副本吞吐 | 单条延迟 | 显存 |
+|---|---|---|---|
+| funasr (all) | **~12 req/s** | ~80 ms | ~3 GiB |
+| dolphin | ~12 req/s | ~80 ms | ~1 GiB |
+| qwen3-asr | **~5 req/s** | ~190 ms | **0.85 × 卡显存** (vLLM KV pool) |
+| cosyvoice (clone) | **~0.34 req/s** | ~3.5 s | ~4 GiB |
+
+**横向扩展 = 多卡多副本**, 不是单卡多副本 (同一服务两副本绑同一张卡, 实测总吞吐不升反降)。
+
+用规划脚本一键算出应该开几副本 / 怎么绑卡 / `docker-compose.override.yml` 怎么写:
+
+```bash
+python3 scripts/plan_deployment.py                  # 交互式
+python3 scripts/plan_deployment.py --preset 4090-quad   # 看预设
+python3 scripts/plan_deployment.py --list-presets
+```
+
+详细说明见 [`docs/deployment.md §4.3`](./docs/deployment.md)。
+
 ## 模型权重缓存
 
-所有 GPU 子服务通过 bind mount 共享 `MODELSCOPE_CACHE`(默认 `~/.cache/modelscope`),
+所有 GPU 子服务通过 bind mount 共享 `MODELSCOPE_CACHE`(默认 `~/.cache/modelscope/hub/models`,
+mount 到容器 `/root/.cache/modelscope/hub`),
 因此即便 funasr / cosyvoice 各自的 transformers 版本不同,权重文件可以复用。
 
 提前下载:
@@ -221,8 +250,12 @@ curl -X POST http://localhost:8000/stream/v1/tts/voices/refresh
   Qwen3-ASR 质量明显劣化(无跨段上下文、无 token 修订,见 vllm Issue #35767)。
   我们用官方 `qwen_asr.Qwen3ASRModel.streaming_transcribe` + `init_streaming_state`,
   在子服务进程内跑,具备 unfixed_chunk / unfixed_token 修订能力。
-- **音色 CRUD 单副本**:`/voices/*` 写操作必须打到 cosyvoice-0(否则状态分裂)。
-  网关侧的 sticky 路由暂未实现,生产多副本部署需自行加 LB 规则或独立的写副本。
+- **Qwen3-ASR 子服务进程内 GPU 串行**: vLLM 的 Python `LLM(...)` 入口
+  非线程安全, 子服务用 `asyncio.Lock` 保证只有一个调用进 vLLM。这**不影响** vLLM
+  自身的 continuous batching (batching 在 engine 内部), 但要靠多副本扩吞吐。
+- **音色 CRUD 多副本同步** (commit `299075b`): URL 列表第一个 = 写副本 (primary)。
+  所有 `POST/DELETE /voices` 自动路由到 primary, 写后网关广播 `POST /voices/reload`
+  让其它副本从磁盘热重载 `spk2info.pt`。详见 [`docs/deployment.md §5.2`](./docs/deployment.md)。
 
 ## 目录结构
 
@@ -240,6 +273,14 @@ curl -X POST http://localhost:8000/stream/v1/tts/voices/refresh
 │   ├── dolphin/
 │   ├── qwen3_asr_vllm/
 │   └── cosyvoice/             # third_party/CosyVoice 是官方 submodule
+├── scripts/
+│   ├── plan_deployment.py     # 副本规划 (零依赖)
+│   └── analyze_audio_rms.py   # 远场过滤阈值分析
+├── benchmarks/                # 4090 实测数据 + 测试脚本 (git-lfs)
+│   ├── README.md
+│   ├── scripts/               # bench_tts.py / bench_asr.py / ...
+│   ├── audio/                 # TTS 生成的测试样本
+│   └── results/               # 结果 (json + log)
 ├── docker-compose.yml
 ├── .env.example
 └── pyproject.toml             # 网关 deps (CPU only, ~57 包)

@@ -140,9 +140,11 @@ dmypy.json
 temp/
 logs/
 *.log
+!benchmarks/results/**/*.log
 test_audio.*
 *.wav
 !tests/assets/*.wav
+!benchmarks/audio/*.wav
 *.mp3
 *.pcm
 *.aac
