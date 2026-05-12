@@ -220,17 +220,19 @@ docker compose logs -f cosyvoice-0
 旧版单进程 GIL 限制下, 单 4090 大约能撑:
 
 - funasr 离线 ASR: ~8-10 req/s (跟 worker 数量绑死)
-- cosyvoice TTS: ~0.3 req/s
+- cosyvoice TTS: 1-2 路实时 (单进程 + 单 GPU)
 
 新版**单副本**实测 (NVIDIA 4090 24G, 见 `benchmarks/results/`):
 
-| 子服务 | 单副本吞吐 | 显存 |
+| 子服务 | 单副本容量 | 显存 |
 |---|---|---|
-| funasr (all) | ~12 req/s | ~3 GiB |
-| qwen3-asr | ~5 req/s | ~20 GiB (vLLM KV pool 0.85) |
-| cosyvoice (clone) | ~0.34 req/s | ~4 GiB |
+| funasr (all) | ~12 req/s (单条 ~80ms) | ~3 GiB |
+| qwen3-asr | ~5 req/s (单连接), vLLM 内部 batch 可吃 64 并发 | ~20 GiB (vLLM KV pool 0.85) |
+| cosyvoice (clone) | **2 路实时 TTS** (RTF ≈ 1.05); 第 3 路开始 RTF > 1 卡顿 | ~4 GiB |
 
-想要更高吞吐: **横向扩多副本** (多卡)。不要在同一张卡上塞同服务的多副本 — 实测会因 GPU SM 抢占总吞吐反而下降。
+> **TTS 容量看 RTF 而不是 req/s**: TTS 单条要跑 3-4 秒, 用户真正关心的是"能同时开几路 TTS 让客户端听起来不卡"。实测单副本 (sem=2) 同时跑 2 路时 RTF=1.05 (刚好实时), 4 路时 RTF=1.75 (开始卡顿)。**1 张卡 = 2 路实时 TTS**, 想 10 路就要 5 张卡, 没有捷径。
+
+想要更高容量: **横向扩多副本** (多卡)。不要在同一张卡上塞同服务的多副本 — 实测会因 GPU SM 抢占, 总吞吐 / RTF 反而恶化。
 
 具体几副本几卡, 用规划脚本一键算 (零依赖):
 
@@ -240,7 +242,11 @@ python3 scripts/plan_deployment.py --preset 4090-dual
 python3 scripts/plan_deployment.py --list-presets
 ```
 
-输出会给你直接可粘贴的 `docker-compose.override.yml` 和 `.env` 片段。完整说明见 [`deployment.md §4.3`](./deployment.md)。
+脚本会问:
+- ASR (funasr / dolphin / qwen3-asr): 目标**并发数** (同时活跃客户端数)
+- TTS (cosyvoice): 想同时支持几路**实时 TTS** (RTF ≤ 1)
+
+输出可直接粘贴的 `docker-compose.override.yml` 和 `.env` 片段。完整说明见 [`deployment.md §4.3`](./deployment.md)。
 
 ---
 

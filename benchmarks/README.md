@@ -9,15 +9,19 @@ benchmarks/
 │   ├── sample_00.wav .. sample_15.wav
 │   └── long_concat.wav    ← 前 8 段拼接, 用于长推理 /health 验证
 ├── scripts/               ← 测试脚本
-│   ├── bench_tts.py
-│   ├── bench_asr.py
-│   ├── bench_event_loop.py
-│   ├── bench_asr_event_loop.py
-│   └── gen_audio.py
-└── results/               ← 结果 (json + log, 全部 git-lfs)
-    ├── tts/               ← cosyvoice 子服务
+│   ├── bench_tts.py            (TTS 并发吞吐)
+│   ├── bench_asr.py            (ASR 并发吞吐, funasr / qwen3-asr 通用)
+│   ├── bench_event_loop.py     (TTS event-loop 阻塞验证)
+│   ├── bench_asr_event_loop.py (ASR event-loop 阻塞验证)
+│   ├── bench_cohabit.py        (cosyvoice 同卡多副本 RTF, 实测 0.85 折扣值)
+│   ├── bench_voice_crud.py     (voice CRUD 并发安全性)
+│   └── gen_audio.py            (用 cosyvoice 生成测试音频)
+└── results/               ← 结果 (json + log, json 走 git-lfs)
+    ├── tts/               ← cosyvoice 单副本 baseline vs patched
+    ├── tts_cohabit/       ← cosyvoice 同卡 1/2/3 副本 RTF 对比
     ├── asr_funasr/        ← funasr 子服务
-    └── asr_qwen3/         ← qwen3-asr-vllm 子服务
+    ├── asr_qwen3/         ← qwen3-asr-vllm 子服务
+    └── voice_crud/        ← voice CRUD 并发测试
 ```
 
 ## 1. 测试方法
@@ -158,7 +162,9 @@ ASR 单条耗时:
 
 ## 4. 实测结果摘要 (单卡 4090 24G, idx=7)
 
-### TTS (cosyvoice, ~4 秒推理)
+### TTS (cosyvoice, ~3.5 秒推理)
+
+#### 单副本 baseline vs patched (sem=2 甜蜜点)
 
 | 并发 | baseline wall | patched sem=2 wall | patched 提升 |
 |---|---|---|---|
@@ -168,6 +174,33 @@ ASR 单条耗时:
 | 8 | 28.69 s | 23.46 s | **-18%** |
 
 `req/s` 从 0.28 → 0.34, **吞吐 +21%**。sem=8 反而比 baseline 慢一倍 (GPU 上下文切换), 实测确认 sem=2 是单卡甜蜜点。
+
+#### TTS 实时容量 (RTF, 单副本)
+
+RTF (Real-Time Factor) = 推理耗时 / 生成音频时长。RTF ≤ 1 = 实时, > 1 = 客户端会等。
+
+| N (并发) | 单客户端 RTF | 系统总吞吐 (sys_rtf) | 解读 |
+|---|---|---|---|
+| 1 | 0.69 | 1.42 | 性能过剩 |
+| **2** | **1.05** | **1.42** | **刚好实时, 推荐工作点** |
+| 4 | 1.72 | 1.42 | 单客户端开始卡顿 |
+| 8 | 3.0 | 1.43 | 严重卡顿 |
+
+**单副本实时容量 = 2 路** (RTF ≤ 1.1)。想 N 路实时 TTS → 至少 ceil(N/2) 副本。
+
+#### TTS 同卡多副本 RTF (新增, 见 `results/tts_cohabit/`)
+
+为什么测? 验证"同卡多副本会不会因为 GPU 抢占变慢"。
+
+| 副本数 (同卡) | sys_rtf 系统总吞吐 | per_client RTF @ N=副本×2 | 结论 |
+|---|---|---|---|
+| 1 | 1.42 | 1.10 (N=2) | 基线 |
+| **2** | **2.43** (+0.85×) | 1.15 (N=4) | 接近线性, 仍踩实时线 |
+| 3 | 3.28 (+0.85×) | 1.30 (N=6) | 略超 1, 但仍可用 |
+
+**结论**: 同卡多副本是有效的扩容手段, **每多 1 个同卡副本贡献 ~0.85 单副本容量** (实测 1.42 → 2.43 → 3.28)。`scripts/plan_deployment.py` 因此放开了"同服务不同卡"的硬约束 — 显存够就允许同卡放, 优先用空闲卡。
+
+> qwen3-asr 例外: vLLM 启动直接预占 0.85 × 卡显存, 两个 vLLM 进程同卡会 OOM, 仍强制不同卡。
 
 ### TTS event loop 测试 (N=2 并发)
 
@@ -214,15 +247,16 @@ funasr 单次推理已经吃满 GPU, sem 调大反而变慢。**推荐 sem=1**, 
 
 ## 5. 跨子服务对比 (patched 版, 单卡 4090)
 
-| 维度 | funasr | qwen3-asr | cosyvoice (参考) |
+| 维度 | funasr | qwen3-asr | cosyvoice |
 |---|---|---|---|
 | 单条 N=1 延迟 | **80 ms** | 190 ms | 3500 ms |
-| 单卡 req/s 上限 | **~12** | ~5 | ~0.34 (sem=2) |
+| 单卡容量 | **~12 req/s** | ~5 req/s (vLLM batch 64 内部并行) | **2 路实时 TTS** (RTF≤1.1) |
 | 显存 | 2.5 GB | **13 GB** (含 KV cache) | 3.5 GB |
 | 自带标点 | ✗ (需 PUNC 模型) | ✓ | n/a |
 | 自带语种识别 | ✗ | ✓ | n/a |
 | 长音频质量 | 中文好, 长尾差 | **更好, 跨语种, 方言** | n/a |
 | 内部 batching | 无 | **vLLM continuous batching** | 无 |
+| 同卡多副本 | OK | ❌ vLLM OOM | OK, 0.85× 系数 |
 
 **funasr 适合**: 高 QPS、纯中文短句、对延迟敏感、显存预算紧
 **qwen3-asr 适合**: 标点/语种/混合语种/方言质量优先, 中等 QPS, 显存富余

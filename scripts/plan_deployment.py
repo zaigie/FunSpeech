@@ -5,7 +5,7 @@
 根据你的:
   - GPU 资源 (卡数、单卡显存)
   - 要启用的子服务 (funasr / dolphin / qwen3-asr / cosyvoice)
-  - 每个服务的目标 QPS 或并发路数
+  - 每个服务的目标并发数 (同时活跃的客户端请求数, 不是 QPS)
 
 输出:
   - 每个服务建议起几个副本
@@ -48,6 +48,37 @@ THROUGHPUT_PER_REPLICA = {
     "cosyvoice":  0.34,  # 实测 tts_patched_sem2 N=8: 0.34 req/s
 }
 
+# 单条请求平均延迟 (秒) — 实测值, 用来从"并发数"反推副本数
+LATENCY_SEC_PER_REPLICA = {
+    "funasr":     0.08,  # 实测 ~80 ms
+    "dolphin":    0.08,  # 同量级
+    "qwen3-asr":  0.20,  # 实测 ~190 ms (含 vLLM continuous batching)
+    "cosyvoice":  3.50,  # 实测 ~3.5 s (autoregressive TTS, 慢)
+}
+
+# 单副本能"同时"处理的活跃请求数 (= GPU_INFERENCE_CONCURRENCY 或 vLLM batch)
+# 这是 services/*/server.py 里硬编码的并发数, 见 deployment.md §4.2
+PARALLEL_PER_REPLICA = {
+    "funasr":     1,      # sem=1, GPU 串行
+    "dolphin":    1,      # sem=1
+    "qwen3-asr": 64,      # vLLM continuous batching, 实测 N=64 仍稳
+    "cosyvoice":  2,      # sem=2, 实测最佳点 (sem=8 反而慢)
+}
+
+# cosyvoice (TTS) 的"实时容量" — 单副本能同时支持多少路 RTF ≤ 1 的客户端。
+# RTF (Real-Time Factor) = 推理耗时 / 生成音频时长。RTF ≤ 1 表示推理 ≥ 实时,
+# 客户端不会等待; RTF > 1 表示推理慢于实时, 流式播放会卡顿。
+#
+# 这是 TTS 用户最直观的指标 (用户问"我想同时跑 N 路 TTS 不卡, 要多少机器")。
+#
+# 实测来源: benchmarks/results/tts/tts_patched_sem2.json (N×并发, sem=2)
+#   N=1: 单客户端 RTF ≈ 0.69 (3.48s 推 5s 音频, 性能过剩)
+#   N=2: 单客户端 RTF ≈ 1.05 (5.28s 推 5s 音频, 刚好实时) ← 甜蜜点
+#   N=4: 单客户端 RTF ≈ 1.75 (开始延迟于实时)
+#   N=8: 单客户端 RTF ≈ 3.0  (严重落后)
+# 取 RTF ≤ 1.1 (10% 容忍) 的最大 N 作为"实时容量"
+TTS_REALTIME_CAPACITY_PER_REPLICA = 2  # cosyvoice 单副本 sem=2 时
+
 # 单副本的显存 (GiB), 不含 vLLM KV cache 池
 # 注意 qwen3-asr 的总显存 = WEIGHTS + KV_pool, KV_pool 见下面 qwen3_mem_util_for_card
 MODEL_MEM_GIB = {
@@ -76,15 +107,41 @@ class GPU:
 
 @dataclasses.dataclass
 class ServiceRequest:
-    name: str           # funasr / dolphin / qwen3-asr / cosyvoice
-    target_qps: float   # 期望 QPS (req/s)
-    mode: str           # all / offline / realtime / clone / sft / default
-    # cosyvoice 的 mode=all 包含两个模型 (sft + clone), 显存翻倍
-    # funasr 的 mode=offline 只加载离线模型, 显存约 1/4
+    """服务需求。
+
+    - ASR 服务 (funasr/dolphin/qwen3-asr): `concurrency` = 同时活跃的客户端请求数
+      副本 = ceil(并发 / (并行容量 × 单位时间内处理批次)), 受 max_queue_sec 影响
+    - TTS 服务 (cosyvoice): `concurrency` = 同时跑的实时 TTS 路数
+      副本 = ceil(路数 / 实时容量), 实时容量 = TTS_REALTIME_CAPACITY_PER_REPLICA
+      不依赖 max_queue_sec — 实时容量是工程实测点, 超了就 RTF>1 卡顿
+    """
+
+    name: str               # funasr / dolphin / qwen3-asr / cosyvoice
+    concurrency: int        # ASR: 并发请求数; TTS: 实时路数
+    mode: str               # all / offline / realtime / clone / sft / default
+
+    @property
+    def is_tts(self) -> bool:
+        return self.name == "cosyvoice"
 
     @property
     def per_replica_qps(self) -> float:
         return THROUGHPUT_PER_REPLICA[self.name]
+
+    @property
+    def per_replica_parallel(self) -> int:
+        return PARALLEL_PER_REPLICA[self.name]
+
+    @property
+    def per_replica_latency(self) -> float:
+        return LATENCY_SEC_PER_REPLICA[self.name]
+
+    @property
+    def per_replica_realtime_capacity(self) -> Optional[int]:
+        """TTS 单副本实时容量 (路数, RTF ≤ ~1.1)。ASR 返回 None。"""
+        if self.is_tts:
+            return TTS_REALTIME_CAPACITY_PER_REPLICA
+        return None
 
     @property
     def replica_weight_gib(self) -> float:
@@ -96,10 +153,32 @@ class ServiceRequest:
             return mem["default"]
         return mem.get(self.mode, mem.get("all", 1.0))
 
-    def replicas_needed(self) -> int:
-        if self.target_qps <= 0:
+    def replicas_needed(self, max_queue_sec: float = 1.0) -> int:
+        """副本数推算。
+
+        TTS (cosyvoice):
+            副本 = ceil(实时路数 / 实时容量)
+            实时容量是单副本能保持 RTF ≤ 1.1 的客户端数 (实测 sem=2 时是 2)。
+            想要 10 路实时 TTS → 5 副本。
+
+        ASR (funasr/dolphin/qwen3-asr):
+            副本 = ceil(并发 / (并行容量 × 单位时间内能处理的批次数))
+            "批次数" = floor(max_queue_sec / 单条延迟), 至少 1。
+            含义: 用户能接受最多排队 max_queue_sec 秒。
+              - dolphin (单条 80ms, 容忍 1s): 批次 12 → 1 副本扛 12 并发
+              - qwen3-asr (200ms, 1s): 批次 5 → 1 副本扛 64×5 = 320 并发
+        """
+        if self.concurrency <= 0:
             return 0
-        return max(1, math.ceil(self.target_qps / self.per_replica_qps))
+
+        if self.is_tts:
+            cap = self.per_replica_realtime_capacity or 1
+            return max(1, math.ceil(self.concurrency / cap))
+
+        # ASR
+        batches = max(1, int(max_queue_sec / self.per_replica_latency))
+        capacity_per_replica = self.per_replica_parallel * batches
+        return max(1, math.ceil(self.concurrency / capacity_per_replica))
 
 
 @dataclasses.dataclass
@@ -157,16 +236,23 @@ def estimate_replica_gib(svc: ServiceRequest, card_gib: float,
     return weights + CUDA_CONTEXT_OVERHEAD_GIB, extra
 
 
-def plan(gpus: List[GPU], services: List[ServiceRequest]) -> Tuple[
+def plan(gpus: List[GPU], services: List[ServiceRequest],
+         max_queue_sec: float = 1.0) -> Tuple[
     List[ReplicaPlacement], List[str]
 ]:
-    """核心规划: first-fit decreasing 启发式。
+    """核心规划: 优先不同卡, 显存够时允许同卡多副本。
 
-    关键约束 (基于实测):
-    1. 同一服务的多个副本**不能放同一张卡** — 否则它们抢 GPU, 总吞吐 ≈ 1 副本
-       qwen3-asr 同卡多副本还会让 vLLM KV pool 各自变小, 效率更差
-    2. 副本之间的"权重显存"是真实占用, vLLM 还要加 KV pool
-    3. 同卡可以共置不同服务 (例如 funasr + cosyvoice), 累加显存
+    实测 (benchmarks/results/tts_cohabit/, 4090 24G):
+      - cosyvoice 同卡 2 副本: 系统总吞吐 = 单副本 ×1.7, per-client RTF 略升
+        (单副本 N=2: RTF=1.10, 双副本 N=4: RTF=1.15 — 仍接近实时)
+      - cosyvoice 同卡 3 副本: 系统总吞吐 = 单副本 ×2.3
+      - 即每增加 1 个同卡副本, 实际容量 +0.8-0.9 副本 (经验值)
+
+    排序策略:
+      1. 优先放到没有同服务副本的"空"卡 (按剩余显存降序, worst-fit)
+      2. 否则塞到已有同服务副本的卡 (按剩余显存降序)
+      3. qwen3-asr 例外: vLLM KV pool 一启动就预占大半卡, 同卡再塞一个 vLLM
+         会爆 (两个 vLLM 都尝试 0.85 显存 → OOM), 仍坚持不同卡
 
     返回 (placements, warnings)。
     """
@@ -175,7 +261,7 @@ def plan(gpus: List[GPU], services: List[ServiceRequest]) -> Tuple[
     # 把每个服务展开成 N 个副本
     replicas: List[Tuple[ServiceRequest, int]] = []
     for svc in services:
-        n = svc.replicas_needed()
+        n = svc.replicas_needed(max_queue_sec=max_queue_sec)
         for i in range(n):
             replicas.append((svc, i))
 
@@ -186,37 +272,48 @@ def plan(gpus: List[GPU], services: List[ServiceRequest]) -> Tuple[
     # 按"权重显存"降序排, 大的先放 (qwen3-asr 优先, 它一旦绑卡就吃掉大半)
     replicas.sort(key=lambda x: -x[0].replica_weight_gib)
 
+    cohabit_warned_for = set()  # 已警告过的服务, 避免刷屏
+
     placements: List[ReplicaPlacement] = []
     for svc, repl_idx in replicas:
-        # 候选卡: 必须没放过这个服务 + 装得下
+        # 候选卡: 装得下 + (非 qwen3-asr) 允许同卡多副本
+        # 评分: 优先选没放过本服务的卡 (rank=0), 否则用同卡兜底 (rank=1)
         candidates = []
         for g in gpus:
-            if svc.name in gpu_services[g.idx]:
-                continue  # 同服务副本不同卡
+            already_has_same_svc = svc.name in gpu_services[g.idx]
+            # qwen3-asr 同卡再塞一个 vLLM 会爆显存, 强制不同卡
+            if already_has_same_svc and svc.name == "qwen3-asr":
+                continue
             cohabit_count = len(gpu_services[g.idx])
             need, extra = estimate_replica_gib(svc, g.total_gib, cohabit_count)
             avail = g.total_gib - gpu_used[g.idx]
             if avail >= need:
-                candidates.append((avail - need, g, need, extra))
+                rank = 1 if already_has_same_svc else 0  # 0 优先
+                # 加 g.idx 给 tuple 一个明确的可比较的字段, 避免 tuple sort 时
+                # 偶然回退到比较 GPU dataclass 报 TypeError
+                candidates.append((rank, -(avail - need), g.idx, g, need, extra))
+
         if not candidates:
-            # 区分两种"放不下": 显存不够 vs 卡数不够
             same_svc_already = sum(
                 1 for g in gpus if svc.name in gpu_services[g.idx]
             )
-            if same_svc_already > 0:
+            if svc.is_tts:
+                need_desc = f"{svc.concurrency} 路实时 TTS (RTF≤1)"
+            else:
+                need_desc = f"{svc.concurrency} 并发"
+            if svc.name == "qwen3-asr" and same_svc_already > 0:
                 warnings.append(
                     f"⚠️  {svc.name} 副本 #{repl_idx} 装不下: "
-                    f"已用完所有 {len(gpus)} 张卡 (每张最多 1 个 {svc.name} 副本)。"
-                    f" 想达到目标 QPS, 需要再加 GPU。"
+                    f"qwen3-asr 一卡只能放一个 (vLLM KV pool 占满整卡)。"
+                    f" 想撑 {need_desc}, 需要再加 GPU。"
                 )
             else:
                 # 检查是不是被 qwen3-asr 的 KV pool 挤掉了
-                has_qwen3_taking_all = any(
-                    "qwen3-asr" in gpu_services[g.idx]
-                    for g in gpus
+                has_qwen3 = any(
+                    "qwen3-asr" in gpu_services[g.idx] for g in gpus
                 )
                 hint = ""
-                if has_qwen3_taking_all and svc.name != "qwen3-asr":
+                if has_qwen3 and svc.name != "qwen3-asr":
                     hint = (
                         " (qwen3-asr 的 KV pool 占了卡的大部分显存; "
                         "可手动改 QWEN3_ASR_GPU_MEM 从 0.85 降到 0.5, "
@@ -224,13 +321,22 @@ def plan(gpus: List[GPU], services: List[ServiceRequest]) -> Tuple[
                     )
                 warnings.append(
                     f"⚠️  {svc.name} 副本 #{repl_idx} 装不下: "
-                    f"没卡有 {svc.replica_weight_gib:.1f}+ GiB 空间放它"
+                    f"所有卡的剩余显存都 < {svc.replica_weight_gib:.1f} GiB"
                     f"{hint}"
                 )
             continue
-        # 取剩余最大的卡 (worst-fit, 让显存更均匀分布)
-        candidates.sort(key=lambda x: -x[0])
-        _, gpu, need, extra = candidates[0]
+
+        # 排序: rank 升序 (优先 0=空卡), 然后 -剩余升序 (= 剩余降序, worst-fit)
+        candidates.sort()
+        rank, _, _, gpu, need, extra = candidates[0]
+        # 同卡多副本时给一次提示
+        if rank == 1 and svc.name not in cohabit_warned_for:
+            warnings.append(
+                f"ℹ️  {svc.name} 出现同卡多副本 (卡 {gpu.idx}): "
+                f"系统总容量 ≈ 副本数 × 0.85, 单客户端 RTF 会略升 (实测 ~+5%); "
+                f"如有空闲卡是不会触发的, 这是兜底"
+            )
+            cohabit_warned_for.add(svc.name)
         gpu_used[gpu.idx] += need
         gpu_services[gpu.idx].add(svc.name)
         placements.append(ReplicaPlacement(
@@ -248,7 +354,8 @@ def plan(gpus: List[GPU], services: List[ServiceRequest]) -> Tuple[
 
 def render(gpus: List[GPU], services: List[ServiceRequest],
            placements: List[ReplicaPlacement],
-           warnings: List[str]) -> str:
+           warnings: List[str],
+           max_queue_sec: float = 1.0) -> str:
     out = []
     out.append("=" * 70)
     out.append("FunSpeech 部署规划")
@@ -259,15 +366,40 @@ def render(gpus: List[GPU], services: List[ServiceRequest],
     for g in gpus:
         label = f" [{g.label}]" if g.label else ""
         out.append(f"  - 卡 {g.idx}: {g.total_gib} GiB{label}")
-    out.append("\n服务需求:")
+    out.append(
+        f"\n服务需求 (ASR 按并发数, TTS 按实时 RTF≤1 路数; 排队容忍 {max_queue_sec:.1f}s):"
+    )
     for s in services:
-        per = THROUGHPUT_PER_REPLICA[s.name]
-        n = s.replicas_needed()
-        out.append(
-            f"  - {s.name:<10s}  目标 {s.target_qps:>5.1f} req/s, "
-            f"单副本 {per:>5.1f} req/s → 需 {n} 副本 "
-            f"(mode={s.mode})"
-        )
+        n = s.replicas_needed(max_queue_sec)
+        if s.is_tts:
+            rt_cap = s.per_replica_realtime_capacity or 1
+            out.append(
+                f"  - {s.name:<10s}  实时路数 {s.concurrency:>3d}, "
+                f"单副本可保 {rt_cap} 路实时 (RTF≤1.1) → 需 {n} 副本 (mode={s.mode})"
+            )
+            if n > 0:
+                total_cap = n * rt_cap
+                out.append(
+                    f"      估算: {n} 副本最多保 {total_cap} 路实时, "
+                    f"实际跑 {s.concurrency} 路 → "
+                    f"{'刚好实时' if total_cap == s.concurrency else '富余' if total_cap > s.concurrency else 'RTF>1 会卡顿'}"
+                )
+        else:
+            cap = s.per_replica_parallel
+            lat = s.per_replica_latency
+            out.append(
+                f"  - {s.name:<10s}  并发 {s.concurrency:>3d}, "
+                f"单副本并行 {cap} (单条 ~{lat:.2f}s) → 需 {n} 副本 (mode={s.mode})"
+            )
+            if n > 0:
+                batches = max(1, int(max_queue_sec / lat))
+                total_cap = n * cap * batches
+                wall_t = max(1, math.ceil(s.concurrency / (n * cap))) * lat
+                out.append(
+                    f"      估算: {n} 副本 {max_queue_sec:.0f}s 内可吃 {total_cap} 并发, "
+                    f"实际 {s.concurrency} 并发 → 一批 ~{wall_t:.2f}s, "
+                    f"稳态吞吐 {n * s.per_replica_qps:.1f} req/s"
+                )
 
     # 警告
     if warnings:
@@ -407,18 +539,18 @@ PRESETS = {
     "8gb-single": {
         "gpus": [GPU(idx=0, total_gib=8, label="4060Ti-8G")],
         "services": [
-            ServiceRequest("funasr", 20.0, "all"),
-            ServiceRequest("cosyvoice", 0.3, "clone"),
+            ServiceRequest("funasr", 20, "all"),
+            ServiceRequest("cosyvoice", 2, "clone"),
         ],
-        "desc": "8GB 单卡, 20路 ASR + 极低 TTS 需求 (用 funasr, qwen3-asr 装不下)",
+        "desc": "8GB 单卡: funasr 20 并发 + cosyvoice 2 路实时 (qwen3-asr 装不下)",
     },
     "4090-single": {
         "gpus": [GPU(idx=0, total_gib=24, label="4090-24G")],
         "services": [
-            ServiceRequest("qwen3-asr", 5.0, "default"),
-            ServiceRequest("cosyvoice", 0.5, "clone"),
+            ServiceRequest("qwen3-asr", 20, "default"),
+            ServiceRequest("cosyvoice", 2, "clone"),
         ],
-        "desc": "单张 4090 24G, qwen3-asr ~5 req/s + cosyvoice 0.5 req/s",
+        "desc": "单张 4090 24G: qwen3-asr 20 并发 + cosyvoice 2 路实时 (qwen3-asr 抢占大半显存, cosyvoice 装不下)",
     },
     "4090-dual": {
         "gpus": [
@@ -426,31 +558,31 @@ PRESETS = {
             GPU(idx=1, total_gib=24, label="4090-24G"),
         ],
         "services": [
-            ServiceRequest("qwen3-asr", 20.0, "default"),
-            ServiceRequest("cosyvoice", 1.0, "clone"),
+            ServiceRequest("qwen3-asr", 40, "default"),
+            ServiceRequest("cosyvoice", 4, "clone"),
         ],
-        "desc": "双 4090, 20 路 ASR (qwen3-asr) + ~1 req/s TTS",
+        "desc": "双 4090: qwen3-asr 40 并发 + cosyvoice 4 路实时",
     },
     "4090-quad": {
         "gpus": [
             GPU(idx=i, total_gib=24, label="4090-24G") for i in range(4)
         ],
         "services": [
-            ServiceRequest("funasr", 24.0, "all"),
-            ServiceRequest("qwen3-asr", 10.0, "default"),
-            ServiceRequest("cosyvoice", 0.6, "clone"),
+            ServiceRequest("funasr", 32, "all"),
+            ServiceRequest("qwen3-asr", 64, "default"),
+            ServiceRequest("cosyvoice", 4, "clone"),
         ],
-        "desc": "4 张 4090: 24 路 funasr + 10 路 qwen3-asr + 0.6 路 TTS",
+        "desc": "4 张 4090: funasr 32 + qwen3-asr 64 + cosyvoice 4 并发",
     },
     "high-load": {
         "gpus": [
             GPU(idx=i, total_gib=24, label="4090-24G") for i in range(8)
         ],
         "services": [
-            ServiceRequest("qwen3-asr", 20.0, "default"),
-            ServiceRequest("cosyvoice", 1.0, "clone"),
+            ServiceRequest("qwen3-asr", 128, "default"),
+            ServiceRequest("cosyvoice", 8, "clone"),
         ],
-        "desc": "8 张 4090: 20 路 qwen3-asr + 1 路 TTS (剩余卡留给冗余)",
+        "desc": "8 张 4090: qwen3-asr 128 + cosyvoice 8 并发",
     },
 }
 
@@ -533,30 +665,37 @@ def interactive() -> Tuple[List[GPU], List[ServiceRequest]]:
     print()
 
     # 服务
-    print("--- 步骤 2/2: 启用哪些子服务, 每个目标 QPS 多少? ---")
-    print("(QPS = 每秒请求数, 流式 WS 也按 '同时活跃的连接数 × 每秒尝试请求' 估)")
+    print("--- 步骤 2/2: 启用哪些子服务, 每个的并发数? ---")
+    print("(并发 = 同时活跃的客户端请求数, 不是 QPS)")
+    print("  例: 20 个用户同时打开网页等结果 = 并发 20, 跟单条耗时无关")
     print()
     services = []
 
-    if _ask_yn("启用 funasr (中文 ASR, 适合短句高 QPS)?", default=True):
-        qps = _ask_float("  目标 QPS", default=20, min_val=0)
+    if _ask_yn("启用 funasr (中文 ASR, 单条 ~80ms)?", default=True):
+        c = _ask_int("  目标并发数", default=20, min_val=0)
         all_modes = _ask_yn("  需要流式 ASR 吗? (否=offline only, 省显存)",
                            default=True)
         services.append(ServiceRequest(
-            "funasr", qps, "all" if all_modes else "offline"
+            "funasr", c, "all" if all_modes else "offline"
         ))
 
-    if _ask_yn("启用 qwen3-asr (多语种/带标点 ASR, 显存大)?", default=False):
-        qps = _ask_float("  目标 QPS", default=5, min_val=0)
-        services.append(ServiceRequest("qwen3-asr", qps, "default"))
+    if _ask_yn("启用 qwen3-asr (多语种/带标点 ASR, 显存大, 单条 ~190ms)?",
+               default=False):
+        c = _ask_int("  目标并发数 (单副本 vLLM 能并行 ~64)", default=20, min_val=0)
+        services.append(ServiceRequest("qwen3-asr", c, "default"))
 
-    if _ask_yn("启用 dolphin (多语种 ASR, 轻量)?", default=False):
-        qps = _ask_float("  目标 QPS", default=10, min_val=0)
-        services.append(ServiceRequest("dolphin", qps, "default"))
+    if _ask_yn("启用 dolphin (多语种 ASR, 轻量, 单条 ~80ms)?", default=False):
+        c = _ask_int("  目标并发数", default=10, min_val=0)
+        services.append(ServiceRequest("dolphin", c, "default"))
 
     if _ask_yn("启用 cosyvoice (TTS)?", default=True):
-        qps = _ask_float("  目标 QPS (注意: 单副本只 ~0.34 req/s)",
-                        default=0.5, min_val=0)
+        print("  TTS 按 RTF (推理耗时/音频时长) ≤ 1 的实时路数算容量")
+        print("  实测: 单副本 (sem=2) 同时跑 2 路时 RTF≈1.05 (刚好实时),")
+        print("        跑 4 路时 RTF≈1.75 (开始卡顿)")
+        c = _ask_int(
+            "  想同时支持多少路实时 TTS (单副本 = 2 路)",
+            default=2, min_val=0,
+        )
         clone = _ask_yn("  需要零样本克隆音色?", default=True)
         sft = _ask_yn("  需要预设音色 (中文女/男 等)?", default=True)
         if clone and sft:
@@ -569,7 +708,7 @@ def interactive() -> Tuple[List[GPU], List[ServiceRequest]]:
             print("  你两个都不要, 那就不加 cosyvoice 了")
             mode = None
         if mode:
-            services.append(ServiceRequest("cosyvoice", qps, mode))
+            services.append(ServiceRequest("cosyvoice", c, mode))
 
     if not services:
         print("没启用任何服务, 退出")
@@ -607,6 +746,11 @@ def main():
     ap.add_argument("--json", help="从 JSON 文件读输入")
     ap.add_argument("--list-presets", action="store_true",
                    help="列出所有预设")
+    ap.add_argument(
+        "--max-queue-sec", type=float, default=1.0,
+        help="用户能接受的排队时间 (秒, 默认 1.0)。短任务 (ASR) 这个值越大副本越少;"
+             "长任务 (TTS 3.5s) 没影响, 副本数由并行容量决定。",
+    )
     args = ap.parse_args()
 
     if args.list_presets:
@@ -624,8 +768,9 @@ def main():
     else:
         gpus, services = interactive()
 
-    placements, warnings = plan(gpus, services)
-    print(render(gpus, services, placements, warnings))
+    placements, warnings = plan(gpus, services, max_queue_sec=args.max_queue_sec)
+    print(render(gpus, services, placements, warnings,
+                 max_queue_sec=args.max_queue_sec))
 
 
 if __name__ == "__main__":

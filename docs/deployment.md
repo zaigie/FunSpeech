@@ -86,18 +86,28 @@ docker compose build --parallel
 
 ### 4.2 资源占用 (基于 4090 24G 实测)
 
-**单副本吞吐和显存** — 全部数据来自 `benchmarks/results/`:
+**单副本容量和显存** — 全部数据来自 `benchmarks/results/`:
 
-| 子服务 | 单副本吞吐 (req/s) | 单条延迟 (示例) | 权重显存 | 实际占卡 |
+ASR 用并发 / 吞吐衡量, TTS 用 RTF (推理耗时 ÷ 音频时长, ≤1 为实时) 衡量。
+
+| 子服务 | 单副本容量 | 单条延迟 | 权重显存 | 实际占卡 |
 |---|---|---|---|---|
-| `funasr-0` (all) | **~12** | 70-80 ms | ~2.5-3 GiB | ~3 GiB |
-| `funasr-0` (offline) | ~12 | ~80 ms | ~0.7 GiB | ~1 GiB |
-| `dolphin-0` | ~12 | ~80 ms | ~0.6 GiB | ~1 GiB |
-| `qwen3-asr-0` | **~5** | ~190 ms | ~4 GiB **权重** | **总 = `QWEN3_ASR_GPU_MEM × 卡显存`** |
-| `cosyvoice-0` (clone) | **~0.34** | ~3.5 s | ~3.5 GiB | ~4 GiB |
-| `cosyvoice-0` (all, sft+clone) | ~0.34 | ~3.5 s | ~5 GiB | ~5.5 GiB |
+| `funasr-0` (all) | **~12 req/s**, sem=1 单 GPU 占用串行 | 70-80 ms | ~2.5-3 GiB | ~3 GiB |
+| `funasr-0` (offline) | ~12 req/s | ~80 ms | ~0.7 GiB | ~1 GiB |
+| `dolphin-0` | ~12 req/s | ~80 ms | ~0.6 GiB | ~1 GiB |
+| `qwen3-asr-0` | **~5 req/s** (单连接), vLLM 内部 batch 可吃 64 并发 | ~190 ms | ~4 GiB **权重** | **总 = `QWEN3_ASR_GPU_MEM × 卡显存`** |
+| `cosyvoice-0` (clone) | **同时 2 路实时 TTS (RTF≈1.05)**, 第 3 路开始 RTF>1 卡顿 | ~3.5 s / 句 | ~3.5 GiB | ~4 GiB |
+| `cosyvoice-0` (all, sft+clone) | 同上, 2 路实时 | ~3.5 s | ~5 GiB | ~5.5 GiB |
 
-> qwen3-asr 一启动就**直接预占** `QWEN3_ASR_GPU_MEM × 卡显存` (vLLM 把权重 + KV cache 池都放在这一片里), 不是只占权重 4 GiB。这是和 funasr / cosyvoice 最不一样的地方。
+> **TTS 容量的实际意义**: 用户最关心的不是 "TTS req/s", 而是 "我能同时开几路 TTS 让客户端听起来都流畅"。
+> 实测 (`benchmarks/results/tts/tts_patched_sem2.json`):
+> - N=1 路: RTF=0.69 (推理快于实时 40%, 性能过剩)
+> - **N=2 路: RTF=1.05** (刚好实时, 推荐工作点)
+> - N=4 路: RTF=1.75 (单路被拉长 75%, 流式会卡)
+> - N=8 路: RTF=3.0 (严重卡顿)
+> 因此 cosyvoice 单副本的"实时容量" = **2 路**, 想要 N 路实时 TTS 就要 ceil(N/2) 副本。
+
+> **qwen3-asr 显存特殊**: 一启动就**直接预占** `QWEN3_ASR_GPU_MEM × 卡显存` (vLLM 把权重 + KV cache 池都放在这一片里), 不是只占权重 4 GiB。这是和 funasr / cosyvoice 最不一样的地方。
 
 **关键约束**:
 1. **同一个服务的多个副本不能放同一张卡** — 它们会抢同一份 GPU SM, 实际吞吐 ≈ 1 副本。横向扩展 = 多卡多副本, 不是单卡多副本。
@@ -109,8 +119,11 @@ docker compose build --parallel
 不要靠拍脑袋, 直接用 `scripts/plan_deployment.py`:
 
 ```bash
-# 交互式: 一步步问你 GPU + 目标 QPS
+# 交互式: 一步步问你 GPU + 目标并发 / 实时路数
 python3 scripts/plan_deployment.py
+
+# 调整 ASR 排队容忍 (默认 1.0s, 调大副本变少, 客户端等更久)
+python3 scripts/plan_deployment.py --max-queue-sec 2.0
 
 # 用预设场景看看
 python3 scripts/plan_deployment.py --list-presets
@@ -120,21 +133,26 @@ python3 scripts/plan_deployment.py --preset 4090-quad
 python3 scripts/plan_deployment.py --json my_setup.json
 ```
 
-脚本输入: GPU 列表 (每张卡的显存) + 想启用哪些服务和各自的目标 QPS。
-脚本输出:
-- 每个服务需要几副本 (按吞吐反推)
+**脚本输入**: GPU 列表 (每张卡的显存) + 启用哪些服务 + 每个服务的容量需求:
+- ASR (funasr / dolphin / qwen3-asr): **目标并发数** (同时活跃的客户端数)
+- TTS (cosyvoice): **想同时支持几路实时 TTS** (按 RTF ≤ 1 计, 单副本 = 2 路)
+
+**脚本输出**:
+- 每个服务需要几副本 (ASR 按 max_queue_sec 反推, TTS 按 RTF 实时容量反推)
 - 每个副本绑哪张卡 (worst-fit 启发, 让显存均匀分布)
 - 显存预算表 (含 vLLM KV pool 估算)
 - 直接可粘贴的 `docker-compose.override.yml` 片段 + 网关 `.env` 片段
-- 哪些 QPS 目标因卡数/显存不够达不到 → 给出明确的扩容建议
+- 哪些目标因卡数/显存不够达不到 → 给出明确的扩容建议
 
 **典型例子** (摘自脚本输出):
 
 | 场景 | GPU | 建议 |
 |---|---|---|
-| 单 24G 卡, funasr 20 路 + cosyvoice 0.3 路 | 1× 4090 | funasr + cosyvoice 同卡 0, 但只够 1 副本 funasr (12 req/s), 想到 20 需加卡 |
-| 双 24G 卡, qwen3-asr 10 路 + cosyvoice 0.3 路 | 2× 4090 | qwen3-asr 各占 1 张卡 (`GPU_MEM=0.85`), cosyvoice 没地方放 → 加第 3 张卡 |
-| 4× 24G 卡, funasr 24 路 + qwen3-asr 10 路 + cosyvoice 0.6 路 | 4× 4090 | 卡 0/1 跑 qwen3-asr 各 1 副本, 卡 2/3 跑 funasr+cosyvoice 各 1 副本 |
+| 单 24G 卡: qwen3-asr 20 并发 + cosyvoice 2 路实时 | 1× 4090 | qwen3-asr 占满卡 0 (KV pool 0.85), cosyvoice 放不下 → 降 `QWEN3_ASR_GPU_MEM=0.5` 或加卡 |
+| 双 24G 卡: qwen3-asr 40 并发 + cosyvoice 4 路实时 | 2× 4090 | qwen3-asr 各占 1 张卡, cosyvoice 装不下 → 加第 3 张卡 |
+| 4× 24G 卡: dolphin 10 并发 + qwen3-asr 20 并发 + cosyvoice 4 路实时 | 4× 4090 | qwen3-asr#0 占卡 0, cosyvoice 2 副本占卡 1/2 (4 路实时), dolphin 1 副本搭卡 1 |
+
+> **ASR 与 TTS 副本数差异巨大的原因**: ASR 单条几十~两百毫秒, 1 秒钟单副本能轮十几遍, 高并发只是排队问题; TTS 单条 3.5s 长任务, 想 20 路实时就必须 10 个 GPU 同时算, 这是硬性物理限制, 加卡就是加卡。
 
 ### 4.4 跨卡分布的两种方式
 
@@ -304,7 +322,20 @@ cosyvoice 子服务暴露 `POST /voices/reload`, 用磁盘上的 `spk2info.pt` +
 - 启用 TRT:加 ~0.5–1 GB
 - 启用 vLLM:加 ~1 GB(LLM 段被 vLLM 接管,有自己的 KV cache)
 
-**吞吐**: 单副本 ~0.34 req/s (单条 3-4 秒), 这是 TTS 的本质 — CosyVoice 是 autoregressive 解码器, 单条音频本身就要 GPU 跑几秒。想要 1 req/s 就要 3 副本, 10 req/s 就要 30 副本。请用 `plan_deployment.py` 实算。
+**实时容量** (推荐用这个指标, 而不是 req/s):
+
+| 指标 | 单副本 (sem=2, 4090) | 实际含义 |
+|---|---|---|
+| **同时实时 TTS 路数** | **2 路** (RTF ≈ 1.05) | 推荐工作点, 客户端流式播放不卡 |
+| 1 路时的 RTF | ~0.69 | 单客户端: 推理 3.48s 生成 5s 音频, 性能过剩 |
+| 4 路时的 RTF | ~1.75 | 单路被拉长, 流式播放开始卡顿 |
+| 8 路时的 RTF | ~3.0 | 严重卡顿 |
+| 离线吞吐 | ~0.34 req/s | 整段合成场景的 req/s, 跟"实时路数"是同一物理量的两种说法 |
+
+CosyVoice 是 autoregressive 解码器, 单条音频本身就要 GPU 跑几秒, 这是硬性的物理限制。
+**想要 N 路实时 TTS → ceil(N/2) 副本 → ceil(N/2) 张 GPU**。10 路实时要 5 张卡, 20 路要 10 张卡。
+
+请用 `python3 scripts/plan_deployment.py` 实算 (脚本会问你"想同时支持多少路实时 TTS")。
 
 ## 七、网关环境变量参考
 

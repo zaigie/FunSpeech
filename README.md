@@ -193,16 +193,18 @@ uv run python start.py
 
 ## 性能与副本规划
 
-在 NVIDIA RTX 4090 24G 上的实测单副本吞吐 (完整数据见 [`benchmarks/`](./benchmarks/README.md)):
+在 NVIDIA RTX 4090 24G 上的实测单副本容量 (完整数据见 [`benchmarks/`](./benchmarks/README.md)):
 
-| 子服务 | 单副本吞吐 | 单条延迟 | 显存 |
+| 子服务 | 单副本容量 | 单条延迟 | 显存 |
 |---|---|---|---|
 | funasr (all) | **~12 req/s** | ~80 ms | ~3 GiB |
 | dolphin | ~12 req/s | ~80 ms | ~1 GiB |
-| qwen3-asr | **~5 req/s** | ~190 ms | **0.85 × 卡显存** (vLLM KV pool) |
-| cosyvoice (clone) | **~0.34 req/s** | ~3.5 s | ~4 GiB |
+| qwen3-asr | **~5 req/s** (vLLM 内部 batch 可吃 64 并发) | ~190 ms | **0.85 × 卡显存** (vLLM KV pool) |
+| cosyvoice (clone) | **2 路实时 TTS** (RTF ≈ 1.05) | ~3.5 s / 句 | ~4 GiB |
 
-**横向扩展 = 多卡多副本**, 不是单卡多副本 (同一服务两副本绑同一张卡, 实测总吞吐不升反降)。
+> ASR 看 req/s, TTS 看"几路实时" (RTF ≤ 1) — 单副本 sem=2 时同时 2 路 RTF=1.05 刚好实时, 4 路就开始 RTF=1.75 卡顿。想 N 路实时 TTS 需 ceil(N/2) 张卡。
+
+**横向扩展 = 多卡多副本**, 不是单卡多副本 (同一服务两副本绑同一张卡, 实测总容量不升反降)。
 
 用规划脚本一键算出应该开几副本 / 怎么绑卡 / `docker-compose.override.yml` 怎么写:
 

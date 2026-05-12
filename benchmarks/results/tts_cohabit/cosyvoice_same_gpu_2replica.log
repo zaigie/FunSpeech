@@ -1,0 +1,10 @@
+使用 2 个 URL: ['http://127.0.0.1:18004', 'http://127.0.0.1:18014']
+--- N=2 ---
+  wall=3.74s ok=2/2 sys_rtf=2.26 per_client_rtf=0.81 mean_lat=3.43s p95=3.74s
+--- N=4 ---
+  wall=8.37s ok=4/4 sys_rtf=2.43 per_client_rtf=1.15 mean_lat=5.83s p95=8.37s
+--- N=8 ---
+  wall=14.79s ok=8/8 sys_rtf=2.54 per_client_rtf=1.96 mean_lat=9.22s p95=14.79s
+--- N=16 ---
+  wall=30.92s ok=16/16 sys_rtf=2.54 per_client_rtf=3.47 mean_lat=17.03s p95=30.23s
+-> /tmp/cohabit_2replica.json
