@@ -244,6 +244,10 @@ def resample_audio_array(
         else:
             audio_1d = audio_array
 
+        # librosa.resample 有最小长度要求,流式 chunk 末尾可能只有 1 个采样点
+        if len(audio_1d) < 16:
+            return audio_array
+
         # 使用librosa进行重采样
         resampled = librosa.resample(audio_1d, orig_sr=original_sr, target_sr=target_sr)
 
