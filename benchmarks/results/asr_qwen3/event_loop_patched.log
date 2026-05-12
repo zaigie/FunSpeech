@@ -1,0 +1,12 @@
+ASR 期间 /health 延迟 (n-asr=8):
+  ASR 开始前 (idle): n=9 mean=2.3ms p50=2.2ms p95=3.0ms max=3.0ms
+  ASR 进行中       : n=529 mean=2.9ms p50=2.6ms p95=4.5ms max=22.5ms
+ASR 单条耗时:
+  idx=0  elapsed=2.70s  status=200
+  idx=1  elapsed=5.38s  status=200
+  idx=2  elapsed=4.05s  status=200
+  idx=3  elapsed=6.72s  status=200
+  idx=4  elapsed=11.90s  status=200
+  idx=5  elapsed=8.02s  status=200
+  idx=6  elapsed=9.25s  status=200
+  idx=7  elapsed=10.57s  status=200

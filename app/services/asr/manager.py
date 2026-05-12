@@ -1,19 +1,18 @@
 # -*- coding: utf-8 -*-
-"""
-ASR模型管理器
-支持多模型缓存和动态加载
-重构以支持离线和实时模型的分离管理
+"""ASR 模型管理器
+
+读取 models.json 决定每个 model_id 用哪个引擎(funasr / dolphin / qwen3-asr),
+所有引擎一律走对应子服务的 HTTP 客户端。进程内推理已不再支持。
 """
 
 import json
-import torch
 import logging
-from typing import Dict, Any, Optional, List
 from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 from ...core.config import settings
 from ...core.exceptions import DefaultServerErrorException, InvalidParameterException
-from .engine import BaseASREngine, FunASREngine, DolphinEngine, MultiGPUASREngine
+from .engine import BaseASREngine
 
 logger = logging.getLogger(__name__)
 
@@ -28,35 +27,31 @@ class ModelConfig:
         self.description = config.get("description", "")
         self.languages = config.get("languages", [])
         self.is_default = config.get("default", False)
-        self.size = config.get("size")  # 用于Dolphin模型
+        self.size = config.get("size")
         self.supports_realtime = config.get("supports_realtime", False)
 
-        # 模型路径结构
         self.models = config.get("models", {})
         self.offline_model_path = self.models.get("offline")
         self.realtime_model_path = self.models.get("realtime")
 
     @property
     def has_offline_model(self) -> bool:
-        """是否有离线模型"""
         return bool(self.offline_model_path)
 
     @property
     def has_realtime_model(self) -> bool:
-        """是否有实时模型"""
         return bool(self.realtime_model_path)
 
     def get_model_path(self, model_type: str = "offline") -> Optional[str]:
-        """根据模型类型获取模型路径"""
         if model_type == "offline":
             return self.offline_model_path
-        elif model_type == "realtime":
+        if model_type == "realtime":
             return self.realtime_model_path
         return None
 
 
 class ModelManager:
-    """模型管理器，支持多模型缓存"""
+    """ASR 模型管理器,支持多模型缓存"""
 
     def __init__(self):
         self._models_config: Dict[str, ModelConfig] = {}
@@ -65,7 +60,6 @@ class ModelManager:
         self._load_models_config()
 
     def _load_models_config(self) -> None:
-        """加载模型配置文件"""
         models_file = Path(settings.models_config_path)
         if not models_file.exists():
             raise DefaultServerErrorException("models.json 配置文件不存在")
@@ -80,14 +74,14 @@ class ModelManager:
                     self._default_model_id = model_id
 
             if not self._default_model_id and self._models_config:
-                # 如果没有指定默认模型，选择第一个
                 self._default_model_id = list(self._models_config.keys())[0]
 
-        except (json.JSONDecodeError, KeyError) as e:
-            raise DefaultServerErrorException(f"模型配置文件格式错误: {str(e)}")
+        except (json.JSONDecodeError, KeyError) as exc:
+            raise DefaultServerErrorException(
+                f"模型配置文件格式错误: {exc}"
+            )
 
     def get_model_config(self, model_id: Optional[str] = None) -> ModelConfig:
-        """获取模型配置"""
         if model_id is None:
             model_id = self._default_model_id
 
@@ -95,36 +89,16 @@ class ModelManager:
             raise InvalidParameterException("未指定模型且没有默认模型")
 
         if model_id not in self._models_config:
-            available_models = ", ".join(self._models_config.keys())
+            available = ", ".join(self._models_config.keys())
             raise InvalidParameterException(
-                f"未知的模型: {model_id}，可用模型: {available_models}"
+                f"未知的模型: {model_id},可用模型: {available}"
             )
-
         return self._models_config[model_id]
 
     def list_models(self) -> List[Dict[str, Any]]:
-        """列出所有可用模型"""
         models = []
         for model_id, config in self._models_config.items():
-            # 检查模型文件是否存在
-            offline_path_exists = False
-            realtime_path_exists = False
-
-            if config.offline_model_path:
-                offline_model_path = (
-                    Path(settings.MODELSCOPE_PATH) / config.offline_model_path
-                )
-                offline_path_exists = offline_model_path.exists()
-
-            if config.realtime_model_path:
-                realtime_model_path = (
-                    Path(settings.MODELSCOPE_PATH) / config.realtime_model_path
-                )
-                realtime_path_exists = realtime_model_path.exists()
-
-            # 检查模型是否已加载
             loaded = model_id in self._loaded_engines
-
             models.append(
                 {
                     "id": model_id,
@@ -136,137 +110,129 @@ class ModelManager:
                     "loaded": loaded,
                     "supports_realtime": config.supports_realtime,
                     "offline_model": (
-                        {
-                            "path": config.offline_model_path,
-                            "exists": offline_path_exists,
-                        }
+                        {"path": config.offline_model_path, "exists": True}
                         if config.offline_model_path
                         else None
                     ),
                     "realtime_model": (
-                        {
-                            "path": config.realtime_model_path,
-                            "exists": realtime_path_exists,
-                        }
+                        {"path": config.realtime_model_path, "exists": True}
                         if config.realtime_model_path
                         else None
                     ),
                     "asr_model_mode": settings.ASR_MODEL_MODE,
                 }
             )
-
         return models
 
     def get_asr_engine(self, model_id: Optional[str] = None) -> BaseASREngine:
-        """获取ASR引擎，支持缓存"""
+        """获取 ASR 引擎(全部走子服务 HTTP 客户端)"""
         if model_id is None:
             model_id = self._default_model_id
 
         if not model_id:
             raise InvalidParameterException("未指定模型且没有默认模型")
 
-        # 如果已经加载，直接返回
         if model_id in self._loaded_engines:
             return self._loaded_engines[model_id]
 
-        # 加载新模型
         config = self.get_model_config(model_id)
         engine = self._create_engine(config)
-
-        # 缓存引擎
         self._loaded_engines[model_id] = engine
-
         return engine
 
+    def get_realtime_asr_engine(
+        self, model_id: Optional[str] = None
+    ) -> BaseASREngine:
+        """获取实时 ASR 引擎; 模型不支持流式时显式拒绝。
+
+        与 get_asr_engine 等价, 只是先按 models.json 的 supports_realtime
+        校验, 在 WS 入口尽早 fail-fast — 否则用户会拿到一个底层连不通的
+        子服务 WS 错误, 难以归因。
+        """
+        target_id = model_id or self._default_model_id
+        if not target_id:
+            raise InvalidParameterException("未指定模型且没有默认模型")
+
+        config = self.get_model_config(target_id)
+        if not config.supports_realtime:
+            raise InvalidParameterException(
+                f"模型 {target_id} 不支持实时识别 (supports_realtime=false)"
+            )
+        return self.get_asr_engine(target_id)
+
     def _create_engine(self, config: ModelConfig) -> BaseASREngine:
-        """根据配置创建ASR引擎（统一使用MultiGPUASREngine支持单/多GPU）"""
-        # 统一使用MultiGPUASREngine，它会根据ASR_GPUS配置自动处理单GPU和多GPU场景
-        return self._create_multi_gpu_engine(config)
+        engine_type = config.engine.lower()
 
-    def _create_multi_gpu_engine(self, config: ModelConfig) -> MultiGPUASREngine:
-        """创建多GPU ASR引擎"""
-        if config.engine.lower() == "funasr":
-            engine_factory = FunASREngine
-            engine_kwargs = {
-                "offline_model_path": config.offline_model_path,
-                "realtime_model_path": config.realtime_model_path,
-                "vad_model": settings.VAD_MODEL,
-                "vad_model_revision": settings.VAD_MODEL_REVISION,
-                "punc_model": settings.PUNC_MODEL,
-                "punc_model_revision": settings.PUNC_MODEL_REVISION,
-                "punc_realtime_model": settings.PUNC_REALTIME_MODEL,
-            }
-        elif config.engine.lower() == "dolphin":
-            engine_factory = DolphinEngine
-            engine_kwargs = {
-                "model_path": config.offline_model_path or config.realtime_model_path,
-                "size": config.size,
-            }
-        else:
-            raise InvalidParameterException(f"不支持的引擎类型: {config.engine}")
+        if engine_type == "funasr":
+            from .http_engine import make_funasr_http_engine
 
-        return MultiGPUASREngine(
-            engine_factory=engine_factory,
-            engine_kwargs=engine_kwargs,
-        )
+            logger.info(
+                "engine=funasr -> services/funasr (urls=%s)",
+                settings.FUNASR_SERVICE_URLS,
+            )
+            return make_funasr_http_engine()
+
+        if engine_type == "dolphin":
+            from .http_engine import make_dolphin_http_engine
+
+            logger.info(
+                "engine=dolphin -> services/dolphin (urls=%s)",
+                settings.DOLPHIN_SERVICE_URLS,
+            )
+            return make_dolphin_http_engine()
+
+        if engine_type == "qwen3-asr":
+            from .http_engine import make_qwen3_asr_http_engine
+
+            logger.info(
+                "engine=qwen3-asr -> services/qwen3_asr_vllm (urls=%s)",
+                settings.QWEN3_ASR_SERVICE_URLS,
+            )
+            return make_qwen3_asr_http_engine()
+
+        raise InvalidParameterException(f"不支持的引擎类型: {config.engine}")
 
     def unload_model(self, model_id: str) -> bool:
-        """卸载指定模型"""
+        """卸载缓存(实际模型在子服务里,这里只是清本地引用)"""
         if model_id in self._loaded_engines:
             del self._loaded_engines[model_id]
-            # 强制垃圾回收
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
             return True
         return False
 
     def get_memory_usage(self) -> Dict[str, Any]:
-        """获取内存使用情况"""
-        memory_info = {
+        return {
             "model_list": list(self._loaded_engines.keys()),
             "loaded_count": len(self._loaded_engines),
             "asr_model_mode": settings.ASR_MODEL_MODE,
+            "note": "模型在 services/* 子服务进程内, 本进程仅为 HTTP 客户端",
         }
 
-        if torch.cuda.is_available():
-            memory_info["gpu_memory"] = {
-                "allocated": f"{torch.cuda.memory_allocated() / 1024**3:.2f}GB",
-                "cached": f"{torch.cuda.memory_reserved() / 1024**3:.2f}GB",
-                "max_allocated": f"{torch.cuda.max_memory_allocated() / 1024**3:.2f}GB",
-            }
-
-        return memory_info
-
     def clear_cache(self) -> None:
-        """清空模型缓存"""
         self._loaded_engines.clear()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
 
     def validate_model_mode_compatibility(self, model_id: str) -> Dict[str, Any]:
-        """验证模型与当前ASR_MODEL_MODE的兼容性"""
         config = self.get_model_config(model_id)
         mode = settings.ASR_MODEL_MODE.lower()
-
-        errors = []
+        errors: List[str] = []
 
         if mode == "offline" and not config.has_offline_model:
             errors.append(
-                f"模型 {model_id} 没有离线版本，但 ASR_MODEL_MODE 设置为 offline"
+                f"模型 {model_id} 没有离线版本,但 ASR_MODEL_MODE 设置为 offline"
             )
         elif mode == "realtime" and not config.has_realtime_model:
             errors.append(
-                f"模型 {model_id} 没有实时版本，但 ASR_MODEL_MODE 设置为 realtime"
+                f"模型 {model_id} 没有实时版本,但 ASR_MODEL_MODE 设置为 realtime"
             )
-        elif mode == "all":
-            if not config.has_offline_model and not config.has_realtime_model:
-                errors.append(f"模型 {model_id} 既没有离线版本也没有实时版本")
+        elif mode == "all" and not (
+            config.has_offline_model or config.has_realtime_model
+        ):
+            errors.append(f"模型 {model_id} 既没有离线版本也没有实时版本")
 
         return {
             "model_id": model_id,
             "mode": mode,
             "errors": errors,
-            "compatible": len(errors) == 0,
+            "compatible": not errors,
         }
 
 
@@ -275,7 +241,6 @@ _model_manager: Optional[ModelManager] = None
 
 
 def get_model_manager() -> ModelManager:
-    """获取全局模型管理器实例"""
     global _model_manager
     if _model_manager is None:
         _model_manager = ModelManager()

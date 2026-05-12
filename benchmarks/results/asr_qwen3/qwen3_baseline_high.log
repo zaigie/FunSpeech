@@ -1,0 +1,4 @@
+使用 16 段音频
+--- 测试 concurrency=64 ---
+  wall=14.02s ok=64/64 req/s=4.56 p50=7.82s p95=13.41s max=14.01s
+-> benchmarks/qwen3_baseline_high.json

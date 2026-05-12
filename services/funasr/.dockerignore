@@ -1,0 +1,10 @@
+# 排除会让 build context 膨胀 / 让缓存键失效的文件
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+tests/__pycache__
+*.log
+.DS_Store

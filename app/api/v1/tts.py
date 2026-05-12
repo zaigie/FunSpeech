@@ -7,6 +7,7 @@ import os
 import base64
 from fastapi import APIRouter, Request, Form, File, UploadFile, HTTPException, Body
 from fastapi.responses import JSONResponse, FileResponse
+from starlette.background import BackgroundTask
 from typing import Optional
 import logging
 
@@ -286,12 +287,14 @@ async def synthesize_speech(
         logger.debug(f"[{task_id}] 语音合成完成: {output_path}")
 
         # 统一使用audio/mpeg作为Content-Type，客户端根据format参数自行保存对应格式
-        # 直接返回音频文件
+        # 直接返回音频文件; 响应发送完毕后由 BackgroundTask 删除 temp 文件,
+        # 避免 /app/temp/ 长期累积 (原 import cleanup_temp_file 但从未调用)
         return FileResponse(
             path=output_path,
             media_type="audio/mpeg",
             filename=f"tts_{task_id}.{tts_request.format}",
             headers={"task_id": task_id},
+            background=BackgroundTask(cleanup_temp_file, output_path),
         )
 
     except (
@@ -336,8 +339,9 @@ async def get_voice_list(request: Request) -> JSONResponse:
 
     try:
         # 使用TTS引擎统一接口获取音色列表（根据模型模式返回对应音色）
+        # tts_engine.get_voices 内部走同步 httpx, 放线程池以免阻塞 event loop
         tts_engine = get_tts_engine()
-        voices = tts_engine.get_voices()
+        voices = await run_sync(tts_engine.get_voices)
         response_data = {"voices": voices, "total": len(voices)}
         return JSONResponse(content=response_data)
 
@@ -361,7 +365,7 @@ async def get_voice_info(request: Request) -> JSONResponse:
 
     try:
         tts_engine = get_tts_engine()
-        voices_info = tts_engine.get_voices_info()
+        voices_info = await run_sync(tts_engine.get_voices_info)
 
         response_data = {
             "voices": voices_info,
@@ -396,9 +400,9 @@ async def refresh_voices(request: Request) -> JSONResponse:
 
     try:
         tts_engine = get_tts_engine()
-        tts_engine.refresh_voices()
-
-        voices = tts_engine.get_voices()
+        # refresh_voices 仅 invalidate 缓存, 不慢; get_voices 会重新拉一次, 走线程池
+        await run_sync(tts_engine.refresh_voices)
+        voices = await run_sync(tts_engine.get_voices)
         response_data = {
             "message": "音色配置已刷新",
             "voices": voices,
@@ -428,14 +432,18 @@ async def health_check(request: Request) -> JSONResponse:
     try:
         tts_engine = get_tts_engine()
 
-        response_data = {
-            "status": "healthy",
-            "sft_model_loaded": tts_engine.is_sft_model_loaded(),
-            "tts_model_loaded": tts_engine.is_tts_model_loaded(),
-            "device": tts_engine.device,
-            "preset_voices": tts_engine.get_voices(),
-            "version": settings.APP_VERSION,
-        }
+        # 所有引擎方法内部走同步 httpx, 整体放线程池里跑
+        def _gather():
+            return {
+                "status": "healthy",
+                "sft_model_loaded": tts_engine.is_sft_model_loaded(),
+                "tts_model_loaded": tts_engine.is_tts_model_loaded(),
+                "device": tts_engine.device,
+                "preset_voices": tts_engine.get_voices(),
+                "version": settings.APP_VERSION,
+            }
+
+        response_data = await run_sync(_gather)
 
         return JSONResponse(content=response_data)
 

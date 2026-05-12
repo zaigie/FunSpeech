@@ -1,0 +1,32 @@
+[project]
+name = "funspeech"
+version = "2.0.0"
+description = "微服务化语音网关 (ASR + TTS),兼容阿里云/OpenAI API。模型推理由 services/* 子服务承载。"
+readme = "README.md"
+requires-python = ">=3.10,<3.11"
+
+# 网关只负责 HTTP/WS 协议层、句子状态机、采样率/格式转换、ITN(轻量) 和 HTTP 客户端调用,
+# 不再 import funasr / dolphin / cosyvoice / torch / transformers 等重模型库。
+dependencies = [
+    "fastapi==0.115.6",
+    "uvicorn[standard]==0.30.0",
+    "python-multipart==0.0.6",
+    # websockets >=13 提供 .sync (内部 funasr/qwen3 流式) + .asyncio (cosyvoice 流式 TTS) 双 client
+    "websockets>=13,<14",
+    "httpx==0.28.1",
+    "requests==2.32.4",
+    "openai>=1.40.0",
+    # 音频处理 — 网关侧做重采样、PCM/WAV 转换、ITN
+    "numpy==1.23.5",
+    "scipy==1.15.3",
+    "soundfile==0.12.1",
+    "librosa==0.9.2",
+    "pydub==0.25.1",
+    "wetext==0.0.4",  # ITN
+    "setuptools<70",  # wetext / 老 sdist 构建期需要
+    "wheel",
+]
+
+[tool.uv]
+package = false
+no-build-isolation-package = ["wetext"]

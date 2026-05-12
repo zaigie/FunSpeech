@@ -1,0 +1,10 @@
+使用 16 段音频
+--- 测试 concurrency=1 ---
+  wall=0.07s ok=1/1 req/s=13.38 p50=0.07s p95=0.07s max=0.07s
+--- 测试 concurrency=2 ---
+  wall=0.16s ok=2/2 req/s=12.76 p50=0.08s p95=0.16s max=0.16s
+--- 测试 concurrency=4 ---
+  wall=0.32s ok=4/4 req/s=12.47 p50=0.32s p95=0.32s max=0.32s
+--- 测试 concurrency=8 ---
+  wall=0.63s ok=8/8 req/s=12.64 p50=0.63s p95=0.63s max=0.63s
+-> benchmarks/asr_baseline.json

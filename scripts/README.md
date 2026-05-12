@@ -1,4 +1,21 @@
-# RMS 音频分析工具
+# 运维脚本
+
+本目录有两个工具:
+
+## 1. `plan_deployment.py` — 部署规划助手 (零依赖)
+
+根据 GPU 资源 + 目标 QPS 自动算出每个子服务该起几副本、怎么绑卡、`docker-compose.override.yml` 怎么写。基于 4090 24G 上的实测吞吐数据 (见 `benchmarks/`) 反推副本数。
+
+```bash
+python3 scripts/plan_deployment.py                  # 交互式
+python3 scripts/plan_deployment.py --list-presets   # 列预设场景
+python3 scripts/plan_deployment.py --preset 4090-quad
+python3 scripts/plan_deployment.py --json input.json
+```
+
+详见 `docs/deployment.md §4.3`。
+
+## 2. `analyze_audio_rms.py` — 音频 RMS 分析
 
 用于分析音频文件的 RMS 能量时序，帮助确定远场声音过滤的最佳阈值。
 

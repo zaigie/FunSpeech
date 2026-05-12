@@ -12,6 +12,7 @@ __pycache__
 *.so
 
 # 虚拟环境
+.venv
 venv
 env
 ENV
@@ -60,4 +61,14 @@ docs/
 # 其他
 .pytest_cache
 .coverage
-node_modules 
+node_modules
+
+# 子服务源码不属于网关镜像 (网关只跑 app/ + start.py)
+services/
+
+# 运行期数据卷 (compose mount 进去, 镜像内不需要)
+data/
+voices/
+
+# 计划/笔记目录
+.claude/

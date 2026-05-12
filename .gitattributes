@@ -1,0 +1,2 @@
+benchmarks/audio/*.wav filter=lfs diff=lfs merge=lfs -text
+benchmarks/results/**/*.json filter=lfs diff=lfs merge=lfs -text

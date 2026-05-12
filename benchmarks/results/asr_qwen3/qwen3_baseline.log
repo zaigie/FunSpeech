@@ -1,0 +1,14 @@
+使用 16 段音频
+--- 测试 concurrency=1 ---
+  wall=0.19s ok=1/1 req/s=5.33 p50=0.19s p95=0.19s max=0.19s
+--- 测试 concurrency=2 ---
+  wall=0.40s ok=2/2 req/s=5.04 p50=0.19s p95=0.40s max=0.40s
+--- 测试 concurrency=4 ---
+  wall=0.94s ok=4/4 req/s=4.28 p50=0.65s p95=0.93s max=0.93s
+--- 测试 concurrency=8 ---
+  wall=1.95s ok=8/8 req/s=4.10 p50=1.95s p95=1.95s max=1.95s
+--- 测试 concurrency=16 ---
+  wall=3.93s ok=16/16 req/s=4.08 p50=2.54s p95=3.92s max=3.92s
+--- 测试 concurrency=32 ---
+  wall=6.38s ok=32/32 req/s=5.02 p50=4.77s p95=6.17s max=6.37s
+-> benchmarks/qwen3_baseline.json

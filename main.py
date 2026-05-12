@@ -20,7 +20,13 @@ if __name__ == "__main__":
     logger.info(
         f"服务器配置: Host={settings.HOST}, Port={settings.PORT}, Debug={settings.DEBUG}"
     )
-    logger.info(f"GPU配置: ASR_GPUS={settings.ASR_GPUS or '(auto)'}, TTS_GPUS={settings.TTS_GPUS or '(auto)'}")
+    logger.info(
+        "子服务: funasr=%s, dolphin=%s, qwen3-asr=%s, cosyvoice=%s",
+        settings.FUNASR_SERVICE_URLS or "(unset)",
+        settings.DOLPHIN_SERVICE_URLS or "(unset)",
+        settings.QWEN3_ASR_SERVICE_URLS or "(unset)",
+        settings.COSYVOICE_SERVICE_URLS or "(unset)",
+    )
 
     uvicorn.run(
         "main:app",

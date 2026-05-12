@@ -1,710 +1,414 @@
-# FunSpeech 部署指南
+# 部署指南
 
-快速部署 FunSpeech API 服务,支持 CPU 和 GPU 两种模式。
+完整使用流程见根 [README.md](../README.md)。本文聚焦在生产部署细节:服务编排、GPU/显存调度、各子服务可调环境变量。
 
-## 🚀 快速部署
+## 一、前置要求
 
-### CPU 版本部署
-
-适用于开发测试或无 GPU 环境:
-
-```bash
-# 下载配置文件
-curl -sSL https://cnb.cool/nexa/FunSpeech/-/git/raw/main/docker-compose.yml -o docker-compose.yml
-
-# 启动服务
-docker-compose up -d
-```
-
-默认镜像 `docker.cnb.cool/nexa/funspeech:latest` 为 CPU 版本。
-
-### GPU 版本部署
-
-适用于生产环境,提供更快的推理速度:
-
-**前置要求:**
-- NVIDIA GPU (CUDA 12.1+)
-- 已安装 NVIDIA Container Toolkit
-
-**1. 安装 NVIDIA Container Toolkit**
+- Docker ≥ 24
+- Docker Compose v2(随 Docker Desktop 自带,Linux 用 `docker compose` 命令)
+- NVIDIA Container Toolkit(GPU 子服务必需)
 
 ```bash
-# Ubuntu/Debian
-distribution=$(. /etc/os-release;echo $ID$VERSION_ID) \
-   && curl -s -L https://nvidia.github.io/nvidia-docker/gpgkey | sudo apt-key add - \
-   && curl -s -L https://nvidia.github.io/nvidia-docker/$distribution/nvidia-docker.list | sudo tee /etc/apt/sources.list.d/nvidia-docker.list
-
+# Ubuntu / Debian 安装 NVIDIA Container Toolkit
 sudo apt-get update
 sudo apt-get install -y nvidia-container-toolkit
 sudo systemctl restart docker
 ```
 
-**2. 修改 docker-compose.yml**
+## 二、构建前置准备
 
-```yaml
-version: "3.8"
-services:
-  funspeech:
-    image: docker.cnb.cool/nexa/funspeech:gpu-latest  # 使用 GPU 镜像
-    container_name: funspeech
-    ports:
-      - "8000:8000"
-    volumes:
-      - ~/.cache/modelscope:/root/.cache/modelscope
-      - ./temp:/app/temp
-      - ./data:/app/data
-      - ./logs:/app/logs
-      - ./voices:/app/voices
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-```
+### 2.1 拉子模块 (cosyvoice 必需)
 
-**3. 启动服务**
+`services/cosyvoice/third_party/CosyVoice` 是上游官方 git submodule。**首次 clone 后必须执行**:
 
 ```bash
-docker-compose up -d
+git submodule update --init --recursive
 ```
 
-**4. 验证 GPU 可用性**
+否则 cosyvoice 镜像里 `third_party/CosyVoice` 是空目录,容器启动 `from cosyvoice.cli.cosyvoice import ...` 会立刻 `ModuleNotFoundError`。
+
+### 2.2 启用 BuildKit
+
+Dockerfile 用 `RUN --mount=type=cache,target=/var/cache/apt` 与 `--mount=type=cache,target=/root/.cache/uv` 给 apt 与 uv 加缓存挂载,大幅缩短重复 build 时间。Docker 23+ 默认开启 BuildKit;低版本手动:
 
 ```bash
-# 检查 GPU 是否被识别
-docker exec -it funspeech nvidia-smi
-
-# 查看日志确认 GPU 使用
-docker-compose logs | grep -i cuda
+export DOCKER_BUILDKIT=1
+export COMPOSE_DOCKER_CLI_BUILD=1
 ```
 
-### 数据目录映射
+### 2.3 构建期 HTTP 代理
 
-重要数据通过卷映射持久化保存:
-
-| 本地路径              | 容器路径                  | 用途                         | 重要性 |
-| --------------------- | ------------------------- | ---------------------------- | ------ |
-| `~/.cache/modelscope` | `/root/.cache/modelscope` | 🤖 模型文件缓存              | ⭐⭐⭐ |
-| `./temp`              | `/app/temp`               | 📁 临时文件存储              | ⭐⭐   |
-| `./data`              | `/app/data`               | 💾 数据库文件(异步 TTS 等)   | ⭐⭐⭐ |
-| `./logs`              | `/app/logs`               | 📝 应用日志                  | ⭐⭐   |
-| `./voices`            | `/app/voices`             | 🎵 自定义音色                | ⭐⭐⭐ |
-
-> 💡 **提示**: 模型缓存目录非常重要,建议映射到本地以避免重复下载大文件。
-
-## ⚙️ 环境变量配置
-
-### 配置文件 (app/core/config.py)
-
-所有环境变量均在 `app/core/config.py` 中定义,可通过环境变量覆盖默认值。
-
-### 服务器配置
-
-| 环境变量 | 默认值    | 说明                   | 示例        |
-| -------- | --------- | ---------------------- | ----------- |
-| `HOST`   | `0.0.0.0` | 服务绑定地址           | `127.0.0.1` |
-| `PORT`   | `8000`    | 服务端口               | `9000`      |
-| `DEBUG`  | `false`   | 开发调试模式           | `true`      |
-
-**使用示例:**
+国内拉 PyPI / HuggingFace 慢,推荐配置代理:
 
 ```bash
-# 仅监听本地
-export HOST=127.0.0.1
-export PORT=9000
-
-# 开发模式(启用 API 文档)
-export DEBUG=true
+# .env
+HTTP_PROXY=http://host.docker.internal:7890
+HTTPS_PROXY=http://host.docker.internal:7890
 ```
 
-**影响:**
-- `DEBUG=true` 时,API 文档可在 `/docs` 访问
-- `DEBUG=false` 时,API 文档自动隐藏
+- macOS / Windows Docker Desktop:`host.docker.internal` 直接可用
+- Linux 服务器:换成宿主机 LAN IP(例如 `192.168.1.10`),或在 docker daemon 里配 default proxy
 
-### 日志配置
+代理仅用于构建期,Dockerfile 末尾会清空运行期 ENV。
 
-| 环境变量           | 默认值                       | 说明                     | 可选值                        |
-| ------------------ | ---------------------------- | ------------------------ | ----------------------------- |
-| `LOG_LEVEL`        | `INFO`                       | 日志级别                 | `DEBUG`, `INFO`, `WARNING`    |
-| `LOG_FILE`         | `{BASE_DIR}/logs/funspeech.log` | 日志文件路径             | 任意有效路径                  |
-| `LOG_MAX_BYTES`    | `20971520` (20MB)            | 单个日志文件最大大小(字节) | 整数                          |
-| `LOG_BACKUP_COUNT` | `50`                         | 日志备份文件数量         | 整数                          |
-
-**使用示例:**
+## 三、启动方式
 
 ```bash
-# 调试模式,输出详细日志
-export LOG_LEVEL=DEBUG
+docker compose build              # 首次或 Dockerfile 变更后
+docker compose up -d              # 默认: gateway + funasr + cosyvoice
 
-# 自定义日志路径和大小
-export LOG_FILE=/var/log/funspeech/app.log
-export LOG_MAX_BYTES=52428800  # 50MB
-export LOG_BACKUP_COUNT=30
+docker compose --profile dolphin up -d                              # 加 dolphin
+docker compose --profile qwen3-asr up -d                            # 加 qwen3-asr-vllm
+docker compose --profile dolphin --profile qwen3-asr up -d          # 全部启动
 ```
 
-**影响:**
-- `LOG_LEVEL=DEBUG` 输出最详细的日志,包括模型加载、请求处理细节
-- 日志文件达到 `LOG_MAX_BYTES` 后自动轮转,保留 `LOG_BACKUP_COUNT` 个备份
-
-### 鉴权配置
-
-| 环境变量  | 默认值 | 说明                              | 示例                |
-| --------- | ------ | --------------------------------- | ------------------- |
-| `APPTOKEN` | -      | API 访问令牌(X-NLS-Token header)  | `your_secret_token` |
-| `APPKEY`  | -      | 应用密钥(appkey 参数)             | `your_app_key`      |
-
-**使用示例:**
+并行加速 build (子服务镜像之间互相独立):
 
 ```bash
-# 启用鉴权
-export APPTOKEN=my_secret_token_2024
-export APPKEY=my_app_key_2024
+docker compose build --parallel
 ```
 
-**影响:**
-- **未设置** `APPTOKEN/APPKEY`: 鉴权可选,适合开发环境
-- **设置了** `APPTOKEN/APPKEY`: 鉴权必需,所有请求必须提供有效的 token 或 appkey
+> 首次 build 内存可能吃紧 (vLLM 编译 + torch wheel),如果 OOM 退到串行 build。
 
-**请求示例:**
+## 四、服务编排与 GPU 拓扑
+
+### 4.1 服务列表
+
+| 服务 | 端口 | GPU | 默认启动 | profile |
+|---|---|---|---|---|
+| `gateway` | 8000 | ❌ | ✅ | (默认) |
+| `funasr-0` | 8001 | ✅ | ✅ | (默认) |
+| `dolphin-0` | 8002 | ✅ | ❌ | `dolphin` |
+| `qwen3-asr-0` | 8003 | ✅ | ❌ | `qwen3-asr` |
+| `cosyvoice-0` | 8004 | ✅ | ✅ | (默认) |
+
+每个 GPU 子服务通过 `deploy.resources.reservations.devices` 申明 nvidia 设备,容器内通过 `CUDA_VISIBLE_DEVICES` 选卡。
+
+### 4.2 资源占用 (基于 4090 24G 实测)
+
+**单副本吞吐和显存** — 全部数据来自 `benchmarks/results/`:
+
+| 子服务 | 单副本吞吐 (req/s) | 单条延迟 (示例) | 权重显存 | 实际占卡 |
+|---|---|---|---|---|
+| `funasr-0` (all) | **~12** | 70-80 ms | ~2.5-3 GiB | ~3 GiB |
+| `funasr-0` (offline) | ~12 | ~80 ms | ~0.7 GiB | ~1 GiB |
+| `dolphin-0` | ~12 | ~80 ms | ~0.6 GiB | ~1 GiB |
+| `qwen3-asr-0` | **~5** | ~190 ms | ~4 GiB **权重** | **总 = `QWEN3_ASR_GPU_MEM × 卡显存`** |
+| `cosyvoice-0` (clone) | **~0.34** | ~3.5 s | ~3.5 GiB | ~4 GiB |
+| `cosyvoice-0` (all, sft+clone) | ~0.34 | ~3.5 s | ~5 GiB | ~5.5 GiB |
+
+> qwen3-asr 一启动就**直接预占** `QWEN3_ASR_GPU_MEM × 卡显存` (vLLM 把权重 + KV cache 池都放在这一片里), 不是只占权重 4 GiB。这是和 funasr / cosyvoice 最不一样的地方。
+
+**关键约束**:
+1. **同一个服务的多个副本不能放同一张卡** — 它们会抢同一份 GPU SM, 实际吞吐 ≈ 1 副本。横向扩展 = 多卡多副本, 不是单卡多副本。
+2. **不同服务可以共置同一张卡** — 例如 funasr (3 GiB) + cosyvoice (5 GiB) 可以同卡, 共占 ~9 GiB。
+3. **qwen3-asr 占卡霸道**: 独占时 `QWEN3_ASR_GPU_MEM=0.85` 性能最好但吃掉 ~20 GiB; 共置时降到 0.3-0.4 (~7-10 GiB) 但 KV pool 小, 高 QPS 下批处理空间小。
+
+### 4.3 怎么算自己应该几副本几卡: 用脚本
+
+不要靠拍脑袋, 直接用 `scripts/plan_deployment.py`:
 
 ```bash
-# 使用 Token
-curl -H "X-NLS-Token: my_secret_token_2024" \
-  http://localhost:8000/stream/v1/asr
+# 交互式: 一步步问你 GPU + 目标 QPS
+python3 scripts/plan_deployment.py
 
-# 使用 AppKey
-curl "http://localhost:8000/rest/v1/tts/async?appkey=my_app_key_2024"
+# 用预设场景看看
+python3 scripts/plan_deployment.py --list-presets
+python3 scripts/plan_deployment.py --preset 4090-quad
+
+# 从 JSON 文件读 (适合 CI / 复用)
+python3 scripts/plan_deployment.py --json my_setup.json
 ```
 
-### GPU配置
+脚本输入: GPU 列表 (每张卡的显存) + 想启用哪些服务和各自的目标 QPS。
+脚本输出:
+- 每个服务需要几副本 (按吞吐反推)
+- 每个副本绑哪张卡 (worst-fit 启发, 让显存均匀分布)
+- 显存预算表 (含 vLLM KV pool 估算)
+- 直接可粘贴的 `docker-compose.override.yml` 片段 + 网关 `.env` 片段
+- 哪些 QPS 目标因卡数/显存不够达不到 → 给出明确的扩容建议
 
-| 环境变量    | 默认值 | 说明             | 可选值                              |
-| ----------- | ------ | ---------------- | ----------------------------------- |
-| `TTS_GPUS`  | `""`   | TTS使用的GPU配置 | `""` (自动), `cpu`, `0`, `0,1,2`    |
-| `ASR_GPUS`  | `""`   | ASR使用的GPU配置 | `""` (自动), `cpu`, `0`, `0,1,2`    |
+**典型例子** (摘自脚本输出):
 
-**配置格式说明:**
-- `""` 或 `auto`: 自动检测，有GPU用GPU，无GPU用CPU
-- `cpu`: 强制使用CPU
-- `0`: 使用单卡GPU 0
-- `0,1,2`: 使用多卡负载均衡，在每个GPU上创建独立模型副本
+| 场景 | GPU | 建议 |
+|---|---|---|
+| 单 24G 卡, funasr 20 路 + cosyvoice 0.3 路 | 1× 4090 | funasr + cosyvoice 同卡 0, 但只够 1 副本 funasr (12 req/s), 想到 20 需加卡 |
+| 双 24G 卡, qwen3-asr 10 路 + cosyvoice 0.3 路 | 2× 4090 | qwen3-asr 各占 1 张卡 (`GPU_MEM=0.85`), cosyvoice 没地方放 → 加第 3 张卡 |
+| 4× 24G 卡, funasr 24 路 + qwen3-asr 10 路 + cosyvoice 0.6 路 | 4× 4090 | 卡 0/1 跑 qwen3-asr 各 1 副本, 卡 2/3 跑 funasr+cosyvoice 各 1 副本 |
 
-**使用示例:**
+### 4.4 跨卡分布的两种方式
+
+**方式 A — 全部贴卡 0(默认):** `docker-compose.yml` 里所有 GPU 子服务的 `CUDA_VISIBLE_DEVICES: "0"`,适合单卡或想让所有模型共置。
+
+**方式 B — 跨卡分布:** 直接用上面 `plan_deployment.py` 的输出, 把生成的 `docker-compose.override.yml` 写进项目根。Docker Compose 自动 merge override。
+
+注意 `device_ids: ["0", "1"]` 不会在子服务进程内启用张量并行(那需要 vLLM 的 `tensor_parallel_size`,且只对装不下的大模型有意义,本项目模型都是 0.5B–1.7B,装得下,不需要切)。多卡的正确用法是**多副本**(§5)。
+
+## 五、多副本
+
+### 5.1 添加副本
+
+**推荐**: 用 `scripts/plan_deployment.py` 一键生成 `docker-compose.override.yml` 片段和网关 `.env` (见 §4.3)。
+
+**手动**: 每张额外的卡 = 一个新副本。两步:
+
+1. 在 `docker-compose.override.yml` 加新服务条目(`funasr-1`),把 `CUDA_VISIBLE_DEVICES` 设成另一张卡, **不要**给 `-0` 的容器名碰撞 (要给新副本不同的 `container_name`):
+   ```yaml
+   services:
+     funasr-1:
+       image: funspeech/funasr:latest
+       container_name: funspeech-funasr-1
+       environment:
+         CUDA_VISIBLE_DEVICES: "1"
+         INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-funspeech-internal}
+         PORT: "8001"
+       volumes:
+         - ${MODELSCOPE_CACHE:-~/.cache/modelscope/hub/models}:/root/.cache/modelscope/hub
+       deploy:
+         resources:
+           reservations:
+             devices:
+               - {driver: nvidia, device_ids: ["1"], capabilities: [gpu]}
+       restart: unless-stopped
+   ```
+2. 网关 env 里把对应 URL 列表逗号分隔:
+   ```
+   FUNASR_SERVICE_URLS=http://funasr-0:8001,http://funasr-1:8001
+   ```
+
+网关侧 `_HttpReplicaPool` 会做最少连接 + 随机选副本调度;每个外部 WS 会话**绑定固定副本**(session 级亲和性),保证 cache 状态不串。
+
+> ⚠️ **同一服务的多个副本不要绑同一张卡**: 例如不要 `funasr-0` 和 `funasr-1` 都用 `CUDA_VISIBLE_DEVICES: "0"`。两个副本会抢同一份 GPU SM, 总吞吐反而下降 (实测见 `benchmarks/results/`)。 横向扩展 = 多卡多副本。
+
+### 5.2 cosyvoice 多副本的写副本与同步
+
+`spk2info.pt` 是被各副本加载到内存里的 Python dict, **磁盘共享 ≠ 内存一致**:
+
+- 副本 A 加音色 Alice → `torch.save()` 整个内存 dict 到磁盘
+- 同时副本 B 加 Bob → 它的内存里没 Alice → save 时把 Alice **覆盖掉**
+- 即使串行写, 副本 B 内存里仍然没有 Alice, 收到合成请求会失败
+
+**网关已实现的同步机制(自 commit `<本次提交>` 起):**
+
+1. URL 列表第一个 = 主写副本 (primary)。所有 `POST /voices`、`DELETE /voices/{name}`、`POST /voices/refresh` 自动路由到 primary, 不再走副本池随机调度。
+2. 写完成后, 网关向其它副本广播 `POST /voices/reload`, 它们从磁盘热重载 `spk2info.pt` + `voice_registry.json`, 不重启进程。
+3. 广播失败仅打 warning, 不抛异常 — 保证写本身始终成功; 失败副本最坏到下次广播或重启才同步。
+4. 合成请求 (`POST /tts/file`、`WS /tts/stream`) 仍走副本池, 任意副本都行。
+
+部署时 **`COSYVOICE_SERVICE_URLS` 第一个 URL 就是 primary**:
 
 ```bash
-# 强制使用 CPU
-export TTS_GPUS=cpu
-export ASR_GPUS=cpu
-
-# 指定单张 GPU
-export TTS_GPUS=0
-export ASR_GPUS=1  # 使用第二块 GPU
-
-# 多GPU负载均衡
-export TTS_GPUS=0,1
-export ASR_GPUS=0,1
+# cosyvoice-0 写, cosyvoice-1 / cosyvoice-2 只读但能合成
+COSYVOICE_SERVICE_URLS=http://cosyvoice-0:8004,http://cosyvoice-1:8004,http://cosyvoice-2:8004
 ```
 
-**影响:**
-- 单设备模式（`""`, `cpu`, `0`）：创建单个模型实例
-- 多GPU模式（`0,1,2`）：在每个GPU上创建模型副本，通过最少连接数策略负载均衡
+主副本宕了怎么办: 当前不会自动 failover, 需手动调换 URL 列表顺序并重启网关。
 
-### TTS 模型按需加载
+### 5.3 `/voices/reload` 端点
 
-| 环境变量       | 默认值 | 说明                     | 可选值                          |
-| -------------- | ------ | ------------------------ | ------------------------------- |
-| `TTS_MODEL_MODE` | `all`  | TTS 模型加载模式         | `all`, `sft`, `clone` |
-| `CLONE_MODEL_VERSION` | `cosyvoice3` | Clone 模型版本 | `cosyvoice2`, `cosyvoice3` |
-| `COSYVOICE3_MODEL_ID` | `FunAudioLLM/Fun-CosyVoice3-0.5B-2512` | CosyVoice3 模型 ID | ModelScope 模型 ID |
-| `TTS_LOAD_TRT` | `false` | 是否启用 TensorRT 加速 | `true`, `false` |
-| `TTS_ENABLE_FP16` | `false` | 是否启用 FP16 推理 | `true`, `false` |
+cosyvoice 子服务暴露 `POST /voices/reload`, 用磁盘上的 `spk2info.pt` + `voice_registry.json` **覆盖**内存状态(磁盘没有的 zero-shot 音色会从内存里删掉, 但预设音色不动)。
 
-**模式说明:**
+| 场景 | 用法 |
+|---|---|
+| 网关写后自动广播 | 见 §5.2, 无需手动调用 |
+| 直接更新文件后手动同步 | `curl -X POST -H "X-Internal-Token: $INTERNAL_SERVICE_TOKEN" http://cosyvoice-0:8004/voices/reload` |
+| 排查不一致 | 任意副本调一次, 返回 `{clone_voices, registry_voices, clone_loaded}` |
 
-| 模式         | 功能           | 磁盘空间 | 内存使用 | 适用场景           |
-| ------------ | -------------- | -------- | -------- | ------------------ |
-| `all`        | 预设+克隆音色  | ~11GB    | 较高     | 完整功能需求       |
-| `sft`        | 仅预设音色     | ~5.4GB   | 较低     | 标准语音合成       |
-| `clone`      | 仅音色克隆     | ~5.5GB   | 较低     | 个性化音色定制     |
+仅 `clone_loaded=true` 的副本(即 `TTS_MODEL_MODE` 包含 `clone`)才会真正重载 `spk2info`; `sft` only 副本只重载 registry。
 
-**克隆模型版本说明:**
+## 六、子服务环境变量参考
 
-| 版本 | 模型 | 说明 |
-| ---- | ---- | ---- |
-| `cosyvoice3` | Fun-CosyVoice3-0.5B-2512 | 默认版本，支持更多控制特性（prompt 指令） |
-| `cosyvoice2` | CosyVoice2-0.5B | 稳定版本 |
+所有 GPU 子服务共有的:
 
-**TensorRT 加速说明:**
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `PORT` | 子服务各自约定(8001/2/3/4) | 监听端口 |
+| `LOG_LEVEL` | `INFO` | 日志级别 |
+| `INTERNAL_SERVICE_TOKEN` | `funspeech-internal` | 网关→子服务鉴权头(`X-Internal-Token`) |
+| `MODELSCOPE_PATH` | `~/.cache/modelscope/hub` | 容器内权重缓存路径(已通过 bind mount 共享) |
+| `CUDA_VISIBLE_DEVICES` | `0` | 选卡;改成 `1` / `0,1` / 空字符串(强制 CPU)等 |
 
-| 配置 | 说明 |
-| ---- | ---- |
-| `TTS_LOAD_TRT=false` | 纯 PyTorch 推理，稳定性最高（默认） |
-| `TTS_LOAD_TRT=true, TTS_ENABLE_FP16=false` | FP32 TensorRT 加速，速度较快，稳定 |
-| `TTS_LOAD_TRT=true, TTS_ENABLE_FP16=true` | FP16 TensorRT 加速，速度最快，但 CosyVoice3 存在数值溢出问题 |
+下面分子服务列出独有的 env。
 
-> ⚠️ **注意**: CosyVoice3 的 FP16 TensorRT 存在数值溢出问题，可能导致静音或杂音，建议保持 `TTS_ENABLE_FP16=false`
+### 6.1 funasr-0 (端口 8001)
 
-**使用示例:**
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `ASR_MODEL_MODE` | `all` | `all` / `offline` / `realtime`,决定预加载哪个 paraformer |
+| `ASR_DEVICE` | `auto` | `auto` / `cpu` / `cuda:0` 等,与 `CUDA_VISIBLE_DEVICES` 配合 |
+| `FUNASR_OFFLINE_MODEL` | `iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-pytorch` | 离线 paraformer 模型 id |
+| `FUNASR_REALTIME_MODEL` | `iic/speech_paraformer-large_asr_nat-zh-cn-16k-common-vocab8404-online` | 流式 paraformer |
+| `VAD_MODEL` | `iic/speech_fsmn_vad_zh-cn-16k-common-pytorch` | VAD 模型 id |
+| `VAD_MODEL_REVISION` | `v2.0.4` | |
+| `PUNC_MODEL` | `iic/punc_ct-transformer_zh-cn-common-vocab272727-pytorch` | 离线标点 |
+| `PUNC_MODEL_REVISION` | `v2.0.4` | |
+| `PUNC_REALTIME_MODEL` | `iic/punc_ct-transformer_zh-cn-common-vad_realtime-vocab272727` | 实时标点 |
+
+显存 (4090 实测):`offline` 模式只占 ~0.7 GB;`all` 模式约 2.5–3 GB(两个 paraformer + VAD + 双 PUNC)。单副本吞吐 ~12 req/s (单条 70-80ms), 高 QPS 用多副本扩。
+
+### 6.2 dolphin-0 (端口 8002,profile=dolphin)
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `DOLPHIN_DEVICE` | `auto` | `auto` / `cpu` / `cuda` / `cuda:0`(注意 dolphin 用 `cuda` 不带索引,索引由 `CUDA_VISIBLE_DEVICES` 控制) |
+| `DOLPHIN_SIZE` | `small` | dolphin 模型规模(目前仅 `small`) |
+| `DOLPHIN_MODEL_PATH` | `DataoceanAI/dolphin-small` | 模型 id (相对 `MODELSCOPE_PATH`) |
+
+显存约 0.6 GB,可与 funasr 同卡共置。
+
+### 6.3 qwen3-asr-0 (端口 8003,profile=qwen3-asr)
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `QWEN3_ASR_MODEL_ID` | `Qwen/Qwen3-ASR-1.7B` | vLLM 加载的模型 id (也可指向本地路径) |
+| `QWEN3_ASR_GPU_MEM` | `0.8` | **vLLM 启动时直接预留这么大比例的卡显存做权重+KV pool** |
+| `QWEN3_ASR_MAX_NEW_TOKENS` | `4096` | 单步生成上限 (官方推荐, 影响 KV pool 大小) |
+| `QWEN3_ASR_MAX_BATCH` | `128` | vLLM 内部 continuous batching 最大 batch size |
+| `QWEN3_UNFIXED_CHUNK_NUM` | `2` | 流式状态机 unfixed chunk 数(token 修订窗口) |
+| `QWEN3_UNFIXED_TOKEN_NUM` | `5` | 流式状态机 unfixed token 数 |
+| `QWEN3_CHUNK_SIZE_SEC` | `2.0` | 流式 chunk 时长(秒) |
+
+**`QWEN3_ASR_GPU_MEM` 是显存调度最关键的 env:**
+
+| 卡显存 | 与其它服务同卡共置 | 独占整张卡 |
+|---|---|---|
+| 8 GB | 不建议 (模型权重 4 GiB + KV pool 起步 1 GiB 就已经挤兑其它服务) | `0.85`(~6.8 GB,够 1.7B 模型 + 小 KV) |
+| 16 GB | `0.4`(预留 ~9.6 GB 给别的) | `0.85` |
+| 24 GB | `0.3`(预留 ~16 GB 给别的, 但 KV pool 小, 高并发会等位) | **`0.85`** (实测最佳, ~5 req/s) |
+| 40+ GB | `0.2`–`0.3` 即可 | `0.85` |
+
+`gpu_memory_utilization` 越大 KV cache 池越大,vLLM 能并行处理的请求越多;但子服务进程内的 vLLM 入口是**串行**调用 (Python LLM 接口非线程安全, 见 `services/qwen3_asr_vllm/server.py:156` 的 `_get_vllm_lock` 实现注释), batching 在 vLLM 引擎内部完成, 实际收益要看 KV pool 容量 + 请求长短。
+
+> 关于子服务的"GPU 并发" — 我们曾尝试在子服务 handler 层加 `asyncio.Semaphore(N)` 让多个推理同时进 GPU, 实测**完全负优化** (vLLM 死锁 / torch 模型上下文切换变慢)。现在每个子服务的 GPU 并发数都在代码里**硬编码**, 不通过环境变量暴露 — 想加并发请用多副本 (§5)。
+
+### 6.4 cosyvoice-0 (端口 8004)
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `TTS_MODEL_MODE` | `all` | `all` / `sft` / `clone`,决定预加载预设音色模型还是克隆模型 |
+| `TTS_DEVICE` | `auto` | `auto` / `cpu` / `cuda:0` |
+| `CLONE_MODEL_VERSION` | `cosyvoice3` | `cosyvoice2` / `cosyvoice3` |
+| `SFT_MODEL_ID` | `iic/CosyVoice-300M-SFT` | SFT (预设音色) 模型 id |
+| `CLONE_MODEL_ID` | `iic/CosyVoice2-0.5B` | CosyVoice2 克隆模型 id (仅 `CLONE_MODEL_VERSION=cosyvoice2` 时用) |
+| `COSYVOICE3_MODEL_ID` | `FunAudioLLM/Fun-CosyVoice3-0.5B-2512` | CosyVoice3 模型 id |
+| `TTS_LOAD_TRT` | `false` | TensorRT 加速 flow / vocoder |
+| `TTS_ENABLE_FP16` | `false` | FP16 推理。CosyVoice3 + FP16 + TRT 同时开存在 NaN 风险 |
+| `TTS_LOAD_VLLM` | `false` | **进程内 vLLM 加速 LLM 段。vLLM 0.11+ 要求 transformers ≥4.55,与 CosyVoice 主代码 4.51.3 冲突,默认关闭** |
+| `VOICES_DIR` | `/app/voices` | 容器内音色目录(挂载 `./voices`) |
+
+**显存 (4090 实测):**
+
+- `clone` only(默认 CosyVoice3):~3.5 GB
+- `sft` only:~1.5 GB
+- `all`(双模型同时加载):~5 GB
+- 启用 TRT:加 ~0.5–1 GB
+- 启用 vLLM:加 ~1 GB(LLM 段被 vLLM 接管,有自己的 KV cache)
+
+**吞吐**: 单副本 ~0.34 req/s (单条 3-4 秒), 这是 TTS 的本质 — CosyVoice 是 autoregressive 解码器, 单条音频本身就要 GPU 跑几秒。想要 1 req/s 就要 3 副本, 10 req/s 就要 30 副本。请用 `plan_deployment.py` 实算。
+
+## 七、网关环境变量参考
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `GATEWAY_PORT` | `8000` | 对外暴露端口 |
+| `WORKERS` | `1` | uvicorn worker 进程数;>1 时每个 worker 独立加载客户端 |
+| `INFERENCE_THREAD_POOL_SIZE` | `max(4, CPU 核数)` | 网关内部派发同步阻塞调用的线程池大小 |
+| `APPTOKEN` / `APPKEY` | - | 外部鉴权(可选,见 §八) |
+| `INTERNAL_SERVICE_TOKEN` | `funspeech-internal` | 必须与子服务一致 |
+| `SERVICE_REQUEST_TIMEOUT` | `60` | 网关→子服务调用超时(秒) |
+| `SERVICE_HEALTHCHECK_INTERVAL` | `5` | 健康状态缓存窗口(秒) |
+| `HTTPX_MAX_CONNECTIONS` | `200` | 网关→子服务 HTTP 客户端的连接池上限。高 QPS (>100 req/s) 可调到 500+ |
+| `HTTPX_MAX_KEEPALIVE` | `50` | 保活连接数上限 |
+| `FUNASR_SERVICE_URLS` | `http://funasr-0:8001` | 逗号分隔多副本 |
+| `DOLPHIN_SERVICE_URLS` | `http://dolphin-0:8002` | |
+| `QWEN3_ASR_SERVICE_URLS` | `http://qwen3-asr-0:8003` | |
+| `COSYVOICE_SERVICE_URLS` | `http://cosyvoice-0:8004` | |
+| `ASR_MODEL_MODE` | `all` | 仅影响 `models.json` 兼容性校验,真正模式由 funasr 子服务决定 |
+| `TTS_MODEL_MODE` | `all` | 影响 `get_voices()` 返回过滤 |
+| `ASR_ENABLE_REALTIME_PUNC` | `false` | 流式中间结果是否带标点(转发给 funasr 子服务) |
+| `AUTO_LOAD_CUSTOM_ASR_MODELS` | - | 启动时预热的额外 ASR 模型 id,逗号分隔 |
+| `ASR_ENABLE_NEARFIELD_FILTER` | `true` | 网关侧远场过滤开关 |
+| `ASR_NEARFIELD_RMS_THRESHOLD` | `0.01` | RMS 阈值 |
+| `ASR_NEARFIELD_FILTER_LOG_ENABLED` | `true` | 过滤命中是否打日志 |
+
+## 八、鉴权
+
+- **外部鉴权**(可选):设置 `APPTOKEN` / `APPKEY`,客户端通过
+  `X-NLS-Token`(Aliyun 接口)或 `Authorization: Bearer xxx`(OpenAI 接口)携带
+- **内部鉴权**(必备):`INTERNAL_SERVICE_TOKEN` 网关→子服务通过
+  `X-Internal-Token` 头携带。**生产环境务必改默认值**
+
+## 九、数据卷
+
+| 主机路径 | 容器路径 | 用途 | 注意 |
+|---|---|---|---|
+| `${MODELSCOPE_CACHE}` (默认 `~/.cache/modelscope/hub/models`) | `/root/.cache/modelscope/hub` | 模型权重缓存,所有 GPU 子服务共享 | 见下方说明 |
+| `./voices` | `/app/voices`(只在 cosyvoice) | 零样本克隆音色 + spk2info.pt | 持久化用户数据 |
+| `./temp` | `/app/temp`(只在 gateway) | 网关临时音频文件 | gateway 返回 FileResponse 后会 BackgroundTask 自动删除 |
+| `./data` | `/app/data`(只在 gateway) | 异步 TTS 任务库 | |
+| `./logs` | `/app/logs`(只在 gateway) | 日志 | |
+
+### 9.1 模型缓存目录映射 (重要)
+
+宿主机 `~/.cache/modelscope/hub/models/` **直接** mount 成容器内 `/root/.cache/modelscope/hub/`。这样做的原因是新旧 modelscope 版本的目录布局不同:
+
+- 新版 (≥1.30): `hub/models/<org>/<model>` (例如 `hub/models/Qwen/Qwen3-ASR-1.7B`)
+- 旧版 (=1.20, 各子服务用的版本): `hub/<org>/<model>` (例如 `hub/Qwen/Qwen3-ASR-1.7B`)
+
+把宿主机的 `models/` mount 成容器的 `hub/`, 两边路径就都对上了。
+
+**首次启动**: 子服务会从 modelscope 自动下载所需权重 (具体见各服务 `*_MODEL_ID` env)。提前手动下到 `~/.cache/modelscope/hub/models/<org>/<model>` 可以避开首次启动数分钟的等待。
+
+**离线部署 (无外网)**: 把 `~/.cache/modelscope/hub/models/` 整个 rsync 到目标机, mount 进去即可。**注意 qwen3-asr** 启动时 vLLM 会尝试拉一份 transformers config (即使权重已经在本地), 离线场景务必设 `HF_HUB_OFFLINE=1` + `TRANSFORMERS_OFFLINE=1` 两个 env, 否则容器会 OSError。
+
+## 十、健康检查与启动顺序
+
+每个子服务都有 `/health`,docker-compose 配了 `healthcheck`:
+
+- funasr / dolphin: `start_period=180s`,等模型加载
+- qwen3-asr / cosyvoice: `start_period=300s`,vLLM 与 CosyVoice 加载更慢
+
+`gateway.depends_on` 用 `condition: service_started`,即使子服务还没就绪网关也能起来对外报 503,避免一处异常全栈不可用。改 `service_healthy` 即可严格依赖。
+
+## 十一、排错
 
 ```bash
-# 仅需预设音色(节省空间)
-export TTS_MODEL_MODE=sft
+# 看子服务状态
+docker compose ps
 
-# 仅需音色克隆（使用 CosyVoice3，默认）
-export TTS_MODEL_MODE=clone
-export CLONE_MODEL_VERSION=cosyvoice3
+# 看子服务日志
+docker compose logs -f funasr-0
+docker compose logs -f qwen3-asr-0    # vLLM 日志在这里
 
-# 使用 CosyVoice2 音色克隆
-export TTS_MODEL_MODE=clone
-export CLONE_MODEL_VERSION=cosyvoice2
+# 进容器查环境
+docker compose exec gateway env | grep -E "SERVICE_URLS|TOKEN"
+docker compose exec qwen3-asr-0 env | grep -E "QWEN3|CUDA"
 
-# 启用 TensorRT FP32 加速
-export TTS_LOAD_TRT=true
-export TTS_ENABLE_FP16=false
+# 网关侧能不能连到子服务
+docker compose exec gateway curl -fsS http://funasr-0:8001/health
+docker compose exec gateway curl -fsS http://qwen3-asr-0:8003/health
 
-# 完整功能
-export TTS_MODEL_MODE=all
+# 看显存占用
+nvidia-smi
+docker compose exec qwen3-asr-0 nvidia-smi   # 看容器视角(受 CUDA_VISIBLE_DEVICES 限制)
+
+# 重启某个服务(不影响其它)
+docker compose restart funasr-0
+
+# 完整清理(注意会丢容器,保留卷)
+docker compose down
+
+# 连卷一起清(会丢音色数据!)
+docker compose down -v
 ```
 
-**影响:**
-- `sft`: 仅加载 CosyVoice-300M-SFT 模型,音色列表仅返回 7 个预设音色
-- `clone`: 仅加载零样本克隆模型,音色列表仅返回克隆音色,支持 `prompt` 参数
-- `all`: 加载所有模型,音色列表返回预设+克隆音色
-
-### ASR 模型配置
-
-| 环境变量                | 默认值  | 说明                                 | 可选值                  |
-| ----------------------- | ------- | ------------------------------------ | ----------------------- |
-| `ASR_MODEL_MODE`        | `all`   | ASR 模型加载模式                     | `realtime`, `offline`, `all` |
-| `ASR_ENABLE_REALTIME_PUNC` | `false` | 是否启用实时标点模型(用于中间结果展示) | `true`, `false`         |
-
-**使用示例:**
-
-```bash
-# 仅加载实时识别模型
-export ASR_MODEL_MODE=realtime
-
-# 启用实时标点
-export ASR_ENABLE_REALTIME_PUNC=true
-```
-
-**影响:**
-- `ASR_MODEL_MODE` 控制加载哪些 ASR 模型
-- `ASR_ENABLE_REALTIME_PUNC=true` 会为实时识别中间结果添加标点(增加内存占用)
-
-### 流式ASR远场声音过滤配置
-
-| 环境变量                          | 默认值  | 说明                          | 可选值          |
-| --------------------------------- | ------- | ----------------------------- | --------------- |
-| `ASR_ENABLE_NEARFIELD_FILTER`     | `true`  | 总开关，是否启用远场声音过滤  | `true`, `false` |
-| `ASR_NEARFIELD_RMS_THRESHOLD`     | `0.01`  | RMS能量阈值（宽松模式）       | `0.005`~`0.05`  |
-| `ASR_NEARFIELD_FILTER_LOG_ENABLED` | `true`  | 是否记录过滤日志（便于调优）  | `true`, `false` |
-
-**功能说明:**
-
-流式ASR远场声音过滤是一个自动过滤远场声音（如远处说话声、电视人声等环境音）的功能，基于RMS能量阈值检测，零性能开销（<0.1ms），完全可配置。
-
-**使用示例:**
-
-```bash
-# 启用远场过滤（默认已启用）
-export ASR_ENABLE_NEARFIELD_FILTER=true
-export ASR_NEARFIELD_RMS_THRESHOLD=0.01
-
-# 启用调试日志，便于观察过滤效果
-export ASR_NEARFIELD_FILTER_LOG_ENABLED=true
-
-# 禁用远场过滤（恢复旧版本行为）
-export ASR_ENABLE_NEARFIELD_FILTER=false
-```
-
-**影响:**
-- 有效减少远场声音和环境音的误触发
-- 提升流式识别的准确性和用户体验
-- 详细配置和调优指南请参考 [远场过滤文档](./nearfield_filter.md)
-
-### 完整配置示例
-
-**开发环境 (.env.dev):**
-
-```bash
-# 服务器配置
-HOST=0.0.0.0
-PORT=8000
-DEBUG=true
-
-# 日志配置
-LOG_LEVEL=DEBUG
-
-# GPU配置(使用 CPU 节省资源)
-TTS_GPUS=cpu
-ASR_GPUS=cpu
-
-# TTS 模式(仅预设音色)
-TTS_MODEL_MODE=sft
-
-# 不启用鉴权
-# APPTOKEN=
-# APPKEY=
-```
-
-**生产环境 (.env.prod):**
-
-```bash
-# 服务器配置
-HOST=0.0.0.0
-PORT=8000
-DEBUG=false
-
-# 日志配置
-LOG_LEVEL=WARNING
-LOG_MAX_BYTES=52428800
-LOG_BACKUP_COUNT=30
-
-# GPU配置(使用 GPU)
-TTS_GPUS=0
-ASR_GPUS=0
-
-# TTS 模式(完整功能)
-TTS_MODEL_MODE=all
-
-# 启用鉴权
-APPTOKEN=your_production_token_here
-APPKEY=your_production_appkey_here
-
-# 远场声音过滤（生产环境建议关闭调试日志）
-ASR_ENABLE_NEARFIELD_FILTER=true
-ASR_NEARFIELD_RMS_THRESHOLD=0.01
-ASR_NEARFIELD_FILTER_LOG_ENABLED=false
-```
-
-### 使用配置文件
-
-**方式 1: Docker Compose**
-
-```yaml
-version: "3.8"
-services:
-  funspeech:
-    image: docker.cnb.cool/nexa/funspeech:latest
-    env_file:
-      - .env.prod
-    # ...
-```
-
-**方式 2: 命令行**
-
-```bash
-# 使用 .env 文件
-docker-compose --env-file .env.prod up -d
-
-# 直接指定环境变量
-docker run -e DEBUG=true -e LOG_LEVEL=DEBUG ...
-```
-
-## 🔍 服务监控
-
-### 健康检查
-
-```bash
-# 检查服务状态
-curl http://localhost:8000/stream/v1/asr/health
-curl http://localhost:8000/stream/v1/tts/health
-
-# 查看模型状态
-curl http://localhost:8000/stream/v1/asr/models
-
-# 查看音色列表
-curl http://localhost:8000/stream/v1/tts/voices
-```
-
-### 日志监控
-
-```bash
-# 实时查看日志
-docker-compose logs -f
-
-# 查看特定服务日志
-docker-compose logs -f funspeech
-
-# 查看错误日志
-docker-compose logs | grep -i error
-
-# 查看最近100行日志
-docker-compose logs --tail=100
-```
-
-### 性能监控
-
-```bash
-# 容器资源使用情况
-docker stats funspeech
-
-# 容器详细信息
-docker inspect funspeech
-
-# 磁盘使用情况
-du -sh ./data ./logs ./voices ~/.cache/modelscope
-```
-
-## 🔧 维护操作
-
-### 更新服务
-
-```bash
-# 更新到最新版本
-docker-compose pull
-docker-compose up -d
-
-# 查看更新日志
-docker-compose logs -f
-```
-
-### 备份重要数据
-
-```bash
-# 备份音色文件
-tar -czf voices_backup_$(date +%Y%m%d).tar.gz ./voices/
-
-# 备份数据库
-tar -czf data_backup_$(date +%Y%m%d).tar.gz ./data/
-
-# 备份配置文件
-cp docker-compose.yml docker-compose.yml.backup
-cp .env .env.backup
-```
-
-### 清理和重置
-
-```bash
-# 清理临时文件
-docker exec -it funspeech rm -rf /app/temp/*
-
-# 重启服务
-docker-compose restart
-
-# 完全重新部署
-docker-compose down
-docker-compose up -d
-```
-
-## 🚨 故障排除
-
-### 常见问题及解决方案
-
-| 问题             | 症状               | 解决方案                                            |
-| ---------------- | ------------------ | --------------------------------------------------- |
-| **模型下载失败** | 启动超时、网络错误 | 检查网络,重启容器: `docker-compose restart`        |
-| **GPU 内存不足** | CUDA OOM 错误      | 切换 CPU 模式: 设置 `TTS_GPUS=cpu ASR_GPUS=cpu`     |
-| **端口被占用**   | 端口冲突错误       | 修改端口映射: `"8080:8000"`                         |
-| **权限错误**     | 文件访问被拒绝     | 修复权限: `sudo chown -R $USER:$USER ./data ./logs` |
-| **音色添加失败** | 音色不可用         | 检查文件格式和命名是否正确                          |
-
-### 调试模式
-
-```bash
-# 启用调试模式
-echo "DEBUG=true" >> .env
-docker-compose up -d
-
-# 进入容器调试
-docker exec -it funspeech /bin/bash
-
-# 查看详细日志
-docker-compose logs -f | grep -E "(ERROR|WARNING|DEBUG)"
-```
-
-### 获取支持
-
-如果遇到问题无法解决:
-
-1. **查看日志**: `docker-compose logs -f`
-2. **检查配置**: 确认环境变量和文件映射
-3. **重启服务**: `docker-compose restart`
-4. **提交问题**: 访问项目仓库提交 Issue
-
-## 📊 部署建议
-
-### 资源需求
-
-**最小配置(CPU 版本):**
-- CPU: 4 核
-- 内存: 8GB
-- 磁盘: 20GB
-
-**推荐配置(GPU 版本):**
-- CPU: 8 核
-- 内存: 16GB
-- GPU: NVIDIA GPU (6GB+ 显存)
-- 磁盘: 50GB
-
-### 并发配置
-
-FunSpeech 支持通过环境变量配置并发能力，包括多进程(Worker)和线程池两个维度。
-
-#### 配置参数
-
-| 环境变量 | 默认值 | 说明 |
-|----------|--------|------|
-| `WORKERS` | `1` | Uvicorn Worker 进程数，每个进程独立加载模型 |
-| `INFERENCE_THREAD_POOL_SIZE` | `max(4, CPU核心数)` | ���理线程池大小，用于异步执行模型推理 |
-
-#### 两个参数的作用
-
-| 参数 | 作用 | 资源影响 |
-|------|------|----------|
-| `WORKERS` | 多进程真正并行计算 | 内存/显存 × N 倍 |
-| `INFERENCE_THREAD_POOL_SIZE` | 事件循环不阻塞，I/O并发 | 几乎无额外开销 |
-
-#### 配置建议
-
-**GPU 服务器（显存有限）：**
-
-```bash
-# 24GB 显存，单模型约占 8GB
-WORKERS=2
-INFERENCE_THREAD_POOL_SIZE=4
-```
-
-**CPU 服务器（内存充足）：**
-
-```bash
-# 64GB 内存，16核CPU
-WORKERS=4
-INFERENCE_THREAD_POOL_SIZE=2
-```
-
-**资源紧张（单GPU刚够）：**
-
-```bash
-# 显存只够一个模型
-WORKERS=1
-INFERENCE_THREAD_POOL_SIZE=8
-```
-
-#### 计算公式
-
-```
-WORKERS = min(显存GB / 8, CPU核心数 / 2)
-INFERENCE_THREAD_POOL_SIZE = max(4, 8 / WORKERS)
-```
-
-#### Docker Compose 配置示例
-
-```yaml
-services:
-  funspeech:
-    image: docker.cnb.cool/nexa/funspeech:gpu-latest
-    environment:
-      - WORKERS=2
-      - INFERENCE_THREAD_POOL_SIZE=4
-      - TTS_GPUS=0
-      - ASR_GPUS=0
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-```
-
-#### 并发效果说明
-
-| 场景 | 单Worker无线程池 | 单Worker+线程池 | 多Worker+线程池 |
-|------|------------------|-----------------|-----------------|
-| 10路WebSocket同时请求 | 串行排队 | I/O不阻塞，推理串行 | 真正并行 |
-| 心跳检测 | 可能超时 | 正常 | 正常 |
-| HTTP请求响应 | 阻塞 | 及时响应 | 及时响应 |
-
-### 多GPU多副本配置
-
-`TTS_GPUS` 和 `ASR_GPUS` 除了支持单设备配置外，还支持多GPU负载均衡，进一步提升并发吞吐量。
-
-#### 配置格式
-
-| 配置值 | 说明 |
-|--------|------|
-| `""` 或 `auto` | 自动检测，有GPU用GPU，无GPU用CPU |
-| `cpu` | 强制使用CPU |
-| `0` | 使用单卡GPU 0 |
-| `0,1,2` | 多GPU负载均衡，在每个GPU上创建独立模型副本 |
-
-#### 工作原理
-
-- **模型副本**: 在每个指定的 GPU 上创建独立的模型副本
-- **负载均衡**: 使用最少连接数策略分配请求
-- **会话亲和**: WebSocket 流式会话绑定到同一个 GPU 副本直到结束
-- **CUDA Stream 隔离**: 每个请求使用独立的 CUDA Stream，支持并发推理
-- **TensorRT 支持**: 完全兼容 TensorRT 加速
-
-#### 配置示例
-
-**双 GPU 配置:**
-
-```yaml
-services:
-  funspeech:
-    image: docker.cnb.cool/nexa/funspeech:gpu-latest
-    environment:
-      - TTS_GPUS=0,1        # TTS 在 GPU 0 和 GPU 1 上各创建一个副本
-      - ASR_GPUS=0,1        # ASR 在 GPU 0 和 GPU 1 上各创建一个副本
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-```
-
-**ASR/TTS 分离部署（4 GPU）:**
-
-```yaml
-services:
-  funspeech:
-    image: docker.cnb.cool/nexa/funspeech:gpu-latest
-    environment:
-      - TTS_GPUS=0,1        # TTS 使用 GPU 0, 1
-      - ASR_GPUS=2,3        # ASR 使用 GPU 2, 3
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-```
-
-#### 资源规划
-
-| GPU 配置 | 环境变量 | 预计显存占用 | 适用场景 |
-|---------|----------|-------------|----------|
-| 单 GPU | 不配置 `TTS_GPUS`/`ASR_GPUS` | ~16GB | 低并发 |
-| 双 GPU | `TTS_GPUS=0,1` | ~16GB × 2 | 中等并发 |
-| 四 GPU | `TTS_GPUS=0,1` + `ASR_GPUS=2,3` | ~16GB × 4 | 高并发/分离部署 |
-
-> 💡 **提示**: 多 GPU 配置与 WORKERS 配置可以同时使用。例如 `WORKERS=2` + `TTS_GPUS=0,1` 会创建 2 × 2 = 4 个 TTS 模型副本。
-
-#### 与 WORKERS 配置的区别
-
-| 配置方式 | 内存/显存 | 并发效果 | 适用场景 |
-|---------|----------|---------|---------|
-| `WORKERS=N` | 内存 × N | 多进程真正并行 | CPU 密集型 |
-| `TTS_GPUS/ASR_GPUS` | 显存 × GPU数 | 多 GPU 负载均衡 | GPU 密集型 |
-| 两者结合 | 显存 × GPU数 × WORKERS | 最大并行度 | 大规模部署 |
-
-### 性能优化建议
-
-1. **使用 GPU**: 推理速度提升 5-10 倍
-2. **按需加载模型**: 根据实际需求选择 `TTS_MODEL_MODE`
-3. **调整日志级别**: 生产环境使用 `LOG_LEVEL=WARNING`
-4. **启用模型缓存**: 映射 `~/.cache/modelscope` 避免重复下载
-
----
-
-🎉 **部署完成!**
-
-访问 `http://localhost:8000/docs`(调试模式下)查看 API 文档,或参考 [README.md](../README.md) 了解详细使用方法。
+### 常见问题
+
+- **`out of memory` / `CUDA OOM`**:多半是 qwen3-asr 与别的服务同卡共置但 `QWEN3_ASR_GPU_MEM` 太大,降到 `0.3`–`0.4` 再试。
+- **网关一直报 503,但子服务日志看着正常**:看 `docker compose ps` 是否 `(healthy)`;若 healthcheck 还在 `start_period`,等加载完。重构后子服务 `/health` 严格反映模型加载状态:模型没加载完会返回 503 让网关知道。
+- **funasr 子服务挂了**:旧版本 `services/funasr/server.py` 缺 import,WS 流式会 NameError——升级到 `0783c3b` 之后的版本即可。
+- **CosyVoice3 输出全是噪音**:`TTS_ENABLE_FP16=true` + `TTS_LOAD_TRT=true` 同时开会有 NaN,关一个。
+- **不知道几副本几卡才够**: 用 `python3 scripts/plan_deployment.py` (零依赖, 见 §4.3)。
+- **多副本副本同 GPU**: 不要这样做。同一服务的两个副本绑同一张卡, 实测总吞吐不升反降 (GPU SM 抢占)。每个副本一张卡。
+- **qwen3-asr 启动报 `OSError: We couldn't connect to 'https://huggingface.co'`**: 离线场景务必设 `HF_HUB_OFFLINE=1` 和 `TRANSFORMERS_OFFLINE=1`, 见 §9.1。
+- **高 QPS 网关 fd 耗尽 / `Too many open files`**: 容器加 `ulimits: { nofile: 65535 }`; 同时检查 `HTTPX_MAX_CONNECTIONS` 是否够大。

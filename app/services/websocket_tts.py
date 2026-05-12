@@ -9,12 +9,10 @@ import logging
 from typing import Optional, AsyncGenerator, Dict, Any
 from enum import IntEnum
 
-import torch
 import numpy as np
 from fastapi import WebSocketDisconnect
 
 from ..core.config import settings
-from ..core.executor import run_sync_generator
 from ..core.security import validate_token_websocket, validate_request_appkey
 from ..models.websocket_tts import (
     AliyunWSMessage,
@@ -33,7 +31,8 @@ from ..utils.common import (
     convert_speech_rate_to_speed,
 )
 from ..utils.audio import validate_audio_format, validate_sample_rate, resample_audio_array
-from .tts.engine import get_tts_engine, MultiGPUTTSEngine
+from .tts.engine import get_tts_engine
+from .tts.http_engine import CosyVoiceHttpEngine
 
 logger = logging.getLogger(__name__)
 
@@ -51,24 +50,6 @@ class AliyunWebSocketTTSService:
 
     def __init__(self):
         self.tts_engine = None
-
-    def cleanup(self):
-        """清理资源"""
-        try:
-            if self.tts_engine:
-                logger.info("正在清理WebSocket TTS引擎资源...")
-                self.tts_engine.cleanup()
-                logger.info("WebSocket TTS引擎资源已清理")
-        except Exception as e:
-            logger.warning(f"清理WebSocket TTS资源时出现异常: {e}")
-
-        # 额外清理：导入并清理所有TTS引擎
-        try:
-            from .tts.engine import cleanup_all_tts_engines
-
-            cleanup_all_tts_engines()
-        except Exception as e:
-            logger.warning(f"清理所有TTS引擎时出现异常: {e}")
 
     def _ensure_tts_engine(self):
         """确保TTS引擎已加载（懒加载）"""
@@ -280,18 +261,13 @@ class AliyunWebSocketTTSService:
             # 清理文本
             clean_text = clean_text_for_tts(text)
             speed = convert_speech_rate_to_speed(params["speech_rate"])
-
-            # 映射本地音色到阿里云音色名称
-            local_voice = self._map_aliyun_voice_to_local(params["voice"])
-
-            # 获取 prompt 参数
             prompt = params.get("prompt", "")
 
             # 生成音频
             audio_sent = False
             async for audio_chunk in self._synthesize_streaming_audio(
                 clean_text,
-                local_voice,
+                params["voice"],
                 speed,
                 params["format"],
                 params["sample_rate"],
@@ -317,8 +293,8 @@ class AliyunWebSocketTTSService:
                         websocket, task_id, session_id, text
                     )
 
-                    # 小延迟模拟流式效果
-                    await asyncio.sleep(0.05)
+                    # 不再人为 sleep — 子服务 yield 节奏 = 客户端接收节奏。
+                    # 微服务化后多了一跳网络 RTT,再叠 50ms 是负优化。
 
             if not audio_sent:
                 logger.warning(f"[{task_id}] 没有生成任何音频数据")
@@ -340,34 +316,6 @@ class AliyunWebSocketTTSService:
                     websocket, task_id, f"Synthesis failed: {str(e)}"
                 )
 
-    def _map_aliyun_voice_to_local(self, aliyun_voice: str) -> str:
-        """直接返回音色名称，不进行映射"""
-        return aliyun_voice
-
-    def _format_prompt_text(self, prompt_text: str, clone_version: str) -> str:
-        """根据模型版本格式化 prompt_text (instruct_text)
-
-        CosyVoice3 需要 'You are a helpful assistant.<|endofprompt|>' 前缀
-        CosyVoice2 需要 '<|endofprompt|>' 后缀
-        """
-        if clone_version == "cosyvoice3":
-            if prompt_text and not prompt_text.startswith("You are"):
-                return f"You are a helpful assistant. {prompt_text}<|endofprompt|>"
-            elif not prompt_text:
-                return "You are a helpful assistant.<|endofprompt|>"
-            else:
-                # 已经有前缀，确保有后缀
-                if not prompt_text.endswith("<|endofprompt|>"):
-                    return f"{prompt_text}<|endofprompt|>"
-                return prompt_text
-        else:
-            # CosyVoice2
-            if prompt_text:
-                if not prompt_text.endswith("<|endofprompt|>"):
-                    return f"{prompt_text}<|endofprompt|>"
-                return prompt_text
-        return prompt_text
-
     async def _synthesize_streaming_audio(
         self,
         text: str,
@@ -377,153 +325,37 @@ class AliyunWebSocketTTSService:
         sample_rate: int,
         volume: int,
         task_id: str,
-        websocket,  # 添加websocket参数用于检测连接状态
-        prompt: str = "",  # 自然语言指令控制
+        websocket,
+        prompt: str = "",
     ) -> AsyncGenerator[Optional[bytes], None]:
-        """生成流式音频数据"""
+        """流式合成 — 全部走 CosyVoice 子服务 /tts/stream"""
         tts_engine = self._ensure_tts_engine()
-        engine_index = None
+
+        if not isinstance(tts_engine, CosyVoiceHttpEngine):
+            raise Exception(
+                f"TTS 引擎类型不支持流式合成: {type(tts_engine).__name__}; "
+                "请确认 COSYVOICE_SERVICE_URLS 已配置"
+            )
 
         try:
-            # 如果是多GPU引擎，选择一个副本并获取索引
-            if isinstance(tts_engine, MultiGPUTTSEngine):
-                engine_index, single_engine = tts_engine._select_engine()
-                logger.debug(f"[{task_id}] 使用多GPU引擎副本 {engine_index} ({tts_engine._devices[engine_index]})")
-            else:
-                single_engine = tts_engine
-
-            # 检查是否为零样本克隆音色
-            voice_manager = single_engine._voice_manager if hasattr(single_engine, '_voice_manager') else None
-            if (
-                voice_manager
-                and voice_manager.is_voice_available(voice)
+            async for audio_array, native_sr in tts_engine.iter_stream_audio_chunks(
+                text=text, voice=voice, speed=speed, prompt=prompt
             ):
-                if voice in voice_manager.list_clone_voices():
-                    # 使用CosyVoice2/3流式合成（零样本克隆音色）
-                    async for chunk in self._stream_clone_voice_with_engine(
-                        text, voice, speed, format, sample_rate, task_id, websocket, single_engine, prompt
-                    ):
-                        yield chunk
+                if websocket.client_state.name != "CONNECTED":
+                    logger.warning(f"[{task_id}] 客户端已断开,停止流式合成")
                     return
 
-            # 使用CosyVoice1流式合成（预设音色）
-            if single_engine.cosyvoice_sft:
-                async for chunk in self._stream_preset_voice_with_engine(
-                    text, voice, speed, format, sample_rate, task_id, websocket, single_engine
-                ):
-                    yield chunk
-            else:
-                raise Exception("预设音色模型未加载")
-
+                audio_array = resample_audio_array(audio_array, native_sr, sample_rate)
+                if format.upper() == "PCM":
+                    yield self._convert_audio_to_pcm(audio_array, sample_rate)
+                else:
+                    yield self._convert_audio_to_wav(audio_array, sample_rate)
         except WebSocketDisconnect:
-            logger.warning(f"[{task_id}] 客户端断开，停止音频生成")
+            logger.warning(f"[{task_id}] 客户端断开,停止音频生成")
             raise
-        except Exception as e:
-            logger.error(f"[{task_id}] 流式合成失败: {e}")
-            raise e
-        finally:
-            # 释放引擎
-            if engine_index is not None and isinstance(tts_engine, MultiGPUTTSEngine):
-                tts_engine._release_engine(engine_index)
-
-    async def _stream_preset_voice_with_engine(
-        self, text: str, voice: str, speed: float, format: str, target_sr: int, task_id: str, websocket, engine
-    ) -> AsyncGenerator[bytes, None]:
-        """使用指定引擎的CosyVoice1进行流式合成（预设音色）"""
-        logger.debug(f"[{task_id}] 使用CosyVoice1流式合成预设音色: {voice}")
-        model_sr = engine.cosyvoice_sft.sample_rate
-
-        # 使用线程池执行流式推理，避免阻塞事件循环
-        async for audio_data in run_sync_generator(
-            engine.cosyvoice_sft.inference_sft,
-            text, voice, stream=True, speed=speed
-        ):
-            # 检查连接状态，如果断开则立即停止
-            if websocket.client_state.name != "CONNECTED":
-                logger.warning(f"[{task_id}] 客户端已断开，停止预设音色合成")
-                return
-
-            # 将tensor转换为numpy数组，并按需 resample 到目标采样率
-            audio_array = audio_data["tts_speech"].numpy()
-            audio_array = resample_audio_array(audio_array, model_sr, target_sr)
-
-            # 根据格式转换音频数据
-            if format.upper() == "PCM":
-                pcm_bytes = self._convert_audio_to_pcm(audio_array, target_sr)
-                yield pcm_bytes
-            else:
-                # WAV格式：转换为WAV字节流
-                wav_bytes = self._convert_audio_to_wav(audio_array, target_sr)
-                yield wav_bytes
-
-            # 添加小延迟以模拟真实流式效果
-            await asyncio.sleep(0.01)
-
-    async def _stream_clone_voice_with_engine(
-        self, text: str, voice: str, speed: float, format: str, target_sr: int, task_id: str, websocket, engine, prompt: str = ""
-    ) -> AsyncGenerator[bytes, None]:
-        """使用指定引擎的 CosyVoice2/3 进行流式合成（零样本克隆音色）"""
-        clone_version = engine._clone_model_version if hasattr(engine, '_clone_model_version') else "cosyvoice2"
-        logger.debug(f"[{task_id}] 使用 {clone_version} 流式合成零样本克隆音色: {voice}, prompt: {prompt}")
-        model_sr = engine.cosyvoice_clone.sample_rate
-
-        # 格式化 prompt（CosyVoice3 需要特殊前缀，CosyVoice2 需要后缀）
-        formatted_prompt = self._format_prompt_text(prompt, clone_version)
-
-        # 根据是否有 prompt 选择不同的推理方法
-        if prompt:
-            # 使用 instruct2 方法，支持自然语言指令控制
-            inference_method = engine.cosyvoice_clone.inference_instruct2
-            inference_args = (
-                text,
-                formatted_prompt,  # instruct_text
-                None,  # prompt_wav - 不需要，使用保存的音色
-            )
-            inference_kwargs = {
-                "zero_shot_spk_id": voice,
-                "stream": True,
-                "speed": speed,
-            }
-        else:
-            # 无 prompt 时使用 zero_shot
-            inference_method = engine.cosyvoice_clone.inference_zero_shot
-            inference_args = (
-                text,
-                "",
-                None,
-            )
-            inference_kwargs = {
-                "zero_shot_spk_id": voice,
-                "stream": True,
-                "speed": speed,
-            }
-
-        # 使用线程池执行流式推理，避免阻塞事件循环
-        async for audio_data in run_sync_generator(
-            inference_method,
-            *inference_args,
-            **inference_kwargs,
-        ):
-            # 检查连接状态，如果断开则立即停止
-            if websocket.client_state.name != "CONNECTED":
-                logger.warning(f"[{task_id}] 客户端已断开，停止克隆音色合成")
-                return
-
-            # 将tensor转换为numpy数组，并按需 resample 到目标采样率
-            audio_array = audio_data["tts_speech"].numpy()
-            audio_array = resample_audio_array(audio_array, model_sr, target_sr)
-
-            # 根据格式转换音频数据
-            if format.upper() == "PCM":
-                pcm_bytes = self._convert_audio_to_pcm(audio_array, target_sr)
-                yield pcm_bytes
-            else:
-                # WAV格式：转换为WAV字节流
-                wav_bytes = self._convert_audio_to_wav(audio_array, target_sr)
-                yield wav_bytes
-
-            # 添加小延迟以模拟真实流式效果
-            await asyncio.sleep(0.01)
+        except Exception as exc:
+            logger.error(f"[{task_id}] 流式合成失败: {exc}")
+            raise
 
     def _convert_audio_to_pcm(self, audio_array: np.ndarray, sample_rate: int) -> bytes:
         """将音频数组转换为PCM字节流"""

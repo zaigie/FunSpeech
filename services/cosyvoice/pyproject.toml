@@ -1,0 +1,79 @@
+[project]
+name = "funspeech-cosyvoice-service"
+version = "0.1.0"
+description = "CosyVoice2 / CosyVoice3 子服务 — TTS 离线 + 流式 + 音色管理"
+requires-python = ">=3.10,<3.11"
+
+# 注意:
+# - vLLM 不是 vllm serve 端到端部署, 而是 CosyVoice2(load_vllm=True) 内部加速 LLM。
+# - 子模块代码通过 services/cosyvoice/third_party/CosyVoice 引入
+#   (上游: https://github.com/FunAudioLLM/CosyVoice)
+# - 依赖列表与上游 requirements.txt 对齐, 仅去掉训练/UI 用的 gradio / tensorboard / fastapi-cli
+dependencies = [
+    "fastapi==0.115.6",
+    "uvicorn[standard]==0.30.0",
+    "python-multipart==0.0.6",
+    "websockets==11.0",
+    # CosyVoice 上游依赖
+    "conformer==0.3.2",
+    "diffusers==0.29.0",
+    "gdown==5.1.0",
+    "grpcio==1.57.0",
+    "grpcio-tools==1.57.0",
+    "hydra-core==1.3.2",
+    "HyperPyYAML==1.2.3",
+    "inflect==7.3.1",
+    "librosa==0.10.2",
+    "lightning==2.2.4",
+    "matplotlib==3.7.5",
+    "modelscope==1.20.0",
+    "networkx==3.1",
+    "numpy==1.26.4",
+    "omegaconf==2.3.0",
+    "onnx==1.16.0",
+    "openai-whisper==20231117",
+    "protobuf==4.25",
+    "pyarrow==18.1.0",
+    "pydantic==2.7.0",
+    "pyworld==0.3.4",
+    "rich==13.7.1",
+    "soundfile==0.12.1",
+    "torch==2.3.1",
+    "torchaudio==2.3.1",
+    "transformers==4.51.3",
+    "x-transformers==2.11.24",
+    "wetext==0.0.4",
+    "wget==3.2",
+    # GPU 部署专属(linux only)
+    # 不装 deepspeed: 仅训练用, 推理不需要;
+    # 装上反而会触发 transformers import 链上的 CUDA_HOME 检测失败
+    # (pytorch runtime base 不带 nvcc); 与主分支单体保持一致。
+    "onnxruntime-gpu==1.18.0; sys_platform == 'linux'",
+    "tensorrt-cu12==10.13.3.9; sys_platform == 'linux'",
+    "tensorrt-cu12-bindings==10.13.3.9; sys_platform == 'linux'",
+    "tensorrt-cu12-libs==10.13.3.9; sys_platform == 'linux'",
+    # 用 setuptools<70 + no-build-isolation 解决 openai-whisper / wetext 的老 sdist 问题
+    "setuptools<70",
+    "wheel",
+]
+
+# 注: vLLM 加速 CosyVoice2 LLM 需要 transformers>=4.55, 与本子服务 transformers==4.51.3
+# 不兼容(上游 README 也建议 vllm 用独立 conda env)。如需启用, 应另建一个独立子服务,
+# 或在本 venv 外手动 pip install --no-deps vllm 并自担依赖冲突风险。
+
+[tool.uv]
+package = false
+no-build-isolation-package = ["openai-whisper", "wetext"]
+
+[[tool.uv.dependency-metadata]]
+name = "openai-whisper"
+version = "20231117"
+requires-dist = [
+    "numba",
+    "numpy",
+    "torch",
+    "tqdm",
+    "more-itertools",
+    "tiktoken",
+    "triton>=2.0.0,<3; sys_platform == 'linux' and platform_machine == 'x86_64'",
+]

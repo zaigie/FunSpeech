@@ -1,3 +1,4 @@
-[submodule "app/services/tts/third_party/CosyVoice"]
-	path = app/services/tts/third_party/CosyVoice
+[submodule "services/cosyvoice/third_party/CosyVoice"]
+	path = services/cosyvoice/third_party/CosyVoice
 	url = https://cnb.cool/nexa/CosyVoice.git
+	branch = multi-gpu-support

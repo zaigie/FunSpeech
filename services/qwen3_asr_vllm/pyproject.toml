@@ -1,0 +1,21 @@
+[project]
+name = "funspeech-qwen3-asr-service"
+version = "0.1.0"
+description = "Qwen3-ASR (in-process vLLM) 子服务 — 离线 HTTP /asr/file 与流式 WS /asr/stream/v1"
+requires-python = ">=3.10,<3.13"
+
+# qwen-asr 包带 [vllm] extras 会拉 vllm 0.11+ / transformers 4.57+,
+# 与主项目和其它 ASR 子服务的 transformers 4.51.3 完全独立 venv。
+dependencies = [
+    # 让 qwen-asr 自带的 fastapi/python-multipart 限制接管,这里只声明软上限
+    "fastapi<1.0",
+    "uvicorn[standard]>=0.30.0",
+    "python-multipart<1.0",
+    "websockets>=11.0",
+    "qwen-asr[vllm]>=0.0.6",
+    "soundfile>=0.12.1",
+    "numpy>=1.26",
+]
+
+[tool.uv]
+package = false
