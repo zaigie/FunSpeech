@@ -48,6 +48,8 @@ dependencies = [
     # 不装 deepspeed: 仅训练用, 推理不需要;
     # 装上反而会触发 transformers import 链上的 CUDA_HOME 检测失败
     # (pytorch runtime base 不带 nvcc); 与主分支单体保持一致。
+    # 注意: PyPI 的 1.18.0 cp310 wheel 依赖 CUDA 11; Dockerfile 最后一层会
+    # 用 CNB 源覆盖安装旧单体 GPU 镜像验证过的 CUDA 12 wheel。
     "onnxruntime-gpu==1.18.0; sys_platform == 'linux'",
     "tensorrt-cu12==10.13.3.9; sys_platform == 'linux'",
     "tensorrt-cu12-bindings==10.13.3.9; sys_platform == 'linux'",

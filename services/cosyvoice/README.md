@@ -10,6 +10,11 @@
 >
 > 之后再 `docker compose build`。否则镜像里 `third_party/CosyVoice` 是空目录,容器启动时 `from cosyvoice.cli.cosyvoice import ...` 立刻 `ModuleNotFoundError`。
 
+> **ONNX Runtime CUDA wheel**: `onnxruntime-gpu==1.18.0` 在 PyPI 上的
+> cp310 wheel 依赖 CUDA 11,会在 CUDA 12.1 镜像里报 `libcublasLt.so.11`
+> 缺失。Dockerfile 最后一层会从 CNB 源覆盖安装旧单体 GPU 镜像使用过的
+> CUDA 12 wheel。
+
 ## 启动
 
 ```bash

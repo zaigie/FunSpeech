@@ -68,6 +68,15 @@ COPY . .
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen
 
+# PyPI 的 onnxruntime-gpu==1.18.0 cp310 wheel 依赖 CUDA 11
+# (会找 libcublasLt.so.11), 与本镜像 CUDA 12.1 不匹配。
+# 旧单体 GPU 镜像通过 CNB 源安装同版本的 CUDA 12 wheel, 这里在最终
+# sync 后只覆盖 onnxruntime-gpu, 避免修改整份 uv.lock。
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install --python /app/.venv/bin/python --reinstall --no-deps \
+        --index-url https://pypi.cnb.cool/nexa/mirror/-/packages/simple \
+        onnxruntime-gpu==1.18.0
+
 ENV http_proxy="" https_proxy="" HTTP_PROXY="" HTTPS_PROXY="" no_proxy="" NO_PROXY=""
 
 EXPOSE 8004
