@@ -504,65 +504,72 @@ class CosyVoiceHttpEngine:
         import asyncio as _asyncio
 
         from websockets.asyncio.client import connect
+        from websockets.exceptions import ConnectionClosed
 
+        ws = None
         try:
-            async with connect(ws_url, open_timeout=self._timeout) as ws:
-                await ws.send(
-                    json.dumps(
-                        {
-                            "text": text,
-                            "voice": voice,
-                            "speed": speed,
-                            "prompt": prompt,
-                        }
-                    )
+            ws = await connect(ws_url, open_timeout=self._timeout)
+            await ws.send(
+                json.dumps(
+                    {
+                        "text": text,
+                        "voice": voice,
+                        "speed": speed,
+                        "prompt": prompt,
+                    }
                 )
-                # 第 1 帧 JSON: started + sample_rate
+            )
+            # 第 1 帧 JSON: started + sample_rate
+            try:
+                first = await _asyncio.wait_for(ws.recv(), timeout=self._timeout)
+            except _asyncio.TimeoutError as exc:
+                raise DefaultServerErrorException(
+                    "cosyvoice ws started 帧超时"
+                ) from exc
+            if isinstance(first, (bytes, bytearray)):
+                raise DefaultServerErrorException(
+                    "cosyvoice ws started 帧非文本"
+                )
+            meta = json.loads(first)
+            if meta.get("type") == "error":
+                raise DefaultServerErrorException(
+                    f"cosyvoice stream error: {meta.get('message')}"
+                )
+            if meta.get("type") != "started":
+                raise DefaultServerErrorException(
+                    f"cosyvoice stream unexpected first frame: {meta}"
+                )
+            native_sr = int(meta.get("sample_rate", 24000))
+
+            while True:
                 try:
-                    first = await _asyncio.wait_for(ws.recv(), timeout=self._timeout)
+                    msg = await _asyncio.wait_for(
+                        ws.recv(), timeout=self._timeout
+                    )
                 except _asyncio.TimeoutError as exc:
                     raise DefaultServerErrorException(
-                        "cosyvoice ws started 帧超时"
+                        "cosyvoice stream recv 超时"
                     ) from exc
-                if isinstance(first, (bytes, bytearray)):
-                    raise DefaultServerErrorException(
-                        "cosyvoice ws started 帧非文本"
-                    )
-                meta = json.loads(first)
-                if meta.get("type") == "error":
-                    raise DefaultServerErrorException(
-                        f"cosyvoice stream error: {meta.get('message')}"
-                    )
-                if meta.get("type") != "started":
-                    raise DefaultServerErrorException(
-                        f"cosyvoice stream unexpected first frame: {meta}"
-                    )
-                native_sr = int(meta.get("sample_rate", 24000))
-
-                while True:
-                    try:
-                        msg = await _asyncio.wait_for(
-                            ws.recv(), timeout=self._timeout
-                        )
-                    except _asyncio.TimeoutError as exc:
+                if isinstance(msg, (bytes, bytearray)):
+                    chunk = np.frombuffer(msg, dtype=np.float32)
+                    if chunk.size == 0:
+                        continue
+                    # 与本地 inference_sft 输出 shape 一致: (1, N)
+                    yield chunk.reshape(1, -1), native_sr
+                else:
+                    evt = json.loads(msg)
+                    if evt.get("type") == "done":
+                        return
+                    if evt.get("type") == "error":
                         raise DefaultServerErrorException(
-                            "cosyvoice stream recv 超时"
-                        ) from exc
-                    if isinstance(msg, (bytes, bytearray)):
-                        chunk = np.frombuffer(msg, dtype=np.float32)
-                        if chunk.size == 0:
-                            continue
-                        # 与本地 inference_sft 输出 shape 一致: (1, N)
-                        yield chunk.reshape(1, -1), native_sr
-                    else:
-                        evt = json.loads(msg)
-                        if evt.get("type") == "done":
-                            return
-                        if evt.get("type") == "error":
-                            raise DefaultServerErrorException(
-                                f"cosyvoice stream error: {evt.get('message')}"
-                            )
+                            f"cosyvoice stream error: {evt.get('message')}"
+                        )
         finally:
+            if ws is not None:
+                try:
+                    await ws.close()
+                except ConnectionClosed:
+                    pass
             self._pool.release(idx)
 
 
