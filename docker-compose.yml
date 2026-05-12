@@ -71,7 +71,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args: *build-args
-    image: funspeech/gateway:latest
+    image: docker.cnb.cool/nexa/funspeech/gateway:latest
     container_name: funspeech-gateway
     ports:
       - "${GATEWAY_PORT:-8000}:8000"
@@ -100,7 +100,7 @@ services:
       context: ./services/funasr
       dockerfile: Dockerfile
       args: *build-args
-    image: funspeech/funasr:latest
+    image: docker.cnb.cool/nexa/funspeech/funasr:latest
     container_name: funspeech-funasr-0
     environment:
       <<: *subservice-env
@@ -124,7 +124,7 @@ services:
       context: ./services/dolphin
       dockerfile: Dockerfile
       args: *build-args
-    image: funspeech/dolphin:latest
+    image: docker.cnb.cool/nexa/funspeech/dolphin:latest
     container_name: funspeech-dolphin-0
     environment:
       <<: *subservice-env
@@ -148,7 +148,7 @@ services:
       context: ./services/qwen3_asr_vllm
       dockerfile: Dockerfile
       args: *build-args
-    image: funspeech/qwen3-asr:latest
+    image: docker.cnb.cool/nexa/funspeech/qwen3-asr:latest
     container_name: funspeech-qwen3-asr-0
     environment:
       <<: *subservice-env
@@ -178,7 +178,7 @@ services:
       context: ./services/cosyvoice
       dockerfile: Dockerfile
       args: *build-args
-    image: funspeech/cosyvoice:latest
+    image: docker.cnb.cool/nexa/funspeech/cosyvoice:latest
     container_name: funspeech-cosyvoice-0
     environment:
       <<: *subservice-env

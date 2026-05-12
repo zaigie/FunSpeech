@@ -46,8 +46,8 @@ ASR + TTS API 网关,兼容阿里云语音 API 与 OpenAI TTS API,支持 WebSock
 ### 1. 准备环境
 
 ```bash
-git clone <your-repo>
-cd agents-e3557b6358
+git clone https://cnb.cool/nexa/FunSpeech.git
+cd FunSpeech
 
 # 必须: 拉 cosyvoice 上游源码 (git submodule)
 # 不做这一步, cosyvoice 镜像启动会 ModuleNotFoundError
