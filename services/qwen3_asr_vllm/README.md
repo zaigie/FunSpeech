@@ -15,9 +15,9 @@ uv run python server.py
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `PORT` | `8003` | 监听端口 |
-| `QWEN3_ASR_MODEL_ID` | `Qwen/Qwen3-ASR-1.7B` | HuggingFace / ModelScope 模型 ID |
+| `QWEN3_ASR_MODEL_ID` | `Qwen/Qwen3-ASR-1.7B` | HuggingFace / ModelScope 模型 ID;离线部署时设为本地路径,如 `/root/.cache/modelscope/hub/Qwen/Qwen3-ASR-1.7B` |
 | `INTERNAL_SERVICE_TOKEN` |  | 网关调用必须携带 `X-Internal-Token` |
-| `CUDA_VISIBLE_DEVICES` | `0` | GPU 绑定(每副本一卡) |
+| `CUDA_VISIBLE_DEVICES` | `0` | 容器内 GPU 序号;如果 compose 已用 `device_ids` 透传单张宿主卡,这里保持 `0` |
 
 ## 接口
 

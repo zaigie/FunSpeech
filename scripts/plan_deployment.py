@@ -9,7 +9,7 @@
 
 输出:
   - 每个服务建议起几个副本
-  - 副本怎么绑卡 (CUDA_VISIBLE_DEVICES 分布)
+  - 副本怎么绑到宿主机 GPU (deploy.resources.reservations.devices.device_ids)
   - 当前目录下的完整 docker-compose.generated.yml
   - 估算的总显存占用
 
@@ -134,7 +134,7 @@ SERVICE_TO_BUILD_CONTEXT = {
 
 @dataclasses.dataclass
 class GPU:
-    idx: int            # 卡序号 (CUDA_VISIBLE_DEVICES 用)
+    idx: int            # 宿主机卡序号 (compose device_ids 用)
     total_gib: float    # 卡总显存
     label: str = ""     # 标签, 例如 "4090-24G"
 
@@ -649,19 +649,18 @@ def _render_subservice(svc_name: str, mode: str,
 
 def _render_subservice_env(svc_name: str, mode: str,
                            placement: ReplicaPlacement) -> List[str]:
-    gpu = placement.gpu_idx
     if svc_name == "funasr":
         return [
             "      PORT: \"8001\"",
             f"      ASR_MODEL_MODE: \"{mode}\"",
             "      ASR_DEVICE: cuda:0",
-            f"      CUDA_VISIBLE_DEVICES: \"{gpu}\"",
+            "      CUDA_VISIBLE_DEVICES: \"0\"",
         ]
     if svc_name == "dolphin":
         return [
             "      PORT: \"8002\"",
             "      DOLPHIN_DEVICE: cuda",
-            f"      CUDA_VISIBLE_DEVICES: \"{gpu}\"",
+            "      CUDA_VISIBLE_DEVICES: \"0\"",
         ]
     if svc_name == "qwen3-asr":
         gpu_mem = placement.extra.get("QWEN3_ASR_GPU_MEM", 0.8)
@@ -671,7 +670,7 @@ def _render_subservice_env(svc_name: str, mode: str,
             f"      QWEN3_ASR_GPU_MEM: \"{gpu_mem}\"",
             "      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-}",
             "      TRANSFORMERS_OFFLINE: ${TRANSFORMERS_OFFLINE:-}",
-            f"      CUDA_VISIBLE_DEVICES: \"{gpu}\"",
+            "      CUDA_VISIBLE_DEVICES: \"0\"",
         ]
     if svc_name == "cosyvoice":
         return [
@@ -684,7 +683,7 @@ def _render_subservice_env(svc_name: str, mode: str,
             "      TTS_ENABLE_FP16: ${TTS_ENABLE_FP16:-false}",
             "      TTS_LOAD_VLLM: ${TTS_LOAD_VLLM:-false}",
             "      VOICES_DIR: /app/voices",
-            f"      CUDA_VISIBLE_DEVICES: \"{gpu}\"",
+            "      CUDA_VISIBLE_DEVICES: \"0\"",
         ]
     raise ValueError(f"unknown service: {svc_name}")
 

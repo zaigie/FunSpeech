@@ -82,7 +82,7 @@ docker compose build --parallel
 | `qwen3-asr-0` | 8003 | ✅ | ✅ | (默认, 默认 ASR 引擎) |
 | `cosyvoice-0` | 8004 | ✅ | ✅ | (默认) |
 
-每个 GPU 子服务通过 `deploy.resources.reservations.devices` 申明 nvidia 设备,容器内通过 `CUDA_VISIBLE_DEVICES` 选卡。
+每个 GPU 子服务通过 `deploy.resources.reservations.devices[].device_ids` 选择宿主机 GPU。Docker/NVIDIA runtime 只把对应卡透传进容器后,容器内 GPU 会从 `0` 重新编号,所以单卡容器里的 `CUDA_VISIBLE_DEVICES` 应保持 `"0"` 或不设置。
 
 ### 4.2 资源占用 (基于 4090 24G 实测)
 
@@ -167,7 +167,7 @@ docker compose -f docker-compose.generated.yml --profile funasr up -d
 
 ### 4.4 跨卡分布的两种方式
 
-**方式 A — 全部贴卡 0(默认):** `docker-compose.yml` 里所有 GPU 子服务的 `CUDA_VISIBLE_DEVICES: "0"`,适合单卡或想让所有模型共置。
+**方式 A — 全部贴卡 0(默认):** `docker-compose.yml` 里所有 GPU 子服务使用 `CUDA_VISIBLE_DEVICES: "0"` 和 `count: 1`,适合单卡或想让所有模型共置。
 
 **方式 B — 跨卡分布:** 直接运行 `plan_deployment.py`, 用生成的完整 `docker-compose.generated.yml` 启动。这个文件不依赖 override merge, 新副本会带齐 `image`、`volumes`、`healthcheck`、`restart`、`ulimits`、`profiles` 等字段。
 
@@ -182,14 +182,15 @@ docker compose -f docker-compose.generated.yml --profile funasr up -d
 **手动**: 每张额外的卡 = 一个新副本。不要只写 `environment` + `deploy`: 新服务不会继承 `funasr-0` / `cosyvoice-0` 的字段。手写时应从生成的 `docker-compose.generated.yml` 或基础服务复制完整服务定义, 再改:
 
 - `service` 名称与 `container_name` (例如 `funasr-1` / `funspeech-funasr-1`)
-- `CUDA_VISIBLE_DEVICES` 与 `deploy.resources.reservations.devices[].device_ids`
+- `deploy.resources.reservations.devices[].device_ids` 使用宿主机卡号
+- `CUDA_VISIBLE_DEVICES` 保持 `"0"` (容器内重新编号后的第一张卡)
 - 网关 `*_SERVICE_URLS` 列表, 例如 `FUNASR_SERVICE_URLS=http://funasr-0:8001,http://funasr-1:8001`
 
 `funasr` / `dolphin` 新副本还要保留对应 `profiles`, 否则会从可选服务变成默认启动服务。
 
 网关侧 `_HttpReplicaPool` 会做最少连接 + 随机选副本调度;每个外部 WS 会话**绑定固定副本**(session 级亲和性),保证 cache 状态不串。
 
-> ⚠️ **同一服务的多个副本不要绑同一张卡**: 例如不要 `funasr-0` 和 `funasr-1` 都用 `CUDA_VISIBLE_DEVICES: "0"`。两个副本会抢同一份 GPU SM, 总吞吐反而下降 (实测见 `benchmarks/results/`)。 横向扩展 = 多卡多副本。
+> ⚠️ **同一服务的多个副本不要绑同一张宿主机卡**: 例如不要 `funasr-0` 和 `funasr-1` 的 `device_ids` 都写同一个宿主卡号。两个副本会抢同一份 GPU SM, 总吞吐反而下降 (实测见 `benchmarks/results/`)。 横向扩展 = 多卡多副本。
 
 ### 5.2 cosyvoice 多副本的写副本与同步
 
@@ -237,7 +238,7 @@ cosyvoice 子服务暴露 `POST /voices/reload`, 用磁盘上的 `spk2info.pt` +
 | `LOG_LEVEL` | `INFO` | 日志级别 |
 | `INTERNAL_SERVICE_TOKEN` | `funspeech-internal` | 网关→子服务鉴权头(`X-Internal-Token`) |
 | `MODELSCOPE_PATH` | `~/.cache/modelscope/hub` | 容器内权重缓存路径(已通过 bind mount 共享) |
-| `CUDA_VISIBLE_DEVICES` | `0` | 选卡;改成 `1` / `0,1` / 空字符串(强制 CPU)等 |
+| `CUDA_VISIBLE_DEVICES` | `0` | 容器内 CUDA 可见卡序号。用 compose `device_ids` 单卡透传时保持 `0`;不要写宿主机卡号 |
 
 下面分子服务列出独有的 env。
 
@@ -261,7 +262,7 @@ cosyvoice 子服务暴露 `POST /voices/reload`, 用磁盘上的 `spk2info.pt` +
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
-| `DOLPHIN_DEVICE` | `auto` | `auto` / `cpu` / `cuda` / `cuda:0`(注意 dolphin 用 `cuda` 不带索引,索引由 `CUDA_VISIBLE_DEVICES` 控制) |
+| `DOLPHIN_DEVICE` | `auto` | `auto` / `cpu` / `cuda` / `cuda:0`。跨宿主卡部署时由 compose `device_ids` 控制宿主卡,容器内仍用可见卡 `0` |
 | `DOLPHIN_SIZE` | `small` | dolphin 模型规模(目前仅 `small`) |
 | `DOLPHIN_MODEL_PATH` | `DataoceanAI/dolphin-small` | 模型 id (相对 `MODELSCOPE_PATH`) |
 
@@ -383,7 +384,7 @@ CosyVoice 是 autoregressive 解码器, 单条音频本身就要 GPU 跑几秒, 
 
 **首次启动**: 子服务会从 modelscope 自动下载所需权重 (具体见各服务 `*_MODEL_ID` env)。提前手动下到 `~/.cache/modelscope/hub/models/<org>/<model>` 可以避开首次启动数分钟的等待。
 
-**离线部署 (无外网)**: 把 `~/.cache/modelscope/hub/models/` 整个 rsync 到目标机, mount 进去即可。**注意 qwen3-asr** 启动时 vLLM 会尝试拉一份 transformers config (即使权重已经在本地), 离线场景务必设 `HF_HUB_OFFLINE=1` + `TRANSFORMERS_OFFLINE=1` 两个 env, 否则容器会 OSError。
+**离线部署 (无外网)**: 把 `~/.cache/modelscope/hub/models/` 整个 rsync 到目标机, mount 进去即可。**注意 qwen3-asr** 离线时还要把 `QWEN3_ASR_MODEL_ID` 改成容器内本地路径,例如 `/root/.cache/modelscope/hub/Qwen/Qwen3-ASR-1.7B`,并设置 `HF_HUB_OFFLINE=1` + `TRANSFORMERS_OFFLINE=1`;否则 vLLM 会按 Hugging Face repo id 查缓存快照并报 `LocalEntryNotFoundError`。
 
 ## 十、健康检查与启动顺序
 
@@ -414,7 +415,7 @@ docker compose exec gateway curl -fsS http://qwen3-asr-0:8003/health
 
 # 看显存占用
 nvidia-smi
-docker compose exec qwen3-asr-0 nvidia-smi   # 看容器视角(受 CUDA_VISIBLE_DEVICES 限制)
+docker compose exec qwen3-asr-0 nvidia-smi   # 看容器视角(通常重新编号为 GPU 0)
 
 # 重启某个服务(不影响其它)
 docker compose restart funasr-0
@@ -434,5 +435,5 @@ docker compose down -v
 - **CosyVoice3 输出全是噪音**:`TTS_ENABLE_FP16=true` + `TTS_LOAD_TRT=true` 同时开会有 NaN,关一个。
 - **不知道几副本几卡才够**: 用 `python3 scripts/plan_deployment.py` (零依赖, 见 §4.3)。
 - **多副本副本同 GPU**: 不要这样做。同一服务的两个副本绑同一张卡, 实测总吞吐不升反降 (GPU SM 抢占)。每个副本一张卡。
-- **qwen3-asr 启动报 `OSError: We couldn't connect to 'https://huggingface.co'`**: 离线场景务必设 `HF_HUB_OFFLINE=1` 和 `TRANSFORMERS_OFFLINE=1`, 见 §9.1。
+- **qwen3-asr 启动报 Hugging Face 离线缓存错误**: 离线场景务必把 `QWEN3_ASR_MODEL_ID` 设成本地路径,并设 `HF_HUB_OFFLINE=1` 和 `TRANSFORMERS_OFFLINE=1`, 见 §9.1。
 - **高 QPS 网关 fd 耗尽 / `Too many open files`**: 容器加 `ulimits: { nofile: 65535 }`; 同时检查 `HTTPX_MAX_CONNECTIONS` 是否够大。
