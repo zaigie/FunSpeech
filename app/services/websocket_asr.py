@@ -114,6 +114,7 @@ class AliyunWebSocketASRService:
         sentence_texts_raw = []
         empty_result_count = 0
         audio_buffer = np.array([], dtype=np.float32)  # 音频缓冲区，用于累积到完整chunk
+        _is_qwen3 = None  # 懒初始化，首次使用时判断引擎类型
 
         logger.info(f"[{task_id}] WebSocket ASR连接开始")
 
@@ -424,7 +425,16 @@ class AliyunWebSocketASRService:
                                     )
 
                                     if flush_result_text_raw:
-                                        if (
+                                        if _is_qwen3 is None:
+                                            from .asr.http_engine import Qwen3AsrVllmHttpEngine
+
+                                            _is_qwen3 = isinstance(
+                                                self.asr_engine, Qwen3AsrVllmHttpEngine
+                                            )
+
+                                        if _is_qwen3:
+                                            sentence_texts_raw = [flush_result_text_raw]
+                                        elif (
                                             not sentence_texts_raw
                                             or flush_result_text_raw
                                             != sentence_texts_raw[-1]
@@ -471,16 +481,30 @@ class AliyunWebSocketASRService:
                                 elif result_text:
                                     if result_text != last_sentence_text:
                                         last_sentence_text = result_text
-                                        if (
-                                            not sentence_texts
-                                            or result_text != sentence_texts[-1]
-                                        ):
-                                            sentence_texts.append(result_text)
-                                        if (
-                                            not sentence_texts_raw
-                                            or result_text_raw != sentence_texts_raw[-1]
-                                        ):
-                                            sentence_texts_raw.append(result_text_raw)
+
+                                        if _is_qwen3 is None:
+                                            from .asr.http_engine import Qwen3AsrVllmHttpEngine
+
+                                            _is_qwen3 = isinstance(
+                                                self.asr_engine, Qwen3AsrVllmHttpEngine
+                                            )
+
+                                        if _is_qwen3:
+                                            # Qwen3-ASR 每次返回全量修正文本，直接替换
+                                            sentence_texts = [result_text]
+                                            sentence_texts_raw = [result_text_raw]
+                                        else:
+                                            # FunASR 返回增量文本，追加拼接
+                                            if (
+                                                not sentence_texts
+                                                or result_text != sentence_texts[-1]
+                                            ):
+                                                sentence_texts.append(result_text)
+                                            if (
+                                                not sentence_texts_raw
+                                                or result_text_raw != sentence_texts_raw[-1]
+                                            ):
+                                                sentence_texts_raw.append(result_text_raw)
 
                                         if not sentence_active:
                                             sentence_active = True
