@@ -223,6 +223,9 @@ class CosyVoiceHttpEngine:
     def is_tts_model_loaded(self) -> bool:
         return self.is_sft_model_loaded() or self.is_clone_model_loaded()
 
+    def is_model_loaded(self) -> bool:
+        return self.is_tts_model_loaded()
+
     def synthesize_speech(
         self,
         text: str,
