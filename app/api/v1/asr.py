@@ -142,10 +142,10 @@ async def get_asr_params(request: Request) -> ASRQueryParams:
                 "schema": {
                     "type": "string",
                     "maxLength": 64,
-                    "default": "paraformer-large",
-                    "example": "paraformer-large",
+                    "default": "qwen3-asr-flash",
+                    "example": "qwen3-asr-flash",
                 },
-                "description": "自定义模型ID，指定使用的ASR模型",
+                "description": "自定义模型ID，指定使用的ASR模型；不传时使用 models.json 中标记 default=true 的模型",
             },
             {
                 "name": "enable_punctuation_prediction",

@@ -50,9 +50,9 @@ class ASRQueryParams(BaseModel):
     )
 
     customization_id: Optional[str] = Field(
-        "paraformer-large",
-        description="自定义模型ID，指定使用的ASR模型",
-        example="paraformer-large",
+        None,
+        description="自定义模型ID，指定使用的ASR模型；不传时使用 models.json 中标记 default=true 的模型",
+        example="qwen3-asr-flash",
         max_length=64,
     )
 
