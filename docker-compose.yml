@@ -49,6 +49,11 @@ x-modelscope-cache: &modelscope-cache
   source: ${MODELSCOPE_CACHE:-~/.cache/modelscope/hub/models}
   target: /root/.cache/modelscope/hub
 
+x-nltk-data: &nltk-data
+  type: bind
+  source: ${NLTK_DATA:-~/.cache/nltk_data}
+  target: /root/nltk_data
+
 x-gpu-deploy: &gpu-deploy
   deploy:
     resources:
@@ -134,6 +139,7 @@ services:
       CUDA_VISIBLE_DEVICES: "0"
     volumes:
       - *modelscope-cache
+      - *nltk-data
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8002/health"]
       interval: 15s
