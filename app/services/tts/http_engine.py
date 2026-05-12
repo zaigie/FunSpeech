@@ -550,6 +550,8 @@ class CosyVoiceHttpEngine:
                     raise DefaultServerErrorException(
                         "cosyvoice stream recv 超时"
                     ) from exc
+                except ConnectionClosed:
+                    return
                 if isinstance(msg, (bytes, bytearray)):
                     chunk = np.frombuffer(msg, dtype=np.float32)
                     if chunk.size == 0:
