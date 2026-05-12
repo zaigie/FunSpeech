@@ -1,0 +1,63 @@
+# CNB 手动触发按钮 (CI, 不是 CD)
+#
+# 文件名必须为 .cnb/web_trigger.yml (cnb 平台固定识别)。
+# 仓库页面 → 点"手动触发"按钮 → 选输入 → 提交后跑 .cnb.yml 里同名 event 的 pipeline。
+#
+# 文档:
+#   https://docs.cnb.cool/zh/build/web-trigger.html
+#   https://docs.cnb.cool/zh/build/trigger-rule.html
+
+branch:
+  # 任意分支都能在页面看到这个按钮 (正则 .* 匹配全部)
+  - reg: .*
+    buttons:
+      - name: 构建子服务镜像
+        event: web_trigger_build      # 对应 .cnb.yml 里的 web_trigger_build pipeline
+        # 可选: 限制谁能触发 (注释掉则全员可触发)
+        # permissions:
+        #   roles: [master, developer]
+
+        inputs:
+          # 主选择: 要构建哪些子服务 (可多选, 结果用 `,` 分隔)
+          SERVICES:
+            type: select
+            multiple: true
+            required: true
+            placeholder: 至少选一个
+            default: gateway
+            options:
+              - name: gateway (CPU, 网关)
+                value: gateway
+              - name: funasr (GPU, FunASR)
+                value: funasr
+              - name: dolphin (GPU, DataoceanAI Dolphin)
+                value: dolphin
+              - name: qwen3-asr (GPU, Qwen3-ASR-1.7B + vLLM)
+                value: qwen3-asr
+              - name: cosyvoice (GPU, CosyVoice2/3)
+                value: cosyvoice
+
+          # 镜像 tag, 默认 latest
+          TAG:
+            type: input
+            placeholder: latest / v1.0.0 / branch-xxx
+            default: latest
+
+          # 是否推送 (关掉只 build 不推, 用于校验)
+          PUSH_TO_REGISTRY:
+            type: switch
+            default: "true"
+
+          # 构建期 HTTP 代理 — 国内拉 PyPI / HuggingFace 慢时填上
+          BUILD_HTTP_PROXY:
+            type: input
+            placeholder: "可选, 例如 http://172.17.0.1:7890"
+            default: ""
+          BUILD_HTTPS_PROXY:
+            type: input
+            placeholder: 可选, 通常与 HTTP_PROXY 相同
+            default: ""
+          BUILD_NO_PROXY:
+            type: input
+            placeholder: NO_PROXY 列表
+            default: "localhost,127.0.0.1,*.local"

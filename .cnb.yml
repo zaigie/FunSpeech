@@ -1,25 +1,146 @@
-# .cnb.yml
-$:
-  tag_push:
+# CNB 流水线配置 — 微服务多镜像版本
+#
+# 历史: 旧版是 tag_push 自动 build 单容器 (Dockerfile + Dockerfile.gpu)。
+# 现在改为 web_trigger 手动触发, 用户在网页上选择要构建哪些子服务
+# (gateway / funasr / dolphin / qwen3-asr / cosyvoice), 各自独立打 tag 推送。
+#
+# 触发入口: 仓库 → 点页面"手动触发"按钮 → 选要构建的子服务 → 提交
+# 按钮 / 输入控件定义见 .cnb/web_trigger.yml
+#
+# 文档:
+#   https://docs.cnb.cool/zh/build/web-trigger.html
+#   https://docs.cnb.cool/zh/build/trigger-rule.html
+
+# 任意分支都可触发 (用 ** 通配)
+"**":
+  web_trigger_build:
     - services:
         - docker
       env:
-        IMAGE_NAME: ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}
+        # 制品库的镜像 namespace。例如:
+        #   CNB_DOCKER_REGISTRY=docker.cnb.cool
+        #   CNB_REPO_SLUG_LOWERCASE=nexa/funspeech
+        # 那 IMAGE_NS=docker.cnb.cool/nexa/funspeech
+        IMAGE_NS: ${CNB_DOCKER_REGISTRY}/${CNB_REPO_SLUG_LOWERCASE}
       stages:
-        - name: 镜像构建信息
-          script:
-            - echo "即将构建镜像：${IMAGE_NAME}:latest"
-            - echo "即将构建镜像：${IMAGE_NAME}:gpu-latest"
-            - echo "推送到制品库：${IMAGE_NAME}"
+        # ---- 准备 ----
+        - name: 选择确认
+          script: |
+            echo "==== Build plan ===="
+            echo "SERVICES = ${SERVICES}"
+            echo "TAG = ${TAG:-latest}"
+            echo "PUSH = ${PUSH_TO_REGISTRY:-true}"
+            echo "HTTP_PROXY = ${BUILD_HTTP_PROXY:-(none)}"
+            echo "===================="
+            if [ -z "${SERVICES}" ]; then
+              echo "❌ SERVICES 为空, 没选要构建的子服务"
+              exit 1
+            fi
+
         - name: 登录制品库
-          script: docker login -u ${CNB_TOKEN_USER_NAME} -p "${CNB_TOKEN}" ${CNB_DOCKER_REGISTRY}
-        - name: 构建CPU版本镜像
-          script: docker build -t ${IMAGE_NAME}:latest -f Dockerfile .
+          if: |
+            [ "${PUSH_TO_REGISTRY:-true}" = "true" ]
+          script: |
+            docker login -u ${CNB_TOKEN_USER_NAME} -p "${CNB_TOKEN}" ${CNB_DOCKER_REGISTRY}
+
+        - name: 拉取子模块 (cosyvoice 必需)
+          if: |
+            echo "${SERVICES}" | tr ',' '\n' | grep -qx cosyvoice
+          script: |
+            git submodule update --init --recursive services/cosyvoice/third_party/CosyVoice
+
+        # ---- 各子服务的 build + push ----
+        # 每个 stage 都用 `if` 检查 SERVICES 是否包含自己。
+        # web_trigger 的 select multiple 结果用 `,` 分隔 (CNB 文档)。
+        - name: build gateway
+          if: |
+            echo "${SERVICES}" | tr ',' '\n' | grep -qx gateway
           timeout: 60m
-        - name: 推送CPU版本镜像
-          script: docker push ${IMAGE_NAME}:latest
-        - name: 构建GPU版本镜像
-          script: docker build -t ${IMAGE_NAME}:gpu-latest -f Dockerfile.gpu .
+          script: |
+            IMG=${IMAGE_NS}/gateway:${TAG:-latest}
+            echo ">>> Building ${IMG}"
+            docker build \
+              --build-arg HTTP_PROXY="${BUILD_HTTP_PROXY:-}" \
+              --build-arg HTTPS_PROXY="${BUILD_HTTPS_PROXY:-}" \
+              --build-arg NO_PROXY="${BUILD_NO_PROXY:-localhost,127.0.0.1,*.local}" \
+              -t ${IMG} \
+              -f Dockerfile .
+            if [ "${PUSH_TO_REGISTRY:-true}" = "true" ]; then
+              docker push ${IMG}
+            fi
+
+        - name: build funasr
+          if: |
+            echo "${SERVICES}" | tr ',' '\n' | grep -qx funasr
           timeout: 60m
-        - name: 推送GPU版本镜像
-          script: docker push ${IMAGE_NAME}:gpu-latest
+          script: |
+            IMG=${IMAGE_NS}/funasr:${TAG:-latest}
+            echo ">>> Building ${IMG}"
+            docker build \
+              --build-arg HTTP_PROXY="${BUILD_HTTP_PROXY:-}" \
+              --build-arg HTTPS_PROXY="${BUILD_HTTPS_PROXY:-}" \
+              --build-arg NO_PROXY="${BUILD_NO_PROXY:-localhost,127.0.0.1,*.local}" \
+              -t ${IMG} \
+              -f services/funasr/Dockerfile services/funasr
+            if [ "${PUSH_TO_REGISTRY:-true}" = "true" ]; then
+              docker push ${IMG}
+            fi
+
+        - name: build dolphin
+          if: |
+            echo "${SERVICES}" | tr ',' '\n' | grep -qx dolphin
+          timeout: 60m
+          script: |
+            IMG=${IMAGE_NS}/dolphin:${TAG:-latest}
+            echo ">>> Building ${IMG}"
+            docker build \
+              --build-arg HTTP_PROXY="${BUILD_HTTP_PROXY:-}" \
+              --build-arg HTTPS_PROXY="${BUILD_HTTPS_PROXY:-}" \
+              --build-arg NO_PROXY="${BUILD_NO_PROXY:-localhost,127.0.0.1,*.local}" \
+              -t ${IMG} \
+              -f services/dolphin/Dockerfile services/dolphin
+            if [ "${PUSH_TO_REGISTRY:-true}" = "true" ]; then
+              docker push ${IMG}
+            fi
+
+        - name: build qwen3-asr
+          if: |
+            echo "${SERVICES}" | tr ',' '\n' | grep -qx qwen3-asr
+          timeout: 60m
+          script: |
+            IMG=${IMAGE_NS}/qwen3-asr:${TAG:-latest}
+            echo ">>> Building ${IMG}"
+            docker build \
+              --build-arg HTTP_PROXY="${BUILD_HTTP_PROXY:-}" \
+              --build-arg HTTPS_PROXY="${BUILD_HTTPS_PROXY:-}" \
+              --build-arg NO_PROXY="${BUILD_NO_PROXY:-localhost,127.0.0.1,*.local}" \
+              -t ${IMG} \
+              -f services/qwen3_asr_vllm/Dockerfile services/qwen3_asr_vllm
+            if [ "${PUSH_TO_REGISTRY:-true}" = "true" ]; then
+              docker push ${IMG}
+            fi
+
+        - name: build cosyvoice
+          if: |
+            echo "${SERVICES}" | tr ',' '\n' | grep -qx cosyvoice
+          timeout: 90m  # cosyvoice 含 vLLM/torch wheel, 较慢
+          script: |
+            IMG=${IMAGE_NS}/cosyvoice:${TAG:-latest}
+            echo ">>> Building ${IMG}"
+            docker build \
+              --build-arg HTTP_PROXY="${BUILD_HTTP_PROXY:-}" \
+              --build-arg HTTPS_PROXY="${BUILD_HTTPS_PROXY:-}" \
+              --build-arg NO_PROXY="${BUILD_NO_PROXY:-localhost,127.0.0.1,*.local}" \
+              -t ${IMG} \
+              -f services/cosyvoice/Dockerfile services/cosyvoice
+            if [ "${PUSH_TO_REGISTRY:-true}" = "true" ]; then
+              docker push ${IMG}
+            fi
+
+        - name: 汇总
+          script: |
+            echo "==== Build done ===="
+            echo "SERVICES = ${SERVICES}"
+            echo "TAG = ${TAG:-latest}"
+            echo "PUSH = ${PUSH_TO_REGISTRY:-true}"
+            echo "===================="
