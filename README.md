@@ -15,6 +15,11 @@ ASR + TTS API 网关,兼容阿里云语音 API 与 OpenAI TTS API,支持 WebSock
 
 </div>
 
+> [!IMPORTANT]
+> **从单体版升级? 先读** [`docs/migration_to_latest.md`](./docs/migration_to_latest.md)
+>
+> 本分支已重构为微服务架构 (gateway + 4 个 GPU 子服务)。对外 HTTP/WS 协议**字节级兼容**, 客户端代码不用动; 但部署侧 docker-compose、模型缓存挂载路径、`.env` 变量都有变化。迁移文档覆盖:数据原地复用、必改的 mount 路径、`.env` 增删项、零停机切换、回滚步骤。
+
 ## 架构
 
 ```
