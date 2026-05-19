@@ -290,9 +290,11 @@ class FunASRHttpEngine(RealTimeASREngine):
                 internal_token=self._internal_token,
                 timeout=self._timeout,
             )
-        except Exception:
+        except Exception as exc:
             self._pool.release(idx)
-            raise
+            raise DefaultServerErrorException(
+                f"ASR 子服务连接失败 ({base_url}): {exc}"
+            ) from exc
 
         # session 关闭时释放副本
         original_close = session.close
@@ -634,9 +636,11 @@ class Qwen3AsrVllmHttpEngine(RealTimeASREngine):
                 internal_token=self._internal_token,
                 timeout=self._timeout,
             )
-        except Exception:
+        except Exception as exc:
             self._pool.release(idx)
-            raise
+            raise DefaultServerErrorException(
+                f"ASR 子服务连接失败 ({base_url}): {exc}"
+            ) from exc
 
         original_close = session.close
 
