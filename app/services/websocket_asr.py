@@ -544,6 +544,10 @@ class AliyunWebSocketASRService:
                             await self._send_task_failed(
                                 websocket, task_id, f"Audio processing failed: {str(e)}"
                             )
+                            self._close_http_session_in_cache(audio_cache)
+                            audio_cache = {}
+                            punc_cache = {}
+                            break
                     else:
                         await self._send_task_failed(
                             websocket, task_id, "Connection not started"

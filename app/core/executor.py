@@ -20,8 +20,10 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
 # 全局线程池执行器
-# 默认线程数：max(4, CPU核心数)，可通过环境变量覆盖
-_DEFAULT_WORKERS = max(4, os.cpu_count() or 4)
+# 线程大部分时间阻塞在同步 WS recv() 等网络 I/O 上 (I/O-bound),
+# 默认线程数从 cpu_count 调整为 cpu_count*8 (最低 32),
+# 避免多并发 ASR 连接时线程池被耗尽导致服务不可用。
+_DEFAULT_WORKERS = max(32, (os.cpu_count() or 4) * 8)
 _MAX_WORKERS = int(os.getenv("INFERENCE_THREAD_POOL_SIZE", str(_DEFAULT_WORKERS)))
 
 _executor: ThreadPoolExecutor = None
