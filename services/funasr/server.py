@@ -538,7 +538,11 @@ async def asr_stream(websocket: WebSocket) -> None:
 
     try:
         while True:
-            msg = await websocket.receive()
+            try:
+                msg = await websocket.receive()
+            except (WebSocketDisconnect, RuntimeError):
+                logger.info("WS 客户端断开")
+                break
 
             if "text" in msg:
                 try:
@@ -679,8 +683,6 @@ async def asr_stream(websocket: WebSocket) -> None:
                     }
                 )
 
-    except WebSocketDisconnect:
-        logger.info("WS 客户端断开")
     except Exception:
         logger.exception("WS 处理异常")
         try:
