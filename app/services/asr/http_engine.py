@@ -18,6 +18,8 @@ import logging
 import os
 import random
 import threading
+import time
+import weakref
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
@@ -102,7 +104,24 @@ class _RealtimeASRSession:
 
     线程安全;send_chunk / flush 同步阻塞,适合在 run_sync 线程池里调用。
     通过持有一个长连 websocket 给子服务,cache 状态保留在子服务端。
+
+    close() 可安全地从任意线程调用,会强制关闭底层连接以解除 recv() 阻塞。
     """
+
+    # -- GC 机制: 弱引用追踪所有活跃 session, 后台线程定期清理超时 session --
+    _registry: "weakref.WeakSet" = None  # 懒初始化
+    _registry_lock = threading.Lock()
+    _gc_started = False
+    _gc_thread: Optional[threading.Thread] = None
+    _gc_interval_sec: float = float(os.getenv("ASR_SESSION_GC_INTERVAL", "120"))
+    _gc_idle_timeout_sec: float = float(os.getenv("ASR_SESSION_GC_IDLE_TIMEOUT", "300"))
+
+    @classmethod
+    def _ensure_registry(cls):
+        if cls._registry is None:
+            with cls._registry_lock:
+                if cls._registry is None:
+                    cls._registry = weakref.WeakSet()
 
     def __init__(
         self,
@@ -123,6 +142,12 @@ class _RealtimeASRSession:
         self._lock = threading.Lock()
         self._closed = False
         self._timeout = timeout
+        self._last_active = time.monotonic()
+
+        # 注册到 GC 追踪
+        type(self)._ensure_registry()
+        with type(self)._registry_lock:
+            type(self)._registry.add(self)
 
         # 发送 start 帧
         start = {"op": "start", **params}
@@ -135,6 +160,7 @@ class _RealtimeASRSession:
 
     def send_chunk(self, audio_array_float32: np.ndarray) -> Dict[str, Any]:
         """送一个 PCM chunk(float32 [-1,1] 范围),返回 {text, text_punc, is_silence}"""
+        self._last_active = time.monotonic()
         with self._lock:
             if self._closed:
                 return {"text": "", "text_punc": "", "is_silence": True}
@@ -147,7 +173,12 @@ class _RealtimeASRSession:
             # 读直到收到 partial 或 error
             # 每个 recv 都带超时, 上游子服务卡死时不会让网关线程永久阻塞
             while True:
-                raw = self._ws.recv(timeout=self._timeout)
+                try:
+                    raw = self._ws.recv(timeout=self._timeout)
+                except Exception:
+                    if self._closed:
+                        return {"text": "", "text_punc": "", "is_silence": True}
+                    raise
                 if isinstance(raw, (bytes, bytearray)):
                     continue  # 子服务不应发二进制,忽略
                 msg = json.loads(raw)
@@ -165,12 +196,18 @@ class _RealtimeASRSession:
                 # started 等其它消息忽略
 
     def flush(self) -> str:
+        self._last_active = time.monotonic()
         with self._lock:
             if self._closed:
                 return ""
             self._ws.send(json.dumps({"op": "flush"}))
             while True:
-                raw = self._ws.recv(timeout=self._timeout)
+                try:
+                    raw = self._ws.recv(timeout=self._timeout)
+                except Exception:
+                    if self._closed:
+                        return ""
+                    raise
                 if isinstance(raw, (bytes, bytearray)):
                     continue
                 msg = json.loads(raw)
@@ -182,24 +219,92 @@ class _RealtimeASRSession:
                     )
 
     def close(self) -> None:
-        with self._lock:
-            if self._closed:
-                return
-            self._closed = True
-            try:
-                self._ws.send(json.dumps({"op": "close"}))
-            except Exception:
-                pass
-            try:
-                self._ws.close()
-            except Exception:
-                pass
+        """关闭内部 WS 会话,可安全地从任意线程调用.
+
+        不获取 _lock — 直接关闭底层 WebSocket 连接以解除 send_chunk/flush
+        中阻塞的 recv(),避免与持有 _lock 的线程死锁。
+        """
+        if self._closed:
+            return
+        # 先标记 closed,再关闭底层连接 — 确保 recv() 被解除阻塞后
+        # 立即看到 _closed=True,消除竞态窗口。
+        self._closed = True
+        try:
+            self._ws.close()
+        except Exception:
+            pass
 
     def __del__(self):
         try:
             self.close()
         except Exception:
             pass
+
+    # ------------------------------------------------------------------
+    # GC 机制: 后台线程定期扫描并强制关闭超时空闲的 session
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def _gc_scan(cls) -> int:
+        """扫描所有活跃 session, 强制关闭超过 _gc_idle_timeout_sec 未活动的。
+
+        返回本次关闭的数量。
+        """
+        cls._ensure_registry()
+        now = time.monotonic()
+        threshold = cls._gc_idle_timeout_sec
+        closed_count = 0
+
+        # 快照当前 registry 中的 session, 避免迭代时修改
+        with cls._registry_lock:
+            sessions = list(cls._registry)
+
+        for session in sessions:
+            try:
+                idle = now - session._last_active
+                if idle > threshold and not session._closed:
+                    logger.info(
+                        "ASR session GC: 强制关闭空闲 %.0fs 的 session (threshold=%.0fs)",
+                        idle,
+                        threshold,
+                    )
+                    session.close()
+                    closed_count += 1
+            except Exception:
+                pass
+
+        if closed_count:
+            logger.warning("ASR session GC: 本轮关闭 %d 个超时 session", closed_count)
+        return closed_count
+
+    @classmethod
+    def _gc_loop(cls):
+        """GC 后台线程主循环"""
+        while True:
+            time.sleep(cls._gc_interval_sec)
+            try:
+                cls._gc_scan()
+            except Exception:
+                pass
+
+    @classmethod
+    def start_gc(cls):
+        """启动后台 GC 线程 (幂等)"""
+        if cls._gc_started:
+            return
+        cls._ensure_registry()
+        cls._gc_started = True
+        cls._gc_thread = threading.Thread(
+            target=cls._gc_loop,
+            name="asr-session-gc",
+            daemon=True,
+        )
+        cls._gc_thread.start()
+        logger.info(
+            "ASR session GC 已启动 (interval=%.0fs, idle_timeout=%.0fs)",
+            cls._gc_interval_sec,
+            cls._gc_idle_timeout_sec,
+        )
 
 
 class _HttpRealtimeModel:
@@ -298,12 +403,16 @@ class FunASRHttpEngine(RealTimeASREngine):
 
         # session 关闭时释放副本
         original_close = session.close
+        released = False
 
         def close_and_release():
+            nonlocal released
             try:
                 original_close()
             finally:
-                self._pool.release(idx)
+                if not released:
+                    self._pool.release(idx)
+                    released = True
 
         session.close = close_and_release  # type: ignore[method-assign]
         return session
@@ -643,12 +752,16 @@ class Qwen3AsrVllmHttpEngine(RealTimeASREngine):
             ) from exc
 
         original_close = session.close
+        released = False
 
         def close_and_release():
+            nonlocal released
             try:
                 original_close()
             finally:
-                self._pool.release(idx)
+                if not released:
+                    self._pool.release(idx)
+                    released = True
 
         session.close = close_and_release  # type: ignore[method-assign]
         return session

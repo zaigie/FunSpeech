@@ -57,6 +57,14 @@ async def lifespan(app: FastAPI):
 
     logger.info(f"Worker [{worker_id}] 已就绪")
 
+    # 启动 ASR session GC 后台线程
+    try:
+        from .services.asr.http_engine import _RealtimeASRSession
+
+        _RealtimeASRSession.start_gc()
+    except Exception as exc:
+        logger.warning(f"Worker [{worker_id}] ASR session GC 启动失败: {exc}")
+
     yield
 
     # 关闭时
