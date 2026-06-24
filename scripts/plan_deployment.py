@@ -654,12 +654,14 @@ def _render_subservice_env(svc_name: str, mode: str,
             "      PORT: \"8001\"",
             f"      ASR_MODEL_MODE: \"{mode}\"",
             "      ASR_DEVICE: cuda:0",
+            f"      NVIDIA_VISIBLE_DEVICES: \"{placement.gpu_idx}\"",
             "      CUDA_VISIBLE_DEVICES: \"0\"",
         ]
     if svc_name == "dolphin":
         return [
             "      PORT: \"8002\"",
             "      DOLPHIN_DEVICE: cuda",
+            f"      NVIDIA_VISIBLE_DEVICES: \"{placement.gpu_idx}\"",
             "      CUDA_VISIBLE_DEVICES: \"0\"",
         ]
     if svc_name == "qwen3-asr":
@@ -670,6 +672,7 @@ def _render_subservice_env(svc_name: str, mode: str,
             f"      QWEN3_ASR_GPU_MEM: \"{gpu_mem}\"",
             "      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-}",
             "      TRANSFORMERS_OFFLINE: ${TRANSFORMERS_OFFLINE:-}",
+            f"      NVIDIA_VISIBLE_DEVICES: \"{placement.gpu_idx}\"",
             "      CUDA_VISIBLE_DEVICES: \"0\"",
         ]
     if svc_name == "cosyvoice":
@@ -683,6 +686,7 @@ def _render_subservice_env(svc_name: str, mode: str,
             "      TTS_ENABLE_FP16: ${TTS_ENABLE_FP16:-false}",
             "      TTS_LOAD_VLLM: ${TTS_LOAD_VLLM:-false}",
             "      VOICES_DIR: /app/voices",
+            f"      NVIDIA_VISIBLE_DEVICES: \"{placement.gpu_idx}\"",
             "      CUDA_VISIBLE_DEVICES: \"0\"",
         ]
     raise ValueError(f"unknown service: {svc_name}")

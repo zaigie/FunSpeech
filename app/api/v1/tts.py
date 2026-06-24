@@ -434,7 +434,7 @@ async def health_check(request: Request) -> JSONResponse:
 
         # 所有引擎方法内部走同步 httpx, 整体放线程池里跑
         def _gather():
-            return {
+            data = {
                 "status": "healthy",
                 "sft_model_loaded": tts_engine.is_sft_model_loaded(),
                 "tts_model_loaded": tts_engine.is_tts_model_loaded(),
@@ -442,6 +442,10 @@ async def health_check(request: Request) -> JSONResponse:
                 "preset_voices": tts_engine.get_voices(),
                 "version": settings.APP_VERSION,
             }
+            get_replica_healths = getattr(tts_engine, "get_replica_healths", None)
+            if callable(get_replica_healths):
+                data["replicas"] = get_replica_healths()
+            return data
 
         response_data = await run_sync(_gather)
 

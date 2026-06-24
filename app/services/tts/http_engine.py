@@ -367,6 +367,35 @@ class CosyVoiceHttpEngine:
             except httpx.HTTPError:
                 continue
 
+    def get_replica_healths(self) -> List[Dict[str, Any]]:
+        """返回每个 CosyVoice 副本的原始 /health 信息。
+
+        网关原来的 TTS health 只暴露聚合后的 device 字符串，生产上多副本
+        出现某个副本绑错 GPU / 掉到 CPU / 模型版本不一致时很难定位。这里
+        逐个探测所有配置的 COSYVOICE_SERVICE_URLS，供 /stream/v1/tts/health
+        透出诊断信息；失败的副本也会带 error 返回。
+        """
+        results: List[Dict[str, Any]] = []
+        for url in self._urls:
+            item: Dict[str, Any] = {"url": url, "ok": False}
+            try:
+                r = _get_httpx_client().get(
+                    f"{url}/health",
+                    timeout=5.0,
+                    headers=self._headers,
+                )
+                item["status_code"] = r.status_code
+                try:
+                    body = r.json()
+                except ValueError:
+                    body = {"raw": r.text[:500]}
+                item.update(body if isinstance(body, dict) else {"body": body})
+                item["ok"] = r.status_code == 200
+            except Exception as exc:
+                item["error"] = str(exc)
+            results.append(item)
+        return results
+
     def _post_tts_file(
         self,
         text: str,

@@ -113,6 +113,7 @@ services:
       PORT: "8001"
       ASR_MODEL_MODE: ${ASR_MODEL_MODE:-all}
       ASR_DEVICE: cuda:0
+      NVIDIA_VISIBLE_DEVICES: "0"
       CUDA_VISIBLE_DEVICES: "0"
     volumes:
       - *modelscope-cache
@@ -137,6 +138,7 @@ services:
       <<: *subservice-env
       PORT: "8002"
       DOLPHIN_DEVICE: cuda
+      NVIDIA_VISIBLE_DEVICES: "0"
       CUDA_VISIBLE_DEVICES: "0"
     volumes:
       - *modelscope-cache
@@ -168,6 +170,7 @@ services:
       QWEN3_ASR_GPU_MEM: ${QWEN3_ASR_GPU_MEM:-0.8}
       HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-}
       TRANSFORMERS_OFFLINE: ${TRANSFORMERS_OFFLINE:-}
+      NVIDIA_VISIBLE_DEVICES: "0"
       CUDA_VISIBLE_DEVICES: "0"
     volumes:
       - *modelscope-cache
@@ -199,6 +202,7 @@ services:
       TTS_ENABLE_FP16: ${TTS_ENABLE_FP16:-false}
       TTS_LOAD_VLLM: ${TTS_LOAD_VLLM:-false}
       VOICES_DIR: /app/voices
+      NVIDIA_VISIBLE_DEVICES: "0"
       CUDA_VISIBLE_DEVICES: "0"
     volumes:
       - *modelscope-cache
