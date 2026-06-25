@@ -32,7 +32,6 @@ from ..utils.common import (
 )
 from ..utils.audio import validate_audio_format, validate_sample_rate, resample_audio_array
 from .tts.engine import get_tts_engine
-from .tts.http_engine import CosyVoiceHttpEngine
 
 logger = logging.getLogger(__name__)
 
@@ -328,17 +327,18 @@ class AliyunWebSocketTTSService:
         websocket,
         prompt: str = "",
     ) -> AsyncGenerator[Optional[bytes], None]:
-        """流式合成 — 全部走 CosyVoice 子服务 /tts/stream"""
+        """流式合成 — 通过当前 TTS 引擎的 iter_stream_audio_chunks 能力输出"""
         tts_engine = self._ensure_tts_engine()
 
-        if not isinstance(tts_engine, CosyVoiceHttpEngine):
+        iter_stream_audio_chunks = getattr(tts_engine, "iter_stream_audio_chunks", None)
+        if not callable(iter_stream_audio_chunks):
             raise Exception(
                 f"TTS 引擎类型不支持流式合成: {type(tts_engine).__name__}; "
-                "请确认 COSYVOICE_SERVICE_URLS 已配置"
+                "请确认当前 TTS_ENGINE 支持 iter_stream_audio_chunks"
             )
 
         try:
-            async for audio_array, native_sr in tts_engine.iter_stream_audio_chunks(
+            async for audio_array, native_sr in iter_stream_audio_chunks(
                 text=text, voice=voice, speed=speed, prompt=prompt
             ):
                 if websocket.client_state.name != "CONNECTED":

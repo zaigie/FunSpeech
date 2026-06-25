@@ -1,0 +1,12 @@
+.venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+tests/__pycache__
+*.log
+*.wav
+*.mp3
+*.pcm
+.DS_Store

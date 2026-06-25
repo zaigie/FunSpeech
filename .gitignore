@@ -2,6 +2,7 @@
 ref/
 *.db
 benchmark_results/
+qwen3_voices/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

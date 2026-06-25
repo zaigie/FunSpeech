@@ -4,7 +4,7 @@
 
 根据你的:
   - GPU 资源 (卡数、单卡显存)
-  - 要启用的子服务 (funasr / dolphin / qwen3-asr / cosyvoice)
+  - 要启用的子服务 (funasr / dolphin / qwen3-asr / cosyvoice / qwen3-tts)
   - 每个服务的目标并发数 (同时活跃的客户端请求数, 不是 QPS)
 
 输出:
@@ -50,6 +50,7 @@ THROUGHPUT_PER_REPLICA = {
     "dolphin":   12.0,   # 没单独测, 取与 funasr 同量级
     "qwen3-asr":  5.0,   # 实测 qwen3_patched_high N=64: 5.26 req/s
     "cosyvoice":  0.34,  # 实测 tts_patched_sem2 N=8: 0.34 req/s
+    "qwen3-tts":  0.50,  # 先按 0.6B Base Clone 粗估, 等实测后校准
 }
 
 # 单条请求平均延迟 (秒) — 实测值, 用来从"并发数"反推副本数
@@ -58,6 +59,7 @@ LATENCY_SEC_PER_REPLICA = {
     "dolphin":    0.08,  # 同量级
     "qwen3-asr":  0.20,  # 实测 ~190 ms (含 vLLM continuous batching)
     "cosyvoice":  3.50,  # 实测 ~3.5 s (autoregressive TTS, 慢)
+    "qwen3-tts":  2.50,  # 粗估, 等 benchmarks 校准
 }
 
 # 单副本能"同时"处理的活跃请求数 (= GPU_INFERENCE_CONCURRENCY 或 vLLM batch)
@@ -67,6 +69,7 @@ PARALLEL_PER_REPLICA = {
     "dolphin":    1,      # sem=1
     "qwen3-asr": 64,      # vLLM continuous batching, 实测 N=64 仍稳
     "cosyvoice":  2,      # sem=2, 实测最佳点 (sem=8 反而慢)
+    "qwen3-tts":  1,      # 子服务默认 GPU 串行
 }
 
 # cosyvoice (TTS) 的"实时容量" — 单副本能同时支持多少路 RTF ≤ 1 的客户端。
@@ -82,6 +85,7 @@ PARALLEL_PER_REPLICA = {
 #   N=8: 单客户端 RTF ≈ 3.0  (严重落后)
 # 取 RTF ≤ 1.1 (10% 容忍) 的最大 N 作为"实时容量"
 TTS_REALTIME_CAPACITY_PER_REPLICA = 2  # cosyvoice 单副本 sem=2 时
+QWEN3_TTS_REALTIME_CAPACITY_PER_REPLICA = 1  # 待实测, 先按保守值
 
 # 单副本的显存 (GiB), 不含 vLLM KV cache 池
 # 注意 qwen3-asr 的总显存 = WEIGHTS + KV_pool, KV_pool 见下面 qwen3_mem_util_for_card
@@ -91,6 +95,7 @@ MODEL_MEM_GIB = {
     "dolphin": {"default": 0.6},
     "qwen3-asr": {"weights": 4.0},  # 只是权重, 不含 KV cache
     "cosyvoice": {"all": 5.0, "clone": 3.5, "sft": 1.5},
+    "qwen3-tts": {"base": 8.0},
 }
 
 # 每个 CUDA context 在 GPU 上的额外开销 (经验值 ~300-500 MiB)
@@ -103,6 +108,7 @@ SERVICE_TO_BASE_PORT = {
     "dolphin": 8002,
     "qwen3-asr": 8003,
     "cosyvoice": 8004,
+    "qwen3-tts": 8005,
 }
 
 SERVICE_TO_SVC_NAME = {
@@ -110,6 +116,7 @@ SERVICE_TO_SVC_NAME = {
     "dolphin": "dolphin",
     "qwen3-asr": "qwen3-asr",
     "cosyvoice": "cosyvoice",
+    "qwen3-tts": "qwen3-tts",
 }
 
 SERVICE_TO_IMAGE = {
@@ -117,6 +124,7 @@ SERVICE_TO_IMAGE = {
     "dolphin": "docker.cnb.cool/nexa/funspeech/dolphin:latest",
     "qwen3-asr": "docker.cnb.cool/nexa/funspeech/qwen3-asr:latest",
     "cosyvoice": "docker.cnb.cool/nexa/funspeech/cosyvoice:latest",
+    "qwen3-tts": "docker.cnb.cool/nexa/funspeech/qwen3-tts:latest",
 }
 
 SERVICE_TO_BUILD_CONTEXT = {
@@ -124,6 +132,7 @@ SERVICE_TO_BUILD_CONTEXT = {
     "dolphin": "./services/dolphin",
     "qwen3-asr": "./services/qwen3_asr_vllm",
     "cosyvoice": "./services/cosyvoice",
+    "qwen3-tts": "./services/qwen3_tts",
 }
 
 
@@ -145,18 +154,18 @@ class ServiceRequest:
 
     - ASR 服务 (funasr/dolphin/qwen3-asr): `concurrency` = 同时活跃的客户端请求数
       副本 = ceil(并发 / (并行容量 × 单位时间内处理批次)), 受 max_queue_sec 影响
-    - TTS 服务 (cosyvoice): `concurrency` = 同时跑的实时 TTS 路数
+    - TTS 服务 (cosyvoice/qwen3-tts): `concurrency` = 同时跑的实时 TTS 路数
       副本 = ceil(路数 / 实时容量), 实时容量 = TTS_REALTIME_CAPACITY_PER_REPLICA
       不依赖 max_queue_sec — 实时容量是工程实测点, 超了就 RTF>1 卡顿
     """
 
-    name: str               # funasr / dolphin / qwen3-asr / cosyvoice
+    name: str               # funasr / dolphin / qwen3-asr / cosyvoice / qwen3-tts
     concurrency: int        # ASR: 并发请求数; TTS: 实时路数
     mode: str               # all / offline / realtime / clone / sft / default
 
     @property
     def is_tts(self) -> bool:
-        return self.name == "cosyvoice"
+        return self.name in ("cosyvoice", "qwen3-tts")
 
     @property
     def per_replica_qps(self) -> float:
@@ -173,8 +182,10 @@ class ServiceRequest:
     @property
     def per_replica_realtime_capacity(self) -> Optional[int]:
         """TTS 单副本实时容量 (路数, RTF ≤ ~1.1)。ASR 返回 None。"""
-        if self.is_tts:
+        if self.name == "cosyvoice":
             return TTS_REALTIME_CAPACITY_PER_REPLICA
+        if self.name == "qwen3-tts":
+            return QWEN3_TTS_REALTIME_CAPACITY_PER_REPLICA
         return None
 
     @property
@@ -386,10 +397,69 @@ def plan(gpus: List[GPU], services: List[ServiceRequest],
 # =============================================================================
 
 
+def infer_tts_engine(services: List[ServiceRequest],
+                     explicit: Optional[str] = None) -> str:
+    """部署级 TTS 后端选择。
+
+    网关一次只选择一个 TTS 后端: cosyvoice 或 qwen3-tts。
+    """
+    if explicit:
+        engine = explicit.strip().lower()
+    elif any(s.name == "qwen3-tts" for s in services):
+        engine = "qwen3-tts"
+    elif any(s.name == "cosyvoice" for s in services):
+        engine = "cosyvoice"
+    else:
+        engine = "cosyvoice"
+
+    aliases = {
+        "cosyvoice": "cosyvoice",
+        "cosy": "cosyvoice",
+        "qwen": "qwen3-tts",
+        "qwen-tts": "qwen3-tts",
+        "qwentts": "qwen3-tts",
+        "qwen3": "qwen3-tts",
+        "qwen3-tts": "qwen3-tts",
+    }
+    if engine not in aliases:
+        raise ValueError(f"unsupported tts_engine: {explicit}")
+    return aliases[engine]
+
+
+def validate_tts_selection(services: List[ServiceRequest],
+                           tts_engine: str) -> None:
+    for service in services:
+        if (
+            service.name == "qwen3-tts"
+            and service.concurrency > 0
+            and service.mode != "base"
+        ):
+            raise ValueError(
+                "qwen3-tts currently supports only mode=base "
+                "(Qwen3-TTS Base Clone)"
+            )
+    requested = {
+        service.name
+        for service in services
+        if service.is_tts and service.concurrency > 0
+    }
+    if len(requested) > 1:
+        raise ValueError(
+            "gateway only supports one active TTS backend per generated compose; "
+            f"got {', '.join(sorted(requested))}"
+        )
+    if requested and tts_engine not in requested:
+        raise ValueError(
+            f"tts_engine={tts_engine} does not match requested TTS service "
+            f"{next(iter(requested))}"
+        )
+
+
 def render(gpus: List[GPU], services: List[ServiceRequest],
            placements: List[ReplicaPlacement],
            warnings: List[str],
-           max_queue_sec: float = 1.0) -> str:
+           max_queue_sec: float = 1.0,
+           tts_engine: Optional[str] = None) -> str:
     out = []
     out.append("=" * 70)
     out.append("FunSpeech 部署规划")
@@ -403,6 +473,10 @@ def render(gpus: List[GPU], services: List[ServiceRequest],
     out.append(
         f"\n服务需求 (ASR 按并发数, TTS 按实时 RTF≤1 路数; 排队容忍 {max_queue_sec:.1f}s):"
     )
+    selected_tts_engine = infer_tts_engine(services, tts_engine)
+    out.append(f"  - TTS 后端: {selected_tts_engine}")
+    if selected_tts_engine == "qwen3-tts":
+        out.append("      Qwen3-TTS 为开源本地 GPU 子服务, 不生成 cosyvoice 子服务")
     for s in services:
         n = s.replicas_needed(max_queue_sec)
         if s.is_tts:
@@ -499,7 +573,8 @@ def render(gpus: List[GPU], services: List[ServiceRequest],
 
 def render_full_compose(gpus: List[GPU], services: List[ServiceRequest],
                         placements: List[ReplicaPlacement],
-                        warnings: Optional[List[str]] = None) -> str:
+                        warnings: Optional[List[str]] = None,
+                        tts_engine: Optional[str] = None) -> str:
     """生成可独立使用的完整 docker compose 文件内容。"""
     del gpus  # 文件内容只依赖已完成的放置结果。
 
@@ -510,7 +585,9 @@ def render_full_compose(gpus: List[GPU], services: List[ServiceRequest],
         items.sort(key=lambda p: p.replica_idx)
 
     service_modes = {s.name: s.mode for s in services}
-    gateway_env = _render_gateway_env(by_svc, service_modes)
+    selected_tts_engine = infer_tts_engine(services, tts_engine)
+    validate_tts_selection(services, selected_tts_engine)
+    gateway_env = _render_gateway_env(by_svc, service_modes, selected_tts_engine)
 
     lines = [
         "# FunSpeech generated compose",
@@ -542,7 +619,7 @@ def render_full_compose(gpus: List[GPU], services: List[ServiceRequest],
     ])
     lines.extend(_render_gateway_service(gateway_env))
 
-    for svc_name in ("funasr", "dolphin", "qwen3-asr", "cosyvoice"):
+    for svc_name in ("funasr", "dolphin", "qwen3-asr", "cosyvoice", "qwen3-tts"):
         for placement in by_svc.get(svc_name, []):
             lines.extend(
                 _render_subservice(
@@ -563,9 +640,10 @@ def render_full_compose(gpus: List[GPU], services: List[ServiceRequest],
 
 
 def _render_gateway_env(by_svc: Dict[str, List[ReplicaPlacement]],
-                        service_modes: Dict[str, str]) -> List[str]:
+                        service_modes: Dict[str, str],
+                        tts_engine: str) -> List[str]:
     lines = []
-    for svc_name in ("funasr", "dolphin", "qwen3-asr", "cosyvoice"):
+    for svc_name in ("funasr", "dolphin", "qwen3-asr", "cosyvoice", "qwen3-tts"):
         placements = by_svc.get(svc_name)
         if not placements:
             continue
@@ -580,6 +658,7 @@ def _render_gateway_env(by_svc: Dict[str, List[ReplicaPlacement]],
         "INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-funspeech-internal}",
         "SERVICE_REQUEST_TIMEOUT: \"120\"",
         f"ASR_MODEL_MODE: {service_modes.get('funasr', 'all')}",
+        f"TTS_ENGINE: ${{TTS_ENGINE:-{tts_engine}}}",
         f"TTS_MODEL_MODE: {service_modes.get('cosyvoice', 'all')}",
     ])
     return lines
@@ -689,6 +768,23 @@ def _render_subservice_env(svc_name: str, mode: str,
             f"      NVIDIA_VISIBLE_DEVICES: \"{placement.gpu_idx}\"",
             "      CUDA_VISIBLE_DEVICES: \"0\"",
         ]
+    if svc_name == "qwen3-tts":
+        model_default = "Qwen/Qwen3-TTS-12Hz-0.6B-Base"
+        return [
+            "      PORT: \"8005\"",
+            f"      QWEN3_TTS_MODEL_ID: ${{QWEN3_TTS_MODEL_ID:-{model_default}}}",
+            "      QWEN3_TTS_DEVICE: cuda:0",
+            "      QWEN3_TTS_DTYPE: ${QWEN3_TTS_DTYPE:-bfloat16}",
+            "      QWEN3_TTS_ATTN_IMPLEMENTATION: ${QWEN3_TTS_ATTN_IMPLEMENTATION:-sdpa}",
+            "      QWEN3_TTS_LANGUAGE: ${QWEN3_TTS_LANGUAGE:-Auto}",
+            "      QWEN3_TTS_VOICES_DIR: /app/qwen3_voices",
+            "      QWEN3_TTS_X_VECTOR_ONLY_MODE: ${QWEN3_TTS_X_VECTOR_ONLY_MODE:-false}",
+            "      HF_ENDPOINT: ${HF_ENDPOINT:-}",
+            "      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-}",
+            "      TRANSFORMERS_OFFLINE: ${TRANSFORMERS_OFFLINE:-}",
+            f"      NVIDIA_VISIBLE_DEVICES: \"{placement.gpu_idx}\"",
+            "      CUDA_VISIBLE_DEVICES: \"0\"",
+        ]
     raise ValueError(f"unknown service: {svc_name}")
 
 
@@ -699,13 +795,15 @@ def _render_subservice_volumes(svc_name: str) -> List[str]:
     ]
     if svc_name == "cosyvoice":
         lines.append("      - ./voices:/app/voices")
+    if svc_name == "qwen3-tts":
+        lines.append("      - ./qwen3_voices:/app/qwen3_voices")
     return lines
 
 
 def _render_healthcheck(svc_name: str) -> List[str]:
     port = SERVICE_TO_BASE_PORT[svc_name]
-    retries = 12 if svc_name in ("qwen3-asr", "cosyvoice") else 8
-    start_period = "300s" if svc_name in ("qwen3-asr", "cosyvoice") else "180s"
+    retries = 12 if svc_name in ("qwen3-asr", "cosyvoice", "qwen3-tts") else 8
+    start_period = "300s" if svc_name in ("qwen3-asr", "cosyvoice", "qwen3-tts") else "180s"
     return [
         "    healthcheck:",
         f"      test: [\"CMD\", \"curl\", \"-fsS\", \"http://localhost:{port}/health\"]",
@@ -865,7 +963,16 @@ def _ask_yn(prompt: str, default: bool = False) -> bool:
             return False
 
 
-def interactive() -> Tuple[List[GPU], List[ServiceRequest]]:
+def _ask_choice(prompt: str, choices: List[str], default: str) -> str:
+    allowed = {choice.lower(): choice for choice in choices}
+    while True:
+        value = _ask(prompt, default).strip().lower()
+        if value in allowed:
+            return allowed[value]
+        print(f"  无效: 请选择 {', '.join(choices)}")
+
+
+def interactive() -> Tuple[List[GPU], List[ServiceRequest], str]:
     print("=" * 70)
     print("FunSpeech 部署规划助手")
     print("=" * 70)
@@ -892,6 +999,8 @@ def interactive() -> Tuple[List[GPU], List[ServiceRequest]]:
     print("  例: 20 个用户同时打开网页等结果 = 并发 20, 跟单条耗时无关")
     print()
     services = []
+    tts_engine = "cosyvoice"
+    tts_enabled = False
 
     if _ask_yn("启用 funasr (中文 ASR, 单条 ~80ms)?", default=True):
         c = _ask_int("  目标并发数", default=20, min_val=0)
@@ -910,7 +1019,26 @@ def interactive() -> Tuple[List[GPU], List[ServiceRequest]]:
         c = _ask_int("  目标并发数", default=10, min_val=0)
         services.append(ServiceRequest("dolphin", c, "default"))
 
-    if _ask_yn("启用 cosyvoice (TTS)?", default=True):
+    if _ask_yn("启用 TTS?", default=True):
+        tts_enabled = True
+        tts_engine = _ask_choice(
+            "  TTS 后端 (cosyvoice/qwen3-tts)",
+            ["cosyvoice", "qwen3-tts"],
+            "cosyvoice",
+        )
+    else:
+        tts_engine = "cosyvoice"
+
+    if tts_enabled and tts_engine == "qwen3-tts":
+        print("  Qwen3-TTS 走开源本地 GPU 子服务, 默认模型为 0.6B Base Clone")
+        c = _ask_int(
+            "  想同时支持多少路实时 TTS (暂按单副本 = 1 路保守估算)",
+            default=1,
+            min_val=0,
+        )
+        services.append(ServiceRequest("qwen3-tts", c, "base"))
+
+    if tts_enabled and tts_engine == "cosyvoice":
         print("  TTS 按 RTF (推理耗时/音频时长) ≤ 1 的实时路数算容量")
         print("  实测: 单副本 (sem=2) 同时跑 2 路时 RTF≈1.05 (刚好实时),")
         print("        跑 4 路时 RTF≈1.75 (开始卡顿)")
@@ -937,7 +1065,7 @@ def interactive() -> Tuple[List[GPU], List[ServiceRequest]]:
         sys.exit(0)
 
     print()
-    return gpus, services
+    return gpus, services, tts_engine
 
 
 # =============================================================================
@@ -945,12 +1073,14 @@ def interactive() -> Tuple[List[GPU], List[ServiceRequest]]:
 # =============================================================================
 
 
-def from_json(path: str) -> Tuple[List[GPU], List[ServiceRequest]]:
+def from_json(path: str) -> Tuple[List[GPU], List[ServiceRequest], str]:
     with open(path, "r", encoding="utf-8") as f:
         data = json.load(f)
     gpus = [GPU(**g) for g in data["gpus"]]
     services = [ServiceRequest(**s) for s in data["services"]]
-    return gpus, services
+    tts_engine = infer_tts_engine(services, data.get("tts_engine"))
+    validate_tts_selection(services, tts_engine)
+    return gpus, services, tts_engine
 
 
 # =============================================================================
@@ -985,13 +1115,17 @@ def main():
         p = PRESETS[args.preset]
         print(f"[预设: {args.preset}] {p['desc']}\n")
         gpus, services = p["gpus"], p["services"]
+        tts_engine = infer_tts_engine(services, p.get("tts_engine"))
     elif args.json:
-        gpus, services = from_json(args.json)
+        gpus, services, tts_engine = from_json(args.json)
     else:
-        gpus, services = interactive()
+        gpus, services, tts_engine = interactive()
 
+    validate_tts_selection(services, tts_engine)
     placements, warnings = plan(gpus, services, max_queue_sec=args.max_queue_sec)
-    compose_text = render_full_compose(gpus, services, placements, warnings)
+    compose_text = render_full_compose(
+        gpus, services, placements, warnings, tts_engine=tts_engine
+    )
     output_path = write_generated_compose(compose_text)
 
     profiles = set()

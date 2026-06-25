@@ -30,11 +30,11 @@ ASR + TTS API 网关,兼容阿里云语音 API 与 OpenAI TTS API,支持 WebSock
                        │  - 采样率/格式转换      │
                        └────────┬────────────────┘
                                 │ HTTP / WS (X-Internal-Token)
-                ┌───────────────┼───────────────┬───────────────┐
-                ▼               ▼               ▼               ▼
-         funasr (GPU)   dolphin (GPU)   qwen3-asr (GPU)   cosyvoice (GPU)
-         Paraformer/    DataoceanAI     Qwen3-ASR-1.7B    CosyVoice2/3
-         SenseVoice     Dolphin Small   (vLLM 加速)        (in-process)
+                ┌───────────────┼───────────────┬───────────────┬───────────────┐
+                ▼               ▼               ▼               ▼               ▼
+         funasr (GPU)   dolphin (GPU)   qwen3-asr (GPU)   cosyvoice (GPU)   qwen3-tts (GPU)
+         Paraformer/    DataoceanAI     Qwen3-ASR-1.7B    CosyVoice2/3     Qwen3-TTS
+         SenseVoice     Dolphin Small   (vLLM 加速)        (in-process)     local
 ```
 
 子服务各自一个 `pyproject.toml` + `uv.lock` + Dockerfile,依赖完全隔离。
@@ -78,6 +78,7 @@ docker compose build                         # 重 build 时 apt/uv 走本机缓
 docker compose up -d                         # 默认: gateway + qwen3-asr + cosyvoice
 docker compose --profile funasr up -d        # 加上 funasr (paraformer/sensevoice)
 docker compose --profile dolphin up -d       # 加上 dolphin
+TTS_ENGINE=qwen3-tts docker compose up -d gateway qwen3-asr-0 qwen3-tts-0  # 改用 Qwen3-TTS Base Clone
 docker compose --profile funasr --profile dolphin up -d   # 全部 ASR 引擎
 ```
 
@@ -116,6 +117,9 @@ WebSocket 测试页:
 | dolphin-0 | 8002 | funspeech/dolphin | ✅ | ❌ | `dolphin` |
 | qwen3-asr-0 | 8003 | funspeech/qwen3-asr | ✅ | ✅ | (默认, 默认 ASR 引擎) |
 | cosyvoice-0 | 8004 | funspeech/cosyvoice | ✅ | ✅ | (默认) |
+| qwen3-tts-0 | 8005 | funspeech/qwen3-tts | ✅ | ❌ | `qwen3-tts` |
+
+网关一次只选择一个 TTS 后端。默认是 `TTS_ENGINE=cosyvoice`;改用本地开源 Qwen3-TTS Base Clone 时显式启动 `gateway qwen3-asr-0 qwen3-tts-0`,避免把默认 CosyVoice 一起拉起。Qwen3-TTS 的 clone 音色持久化在 `./qwen3_voices`。
 
 每个子服务暴露 `GET /health` + 自有业务端点(详见各 `services/*/README.md`)。
 
@@ -155,6 +159,7 @@ WebSocket 测试页:
 | `APPTOKEN` / `APPKEY` | - | 外部鉴权(可选) |
 | `INTERNAL_SERVICE_TOKEN` | `funspeech-internal` | 网关→子服务鉴权头(`X-Internal-Token`) |
 | `ASR_MODEL_MODE` | `all` | `all` / `offline` / `realtime` |
+| `TTS_ENGINE` | `cosyvoice` | `cosyvoice` / `qwen3-tts`;选择 TTS 后端,同一网关只能选一个 |
 | `TTS_MODEL_MODE` | `all` | `all` / `sft` / `clone` |
 | `ASR_ENABLE_REALTIME_PUNC` | `false` | 流式中间结果是否带标点 |
 | `AUTO_LOAD_CUSTOM_ASR_MODELS` | - | 启动时预热的额外 ASR 模型 id |
@@ -162,6 +167,7 @@ WebSocket 测试页:
 | `DOLPHIN_SERVICE_URLS` | `http://dolphin-0:8002` | |
 | `QWEN3_ASR_SERVICE_URLS` | `http://qwen3-asr-0:8003` | |
 | `COSYVOICE_SERVICE_URLS` | `http://cosyvoice-0:8004` | |
+| `QWEN3_TTS_SERVICE_URLS` | `http://qwen3-tts-0:8005` | `TTS_ENGINE=qwen3-tts` 时的本地开源 Qwen3-TTS Base Clone 子服务 |
 | `SERVICE_REQUEST_TIMEOUT` | `60` | 子服务调用超时(秒) |
 | `INFERENCE_THREAD_POOL_SIZE` | `max(4, CPU 核数)` | 网关同步调用线程池大小;高 QPS 调大 |
 | `HTTPX_MAX_CONNECTIONS` | `200` | 网关→子服务 HTTP 连接池上限;>100 req/s 时调到 500+ |

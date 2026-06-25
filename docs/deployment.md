@@ -81,6 +81,7 @@ docker compose build --parallel
 | `dolphin-0` | 8002 | ✅ | ❌ | `dolphin` |
 | `qwen3-asr-0` | 8003 | ✅ | ✅ | (默认, 默认 ASR 引擎) |
 | `cosyvoice-0` | 8004 | ✅ | ✅ | (默认) |
+| `qwen3-tts-0` | 8005 | ✅ | ❌ | `qwen3-tts` |
 
 每个 GPU 子服务通过 `deploy.resources.reservations.devices[].device_ids` 选择宿主机 GPU。Docker/NVIDIA runtime 只把对应卡透传进容器后,容器内 GPU 会从 `0` 重新编号,所以单卡容器里的 `CUDA_VISIBLE_DEVICES` 应保持 `"0"` 或不设置。
 
@@ -329,6 +330,24 @@ cosyvoice 子服务暴露 `POST /voices/reload`, 用磁盘上的 `spk2info.pt` +
 CosyVoice 是 autoregressive 解码器, 单条音频本身就要 GPU 跑几秒, 这是硬性的物理限制。
 **想要 N 路实时 TTS → ceil(N/2) 副本 → ceil(N/2) 张 GPU**。10 路实时要 5 张卡, 20 路要 10 张卡。
 
+### 6.5 qwen3-tts-0 (端口 8005)
+
+Qwen3-TTS 走开源本地 `qwen-tts` 包,网关侧通过 `TTS_ENGINE=qwen3-tts` 单选切换。当前集成默认只支持 `Qwen/Qwen3-TTS-12Hz-0.6B-Base` 的 Base Clone: 添加音色时上传参考音频和参考文本,合成时使用已注册的 clone voice。
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `QWEN3_TTS_MODEL_ID` | `Qwen/Qwen3-TTS-12Hz-0.6B-Base` | 当前网关按 Base Clone 语义集成 |
+| `QWEN3_TTS_DEVICE` | `cuda:0` | 容器内 GPU 编号 |
+| `QWEN3_TTS_DTYPE` | `bfloat16` | `bfloat16` / `float16` / `float32` |
+| `QWEN3_TTS_ATTN_IMPLEMENTATION` | `sdpa` | 可按环境改成 `flash_attention_2` |
+| `QWEN3_TTS_LANGUAGE` | `Auto` | `Auto` 会传 `None`,由模型处理 |
+| `QWEN3_TTS_VOICES_DIR` | `/app/qwen3_voices` | Qwen3 clone 音色目录; compose 默认挂载 `./qwen3_voices` |
+| `QWEN3_TTS_X_VECTOR_ONLY_MODE` | `false` | `false` 使用 ICL clone,添加音色必须提供准确参考文本;`true` 仅使用 speaker embedding |
+| `HF_ENDPOINT` | 空 | Hugging Face 镜像端点,国内可设 `https://hf-mirror.com` |
+| `HF_HUB_OFFLINE` / `TRANSFORMERS_OFFLINE` | 空 | 离线部署时设为 `1` |
+
+Qwen3-TTS 使用独立的 `./qwen3_voices` 目录,不复用 CosyVoice 的 `./voices`。和 CosyVoice 一样,只有 clone 模型加载成功时才会接受 `/voices` 写入;非 Base 模型会拒绝音色 CRUD。
+
 请用 `python3 scripts/plan_deployment.py` 实算 (脚本会问你"想同时支持多少路实时 TTS")。
 
 ## 七、网关环境变量参考
@@ -348,6 +367,8 @@ CosyVoice 是 autoregressive 解码器, 单条音频本身就要 GPU 跑几秒, 
 | `DOLPHIN_SERVICE_URLS` | `http://dolphin-0:8002` | |
 | `QWEN3_ASR_SERVICE_URLS` | `http://qwen3-asr-0:8003` | |
 | `COSYVOICE_SERVICE_URLS` | `http://cosyvoice-0:8004` | |
+| `QWEN3_TTS_SERVICE_URLS` | `http://qwen3-tts-0:8005` | |
+| `TTS_ENGINE` | `cosyvoice` | `cosyvoice` / `qwen3-tts`;选择 TTS 后端,同一网关只能选一个 |
 | `ASR_MODEL_MODE` | `all` | 仅影响 `models.json` 兼容性校验,真正模式由 funasr 子服务决定 |
 | `TTS_MODEL_MODE` | `all` | 影响 `get_voices()` 返回过滤 |
 | `ASR_ENABLE_REALTIME_PUNC` | `false` | 流式中间结果是否带标点(转发给 funasr 子服务) |
