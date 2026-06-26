@@ -8,6 +8,7 @@ FunSpeech 微服务子服务集合。每个子目录是一个**独立 Python 项
 | `dolphin` | 8002 | DataoceanAI Dolphin | 是 | 仅离线 |
 | `qwen3_asr_vllm` | 8003 | Qwen3-ASR-1.7B | 是 (vLLM) | 离线 + 实时 WS |
 | `cosyvoice` | 8004 | CosyVoice2 / CosyVoice3 | 是 (vLLM 加速 LLM) | TTS 离线 + 流式 + 音色管理 |
+| `qwen3_tts` | 8005 | Qwen3-TTS Base | 是 | 开源本地 TTS 离线 + WS + 音色管理 |
 
 依赖隔离的原因:Qwen3-ASR 要求 vLLM 0.11+ / transformers 4.57,与 funasr 1.2.6 + transformers 4.51.3 不兼容;CosyVoice 与 FunASR 的 PyTorch / CUDA 版本演进路线也独立。
 

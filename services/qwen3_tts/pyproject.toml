@@ -1,0 +1,26 @@
+[project]
+name = "funspeech-qwen3-tts-service"
+version = "0.1.0"
+description = "Qwen3-TTS open-source local inference service"
+requires-python = ">=3.10,<3.13"
+
+dependencies = [
+    "fastapi==0.115.6",
+    "uvicorn[standard]==0.30.0",
+    "websockets>=11.0",
+    "python-multipart==0.0.6",
+    "qwen-tts==0.1.1",
+    "soundfile>=0.12.1",
+    "numpy>=1.26",
+    "torch==2.7.1",
+    "torchaudio==2.7.1",
+]
+
+[tool.uv]
+package = false
+
+[dependency-groups]
+dev = [
+    "httpx>=0.28.1",
+    "pytest>=9.0.3",
+]

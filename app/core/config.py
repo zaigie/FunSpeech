@@ -49,7 +49,8 @@ class Settings:
     ASR_NEARFIELD_RMS_THRESHOLD: float = 0.01
     ASR_NEARFIELD_FILTER_LOG_ENABLED: bool = True
 
-    # TTS — 网关需要知道的: 模式开关
+    # TTS — 网关需要知道的: 引擎选择 + 模式开关
+    TTS_ENGINE: str = "cosyvoice"  # cosyvoice / qwen3-tts
     TTS_MODEL_MODE: str = "all"  # all / sft / clone, 影响 get_voices 等返回
 
     # 微服务 — 子服务 URL / 鉴权 / 超时
@@ -60,6 +61,7 @@ class Settings:
     DOLPHIN_SERVICE_URLS: str = ""
     QWEN3_ASR_SERVICE_URLS: str = ""
     COSYVOICE_SERVICE_URLS: str = ""
+    QWEN3_TTS_SERVICE_URLS: str = ""
 
     # 音频处理
     MAX_AUDIO_SIZE: int = 100 * 1024 * 1024
@@ -120,6 +122,7 @@ class Settings:
         )
 
         # TTS
+        self.TTS_ENGINE = os.getenv("TTS_ENGINE", self.TTS_ENGINE)
         self.TTS_MODEL_MODE = os.getenv("TTS_MODEL_MODE", self.TTS_MODEL_MODE)
 
         # 微服务
@@ -145,6 +148,9 @@ class Settings:
         )
         self.COSYVOICE_SERVICE_URLS = os.getenv(
             "COSYVOICE_SERVICE_URLS", self.COSYVOICE_SERVICE_URLS
+        )
+        self.QWEN3_TTS_SERVICE_URLS = os.getenv(
+            "QWEN3_TTS_SERVICE_URLS", self.QWEN3_TTS_SERVICE_URLS
         )
 
         # 远场过滤

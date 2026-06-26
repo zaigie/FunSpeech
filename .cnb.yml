@@ -2,7 +2,7 @@
 #
 # 历史: 旧版是 tag_push 自动 build 单容器 (Dockerfile + Dockerfile.gpu)。
 # 现在改为 web_trigger 手动触发, 用户在网页上选择要构建哪些子服务
-# (gateway / funasr / dolphin / qwen3-asr / cosyvoice), 各自独立打 tag 推送。
+# (gateway / funasr / dolphin / qwen3-asr / cosyvoice / qwen3-tts), 各自独立打 tag 推送。
 #
 # 触发入口: 仓库 → 点页面"手动触发"按钮 → 选要构建的子服务 → 提交
 # 按钮 / 输入控件定义见 .cnb/web_trigger.yml
@@ -133,6 +133,23 @@
               --build-arg NO_PROXY="${BUILD_NO_PROXY:-localhost,127.0.0.1,*.local}" \
               -t ${IMG} \
               -f services/cosyvoice/Dockerfile services/cosyvoice
+            if [ "${PUSH_TO_REGISTRY:-true}" = "true" ]; then
+              docker push ${IMG}
+            fi
+
+        - name: build qwen3-tts
+          if: |
+            echo "${SERVICES}" | tr ',' '\n' | grep -qx qwen3-tts
+          timeout: 90m  # qwen-tts / torch 依赖较大, 首次构建较慢
+          script: |
+            IMG=${IMAGE_NS}/qwen3-tts:${TAG:-latest}
+            echo ">>> Building ${IMG}"
+            docker build \
+              --build-arg HTTP_PROXY="${BUILD_HTTP_PROXY:-}" \
+              --build-arg HTTPS_PROXY="${BUILD_HTTPS_PROXY:-}" \
+              --build-arg NO_PROXY="${BUILD_NO_PROXY:-localhost,127.0.0.1,*.local}" \
+              -t ${IMG} \
+              -f services/qwen3_tts/Dockerfile services/qwen3_tts
             if [ "${PUSH_TO_REGISTRY:-true}" = "true" ]; then
               docker push ${IMG}
             fi

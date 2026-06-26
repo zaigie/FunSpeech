@@ -6,6 +6,7 @@
 #   dolphin-0     (GPU)  -> 8002 -> Dolphin 离线
 #   qwen3-asr-0   (GPU)  -> 8003 -> Qwen3-ASR (vLLM 内嵌加速)
 #   cosyvoice-0   (GPU)  -> 8004 -> CosyVoice2/3 + 音色管理
+#   qwen3-tts-0   (GPU)  -> 8005 -> Qwen3-TTS 开源本地推理
 #
 # 启动 (本地有 http://127.0.0.1:7890 代理时):
 #   HTTP_PROXY=http://host.docker.internal:7890 \
@@ -18,6 +19,10 @@
 #   docker compose --profile dolphin up -d                       # +dolphin
 #   docker compose --profile funasr --profile dolphin up -d      # 全部 ASR 引擎
 #
+# 切换 TTS 后端:
+#   docker compose up -d                                         # 默认 cosyvoice
+#   TTS_ENGINE=qwen3-tts docker compose up -d gateway qwen3-asr-0 qwen3-tts-0
+#
 # 多副本 / 多卡:
 #   用 scripts/plan_deployment.py 算出配置, 生成完整 docker-compose.generated.yml
 #   见 docs/deployment.md §4.3 / §5
@@ -28,6 +33,8 @@ x-gateway-env: &gateway-env
   DOLPHIN_SERVICE_URLS: http://dolphin-0:8002
   QWEN3_ASR_SERVICE_URLS: http://qwen3-asr-0:8003
   COSYVOICE_SERVICE_URLS: http://cosyvoice-0:8004
+  QWEN3_TTS_SERVICE_URLS: http://qwen3-tts-0:8005
+  TTS_ENGINE: ${TTS_ENGINE:-cosyvoice}
   INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-funspeech-internal}
   SERVICE_REQUEST_TIMEOUT: "120"
 
@@ -48,6 +55,12 @@ x-modelscope-cache: &modelscope-cache
   type: bind
   source: ${MODELSCOPE_CACHE:-~/.cache/modelscope/hub/models}
   target: /root/.cache/modelscope/hub
+
+x-huggingface-cache: &huggingface-cache
+  # Qwen3-TTS 通过 Hugging Face hub / hf-mirror 下载权重。
+  type: bind
+  source: ${HF_CACHE:-~/.cache/huggingface}
+  target: /root/.cache/huggingface
 
 x-nltk-data: &nltk-data
   type: bind
@@ -215,6 +228,43 @@ services:
       start_period: 300s
     <<: *gpu-deploy
     restart: unless-stopped
+
+  qwen3-tts-0:
+    build:
+      context: ./services/qwen3_tts
+      dockerfile: Dockerfile
+      args: *build-args
+    image: docker.cnb.cool/nexa/funspeech/qwen3-tts:latest
+    container_name: funspeech-qwen3-tts-0
+    environment:
+      <<: *subservice-env
+      PORT: "8005"
+      QWEN3_TTS_MODEL_ID: ${QWEN3_TTS_MODEL_ID:-Qwen/Qwen3-TTS-12Hz-0.6B-Base}
+      QWEN3_TTS_DEVICE: cuda:0
+      QWEN3_TTS_DTYPE: ${QWEN3_TTS_DTYPE:-bfloat16}
+      QWEN3_TTS_ATTN_IMPLEMENTATION: ${QWEN3_TTS_ATTN_IMPLEMENTATION:-sdpa}
+      QWEN3_TTS_LANGUAGE: ${QWEN3_TTS_LANGUAGE:-Auto}
+      QWEN3_TTS_GPU_CONCURRENCY: ${QWEN3_TTS_GPU_CONCURRENCY:-1}
+      QWEN3_TTS_VOICES_DIR: /app/qwen3_voices
+      QWEN3_TTS_X_VECTOR_ONLY_MODE: ${QWEN3_TTS_X_VECTOR_ONLY_MODE:-false}
+      HF_ENDPOINT: ${HF_ENDPOINT:-}
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-}
+      TRANSFORMERS_OFFLINE: ${TRANSFORMERS_OFFLINE:-}
+      NVIDIA_VISIBLE_DEVICES: "0"
+      CUDA_VISIBLE_DEVICES: "0"
+    volumes:
+      - *modelscope-cache
+      - *huggingface-cache
+      - ./qwen3_voices:/app/qwen3_voices
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8005/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 300s
+    <<: *gpu-deploy
+    restart: unless-stopped
+    profiles: ["qwen3-tts"]
 
 
 networks:
