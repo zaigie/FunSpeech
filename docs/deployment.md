@@ -193,41 +193,47 @@ docker compose -f docker-compose.generated.yml --profile funasr up -d
 
 > ⚠️ **同一服务的多个副本不要绑同一张宿主机卡**: 例如不要 `funasr-0` 和 `funasr-1` 的 `device_ids` 都写同一个宿主卡号。两个副本会抢同一份 GPU SM, 总吞吐反而下降 (实测见 `benchmarks/results/`)。 横向扩展 = 多卡多副本。
 
-### 5.2 cosyvoice 多副本的写副本与同步
+### 5.2 TTS 多副本的写副本与同步
 
-`spk2info.pt` 是被各副本加载到内存里的 Python dict, **磁盘共享 ≠ 内存一致**:
+CosyVoice 的 `spk2info.pt` 和 Qwen3-TTS 的 `prompts/*.pt` / registry 都会被副本加载到内存或缓存里, **磁盘共享 ≠ 运行期内存一致**:
 
 - 副本 A 加音色 Alice → `torch.save()` 整个内存 dict 到磁盘
 - 同时副本 B 加 Bob → 它的内存里没 Alice → save 时把 Alice **覆盖掉**
 - 即使串行写, 副本 B 内存里仍然没有 Alice, 收到合成请求会失败
 
-**网关已实现的同步机制(自 commit `<本次提交>` 起):**
+**网关 HTTP engine 已实现的同步机制:**
 
-1. URL 列表第一个 = 主写副本 (primary)。所有 `POST /voices`、`DELETE /voices/{name}`、`POST /voices/refresh` 自动路由到 primary, 不再走副本池随机调度。
-2. 写完成后, 网关向其它副本广播 `POST /voices/reload`, 它们从磁盘热重载 `spk2info.pt` + `voice_registry.json`, 不重启进程。
+1. URL 列表第一个 = 主写副本 (primary)。通过网关 `tts_engine.voice_manager` 写入时,`add_voice`、`remove_voice`、`refresh_voices` 会自动路由到 primary, 不再走副本池随机调度。
+2. 写完成后, 网关向其它副本广播 `POST /voices/reload`, 它们从磁盘热重载音色状态(CosyVoice: `spk2info.pt` + registry; Qwen3-TTS: prompt tensors + registry), 不重启进程。
 3. 广播失败仅打 warning, 不抛异常 — 保证写本身始终成功; 失败副本最坏到下次广播或重启才同步。
 4. 合成请求 (`POST /tts/file`、`WS /tts/stream`) 仍走副本池, 任意副本都行。
 
-部署时 **`COSYVOICE_SERVICE_URLS` 第一个 URL 就是 primary**:
+部署时第一个 URL 就是 primary。直接调用子服务的 `/voices` 接口时也应打到 primary。
 
 ```bash
 # cosyvoice-0 写, cosyvoice-1 / cosyvoice-2 只读但能合成
 COSYVOICE_SERVICE_URLS=http://cosyvoice-0:8004,http://cosyvoice-1:8004,http://cosyvoice-2:8004
+
+# qwen3-tts-0 写, qwen3-tts-1 / qwen3-tts-2 只读但能合成
+QWEN3_TTS_SERVICE_URLS=http://qwen3-tts-0:8005,http://qwen3-tts-1:8005,http://qwen3-tts-2:8005
 ```
 
 主副本宕了怎么办: 当前不会自动 failover, 需手动调换 URL 列表顺序并重启网关。
 
 ### 5.3 `/voices/reload` 端点
 
-cosyvoice 子服务暴露 `POST /voices/reload`, 用磁盘上的 `spk2info.pt` + `voice_registry.json` **覆盖**内存状态(磁盘没有的 zero-shot 音色会从内存里删掉, 但预设音色不动)。
+CosyVoice 和 Qwen3-TTS 子服务都暴露 `POST /voices/reload`。
+
+- CosyVoice:用磁盘上的 `spk2info.pt` + `voice_registry.json` **覆盖**内存状态(磁盘没有的 zero-shot 音色会从内存里删掉, 但预设音色不动)。
+- Qwen3-TTS:重读 `voice_registry.json`,清空 prompt cache;只有 registry 中且 `prompts/{name}.pt` 存在的 clone voice 会对外可见。
 
 | 场景 | 用法 |
 |---|---|
 | 网关写后自动广播 | 见 §5.2, 无需手动调用 |
-| 直接更新文件后手动同步 | `curl -X POST -H "X-Internal-Token: $INTERNAL_SERVICE_TOKEN" http://cosyvoice-0:8004/voices/reload` |
+| 直接更新文件后手动同步 | `curl -X POST -H "X-Internal-Token: $INTERNAL_SERVICE_TOKEN" http://cosyvoice-0:8004/voices/reload` 或 `http://qwen3-tts-0:8005/voices/reload` |
 | 排查不一致 | 任意副本调一次, 返回 `{clone_voices, registry_voices, clone_loaded}` |
 
-仅 `clone_loaded=true` 的副本(即 `TTS_MODEL_MODE` 包含 `clone`)才会真正重载 `spk2info`; `sft` only 副本只重载 registry。
+CosyVoice 仅 `clone_loaded=true` 的副本(即 `TTS_MODEL_MODE` 包含 `clone`)才会真正重载 `spk2info`; `sft` only 副本只重载 registry。Qwen3-TTS 当前只支持 Base Clone,因此 `clone_loaded=true` 才接受音色 CRUD。
 
 ## 六、子服务环境变量参考
 
@@ -348,6 +354,45 @@ Qwen3-TTS 走开源本地 `qwen-tts` 包,网关侧通过 `TTS_ENGINE=qwen3-tts` 
 
 Qwen3-TTS 使用独立的 `./qwen3_voices` 目录,不复用 CosyVoice 的 `./voices`。和 CosyVoice 一样,只有 clone 模型加载成功时才会接受 `/voices` 写入;非 Base 模型会拒绝音色 CRUD。
 
+基础 compose 手动切换到 Qwen3-TTS 时,不要只加 `--profile qwen3-tts`,否则默认的 `cosyvoice-0` 仍会随默认服务启动。显式指定服务名:
+
+```bash
+TTS_ENGINE=qwen3-tts docker compose up -d gateway qwen3-asr-0 qwen3-tts-0
+```
+
+添加 clone voice:
+
+```bash
+curl -F name=zhangsan \
+  -F prompt_text='参考音频对应的准确文本' \
+  -F audio=@./ref.wav \
+  -H "X-Internal-Token: ${INTERNAL_SERVICE_TOKEN:-funspeech-internal}" \
+  http://localhost:8005/voices
+```
+
+查看 / 删除 / 扫描目录:
+
+```bash
+curl -H "X-Internal-Token: ${INTERNAL_SERVICE_TOKEN:-funspeech-internal}" \
+  http://localhost:8005/voices
+
+curl -X DELETE -H "X-Internal-Token: ${INTERNAL_SERVICE_TOKEN:-funspeech-internal}" \
+  http://localhost:8005/voices/zhangsan
+
+# 把 zhangsan.wav + zhangsan.txt 放进 ./qwen3_voices 后,让 qwen3-tts 子服务扫描
+curl -X POST -H "X-Internal-Token: ${INTERNAL_SERVICE_TOKEN:-funspeech-internal}" \
+  http://localhost:8005/voices/refresh
+```
+
+通过网关合成时,`voice` 必须是已注册的 clone voice 名称。Qwen3 Base 没有 CosyVoice SFT 那种 `中文女` / `中文男` 预设音色。
+
+```bash
+curl -X POST "http://localhost:8000/stream/v1/tts" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"你好","voice":"zhangsan"}' \
+  --output speech.wav
+```
+
 请用 `python3 scripts/plan_deployment.py` 实算 (脚本会问你"想同时支持多少路实时 TTS")。
 
 ## 七、网关环境变量参考
@@ -389,7 +434,9 @@ Qwen3-TTS 使用独立的 `./qwen3_voices` 目录,不复用 CosyVoice 的 `./voi
 | 主机路径 | 容器路径 | 用途 | 注意 |
 |---|---|---|---|
 | `${MODELSCOPE_CACHE}` (默认 `~/.cache/modelscope/hub/models`) | `/root/.cache/modelscope/hub` | 模型权重缓存,所有 GPU 子服务共享 | 见下方说明 |
+| `${HF_CACHE}` (默认 `~/.cache/huggingface`) | `/root/.cache/huggingface`(只在 qwen3-tts) | Hugging Face / hf-mirror 权重缓存 | Qwen3-TTS Base 权重主要在这里 |
 | `./voices` | `/app/voices`(只在 cosyvoice) | 零样本克隆音色 + spk2info.pt | 持久化用户数据 |
+| `./qwen3_voices` | `/app/qwen3_voices`(只在 qwen3-tts) | Qwen3-TTS Base Clone 参考音频 + prompt tensors + registry | 持久化用户数据 |
 | `./temp` | `/app/temp`(只在 gateway) | 网关临时音频文件 | gateway 返回 FileResponse 后会 BackgroundTask 自动删除 |
 | `./data` | `/app/data`(只在 gateway) | 异步 TTS 任务库 | |
 | `./logs` | `/app/logs`(只在 gateway) | 日志 | |
@@ -403,9 +450,15 @@ Qwen3-TTS 使用独立的 `./qwen3_voices` 目录,不复用 CosyVoice 的 `./voi
 
 把宿主机的 `models/` mount 成容器的 `hub/`, 两边路径就都对上了。
 
-**首次启动**: 子服务会从 modelscope 自动下载所需权重 (具体见各服务 `*_MODEL_ID` env)。提前手动下到 `~/.cache/modelscope/hub/models/<org>/<model>` 可以避开首次启动数分钟的等待。
+**首次启动**: 子服务会自动下载所需权重 (具体见各服务 `*_MODEL_ID` env)。FunASR / CosyVoice / Qwen3-ASR 主要用 ModelScope cache;Qwen3-TTS 通过 Hugging Face hub / `HF_ENDPOINT` 下载,默认缓存到 `${HF_CACHE:-~/.cache/huggingface}`。
 
-**离线部署 (无外网)**: 把 `~/.cache/modelscope/hub/models/` 整个 rsync 到目标机, mount 进去即可。**注意 qwen3-asr** 离线时还要把 `QWEN3_ASR_MODEL_ID` 改成容器内本地路径,例如 `/root/.cache/modelscope/hub/Qwen/Qwen3-ASR-1.7B`,并设置 `HF_HUB_OFFLINE=1` + `TRANSFORMERS_OFFLINE=1`;否则 vLLM 会按 Hugging Face repo id 查缓存快照并报 `LocalEntryNotFoundError`。
+**Qwen3-TTS 预下载**:
+
+```bash
+HF_ENDPOINT=https://hf-mirror.com huggingface-cli download Qwen/Qwen3-TTS-12Hz-0.6B-Base
+```
+
+**离线部署 (无外网)**: 把 `~/.cache/modelscope/hub/models/` 和 `~/.cache/huggingface/` 按需 rsync 到目标机并 mount 进去。**注意 qwen3-asr** 离线时还要把 `QWEN3_ASR_MODEL_ID` 改成容器内本地路径,例如 `/root/.cache/modelscope/hub/Qwen/Qwen3-ASR-1.7B`,并设置 `HF_HUB_OFFLINE=1` + `TRANSFORMERS_OFFLINE=1`;否则 vLLM 会按 Hugging Face repo id 查缓存快照并报 `LocalEntryNotFoundError`。Qwen3-TTS 离线时保留默认 repo id 也可以命中 Hugging Face cache;若有自定义本地目录,也可把 `QWEN3_TTS_MODEL_ID` 改成本地路径。
 
 ## 十、健康检查与启动顺序
 

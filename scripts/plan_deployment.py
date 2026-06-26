@@ -615,6 +615,11 @@ def render_full_compose(gpus: List[GPU], services: List[ServiceRequest],
         "  source: ${MODELSCOPE_CACHE:-~/.cache/modelscope/hub/models}",
         "  target: /root/.cache/modelscope/hub",
         "",
+        "x-huggingface-cache: &huggingface-cache",
+        "  type: bind",
+        "  source: ${HF_CACHE:-~/.cache/huggingface}",
+        "  target: /root/.cache/huggingface",
+        "",
         "services:",
     ])
     lines.extend(_render_gateway_service(gateway_env))
@@ -796,6 +801,7 @@ def _render_subservice_volumes(svc_name: str) -> List[str]:
     if svc_name == "cosyvoice":
         lines.append("      - ./voices:/app/voices")
     if svc_name == "qwen3-tts":
+        lines.append("      - *huggingface-cache")
         lines.append("      - ./qwen3_voices:/app/qwen3_voices")
     return lines
 

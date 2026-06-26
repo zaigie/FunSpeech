@@ -56,6 +56,12 @@ x-modelscope-cache: &modelscope-cache
   source: ${MODELSCOPE_CACHE:-~/.cache/modelscope/hub/models}
   target: /root/.cache/modelscope/hub
 
+x-huggingface-cache: &huggingface-cache
+  # Qwen3-TTS 通过 Hugging Face hub / hf-mirror 下载权重。
+  type: bind
+  source: ${HF_CACHE:-~/.cache/huggingface}
+  target: /root/.cache/huggingface
+
 x-nltk-data: &nltk-data
   type: bind
   source: ${NLTK_DATA:-~/.cache/nltk_data}
@@ -247,6 +253,7 @@ services:
       CUDA_VISIBLE_DEVICES: "0"
     volumes:
       - *modelscope-cache
+      - *huggingface-cache
       - ./qwen3_voices:/app/qwen3_voices
     healthcheck:
       test: ["CMD", "curl", "-fsS", "http://localhost:8005/health"]

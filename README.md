@@ -96,7 +96,7 @@ curl -X POST "http://localhost:8000/stream/v1/asr?format=wav&sample_rate=16000" 
      -H "Content-Type: application/octet-stream" \
      --data-binary @audio.wav
 
-# TTS
+# TTS (默认 CosyVoice 可直接用预设音色; Qwen3-TTS 需要先注册 clone voice)
 curl -X POST "http://localhost:8000/stream/v1/tts" \
      -H "Content-Type: application/json" \
      -d '{"text":"你好","voice":"中文女"}' \
@@ -145,7 +145,7 @@ WebSocket 测试页:
 | `/rest/v1/tts/async` | POST/GET | 异步长文本合成 |
 | `/stream/v1/tts/voices` | GET | 音色列表 |
 | `/stream/v1/tts/voices/info` | GET | 音色详细信息 |
-| `/stream/v1/tts/voices/refresh` | POST | 刷新音色 |
+| `/stream/v1/tts/voices/refresh` | POST | 刷新网关音色列表缓存; 扫描目录请调对应子服务 `/voices/refresh` |
 | `/stream/v1/tts/health` | GET | 健康检查 |
 | `/ws/v1/tts` | WS | 双向流式合成(Aliyun 协议) |
 
@@ -224,9 +224,14 @@ python3 scripts/plan_deployment.py --list-presets
 
 ## 模型权重缓存
 
-所有 GPU 子服务通过 bind mount 共享 `MODELSCOPE_CACHE`(默认 `~/.cache/modelscope/hub/models`,
-mount 到容器 `/root/.cache/modelscope/hub`),
-因此即便 funasr / cosyvoice 各自的 transformers 版本不同,权重文件可以复用。
+GPU 子服务使用两类权重缓存:
+
+| 缓存 | 默认宿主机路径 | 容器路径 | 主要使用者 |
+|---|---|---|---|
+| `MODELSCOPE_CACHE` | `~/.cache/modelscope/hub/models` | `/root/.cache/modelscope/hub` | FunASR / CosyVoice / Qwen3-ASR |
+| `HF_CACHE` | `~/.cache/huggingface` | `/root/.cache/huggingface` | Qwen3-TTS |
+
+因此即便各子服务 transformers / qwen 包版本不同,权重文件也可以跨容器重用。
 
 提前下载:
 
@@ -243,16 +248,49 @@ modelscope download --model DataoceanAI/dolphin-small
 modelscope download --model Qwen/Qwen3-ASR-1.7B
 ```
 
-## 音色管理(克隆)
-
-零样本克隆音色由 cosyvoice 子服务托管。把 `张三.wav` + `张三.txt` 放到 `./voices/` 卷,然后:
+Qwen3-TTS Base 预下载:
 
 ```bash
-curl -X POST http://localhost:8000/stream/v1/tts/voices/refresh
+HF_ENDPOINT=https://hf-mirror.com huggingface-cli download Qwen/Qwen3-TTS-12Hz-0.6B-Base
 ```
 
-或通过 API 上传(需要外部 multipart 接入,见 docs/)。所有音色状态(`spk2info.pt` + `voice_registry.json`)
-持久化到 `./voices/` 卷。
+## 音色管理(克隆)
+
+CosyVoice 和 Qwen3-TTS 使用不同的音色目录,不要混用:
+
+| TTS 后端 | 目录 | 模型语义 | 说明 |
+|---|---|---|---|
+| `cosyvoice` | `./voices` | 预设音色 + clone | `TTS_MODEL_MODE=all/clone` 时支持 clone |
+| `qwen3-tts` | `./qwen3_voices` | Base Clone only | 没有 `中文女` 这类预设音色,合成前必须先注册 clone voice |
+
+CosyVoice:把 `张三.wav` + `张三.txt` 放到 `./voices/` 卷,然后直接调用 cosyvoice 子服务扫描:
+
+```bash
+curl -X POST \
+  -H "X-Internal-Token: ${INTERNAL_SERVICE_TOKEN:-funspeech-internal}" \
+  http://localhost:8004/voices/refresh
+```
+
+Qwen3-TTS Base Clone:直接上传参考音频和准确参考文本到 qwen3-tts 子服务:
+
+```bash
+curl -F name=zhangsan \
+  -F prompt_text='参考音频对应的准确文本' \
+  -F audio=@./ref.wav \
+  -H "X-Internal-Token: ${INTERNAL_SERVICE_TOKEN:-funspeech-internal}" \
+  http://localhost:8005/voices
+```
+
+之后合成时使用注册名:
+
+```bash
+curl -X POST "http://localhost:8000/stream/v1/tts" \
+  -H "Content-Type: application/json" \
+  -d '{"text":"你好","voice":"zhangsan"}' \
+  --output speech.wav
+```
+
+所有音色状态会持久化到各自目录:CosyVoice 是 `spk2info.pt` + `voice_registry.json`,Qwen3-TTS 是参考音频、`prompts/*.pt` 和 `voice_registry.json`。
 
 ## 已知设计取舍
 
@@ -266,9 +304,9 @@ curl -X POST http://localhost:8000/stream/v1/tts/voices/refresh
 - **Qwen3-ASR 子服务进程内 GPU 串行**: vLLM 的 Python `LLM(...)` 入口
   非线程安全, 子服务用 `asyncio.Lock` 保证只有一个调用进 vLLM。这**不影响** vLLM
   自身的 continuous batching (batching 在 engine 内部), 但要靠多副本扩吞吐。
-- **音色 CRUD 多副本同步** (commit `299075b`): URL 列表第一个 = 写副本 (primary)。
-  所有 `POST/DELETE /voices` 自动路由到 primary, 写后网关广播 `POST /voices/reload`
-  让其它副本从磁盘热重载 `spk2info.pt`。详见 [`docs/deployment.md §5.2`](./docs/deployment.md)。
+- **音色 CRUD 多副本同步**: URL 列表第一个 = 写副本 (primary)。通过网关 TTS engine 的
+  `voice_manager` 写入时会自动路由到 primary,写后广播 `POST /voices/reload`。
+  直接调用子服务接口时请打到 primary。详见 [`docs/deployment.md §5.2`](./docs/deployment.md)。
 
 ## 目录结构
 
