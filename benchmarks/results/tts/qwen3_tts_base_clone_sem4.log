@@ -1,0 +1,9 @@
+--- 测试 concurrency=1 ---
+  wall=9.71s  ok=1/1  req/s=0.10  rtf=0.57  p50=9.71s  p95=9.71s  max=9.71s
+--- 测试 concurrency=2 ---
+  wall=16.54s  ok=2/2  req/s=0.12  rtf=0.64  p50=14.49s  p95=16.54s  max=16.54s
+--- 测试 concurrency=4 ---
+  wall=46.74s  ok=4/4  req/s=0.09  rtf=0.49  p50=46.59s  p95=46.74s  max=46.74s
+--- 测试 concurrency=8 ---
+  wall=94.72s  ok=8/8  req/s=0.08  rtf=0.49  p50=91.76s  p95=94.71s  max=94.71s
+-> /tmp/qwen3_tts_bench_sem4_c1_2_4_8.json

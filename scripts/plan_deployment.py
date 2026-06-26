@@ -50,7 +50,7 @@ THROUGHPUT_PER_REPLICA = {
     "dolphin":   12.0,   # 没单独测, 取与 funasr 同量级
     "qwen3-asr":  5.0,   # 实测 qwen3_patched_high N=64: 5.26 req/s
     "cosyvoice":  0.34,  # 实测 tts_patched_sem2 N=8: 0.34 req/s
-    "qwen3-tts":  0.50,  # 先按 0.6B Base Clone 粗估, 等实测后校准
+    "qwen3-tts":  0.11,  # 实测 qwen3_tts_base_clone_sem1 N=4/8: ~0.106 req/s
 }
 
 # 单条请求平均延迟 (秒) — 实测值, 用来从"并发数"反推副本数
@@ -59,7 +59,7 @@ LATENCY_SEC_PER_REPLICA = {
     "dolphin":    0.08,  # 同量级
     "qwen3-asr":  0.20,  # 实测 ~190 ms (含 vLLM continuous batching)
     "cosyvoice":  3.50,  # 实测 ~3.5 s (autoregressive TTS, 慢)
-    "qwen3-tts":  2.50,  # 粗估, 等 benchmarks 校准
+    "qwen3-tts": 10.30,  # 实测 Base Clone 单请求 ~10.2-10.4 s
 }
 
 # 单副本能"同时"处理的活跃请求数 (= GPU_INFERENCE_CONCURRENCY 或 vLLM batch)
@@ -69,7 +69,7 @@ PARALLEL_PER_REPLICA = {
     "dolphin":    1,      # sem=1
     "qwen3-asr": 64,      # vLLM continuous batching, 实测 N=64 仍稳
     "cosyvoice":  2,      # sem=2, 实测最佳点 (sem=8 反而慢)
-    "qwen3-tts":  1,      # 子服务默认 GPU 串行
+    "qwen3-tts":  1,      # 默认 sem=1; sem=2 仅小幅提吞吐且会拉高单请求延迟
 }
 
 # cosyvoice (TTS) 的"实时容量" — 单副本能同时支持多少路 RTF ≤ 1 的客户端。
@@ -85,7 +85,9 @@ PARALLEL_PER_REPLICA = {
 #   N=8: 单客户端 RTF ≈ 3.0  (严重落后)
 # 取 RTF ≤ 1.1 (10% 容忍) 的最大 N 作为"实时容量"
 TTS_REALTIME_CAPACITY_PER_REPLICA = 2  # cosyvoice 单副本 sem=2 时
-QWEN3_TTS_REALTIME_CAPACITY_PER_REPLICA = 1  # 待实测, 先按保守值
+# Qwen3-TTS Base Clone 在同卡 4090 实测标准 RTF≈1.7。
+# 也就是单副本连 1 路实时都保不住; 规划时按 1 路/副本隔离排队, 但输出警告。
+QWEN3_TTS_REALTIME_CAPACITY_PER_REPLICA = 0
 
 # 单副本的显存 (GiB), 不含 vLLM KV cache 池
 # 注意 qwen3-asr 的总显存 = WEIGHTS + KV_pool, KV_pool 见下面 qwen3_mem_util_for_card
@@ -95,7 +97,8 @@ MODEL_MEM_GIB = {
     "dolphin": {"default": 0.6},
     "qwen3-asr": {"weights": 4.0},  # 只是权重, 不含 KV cache
     "cosyvoice": {"all": 5.0, "clone": 3.5, "sft": 1.5},
-    "qwen3-tts": {"base": 8.0},
+    # 实测 idle 约 +2.65 GiB, benchmark 约 +3.0 GiB; 另加 CUDA context。
+    "qwen3-tts": {"base": 3.0},
 }
 
 # 每个 CUDA context 在 GPU 上的额外开销 (经验值 ~300-500 MiB)
@@ -154,13 +157,14 @@ class ServiceRequest:
 
     - ASR 服务 (funasr/dolphin/qwen3-asr): `concurrency` = 同时活跃的客户端请求数
       副本 = ceil(并发 / (并行容量 × 单位时间内处理批次)), 受 max_queue_sec 影响
-    - TTS 服务 (cosyvoice/qwen3-tts): `concurrency` = 同时跑的实时 TTS 路数
-      副本 = ceil(路数 / 实时容量), 实时容量 = TTS_REALTIME_CAPACITY_PER_REPLICA
-      不依赖 max_queue_sec — 实时容量是工程实测点, 超了就 RTF>1 卡顿
+    - TTS 服务:
+      * cosyvoice: `concurrency` = 同时跑的实时 TTS 路数
+      * qwen3-tts: `concurrency` = 目标隔离请求路数; 当前单副本慢于实时
+      cosyvoice 副本 = ceil(路数 / 实时容量), 实时容量是工程实测点。
     """
 
     name: str               # funasr / dolphin / qwen3-asr / cosyvoice / qwen3-tts
-    concurrency: int        # ASR: 并发请求数; TTS: 实时路数
+    concurrency: int        # ASR: 并发请求数; TTS: 路数/隔离请求数
     mode: str               # all / offline / realtime / clone / sft / default
 
     @property
@@ -217,7 +221,12 @@ class ServiceRequest:
             return 0
 
         if self.is_tts:
-            cap = self.per_replica_realtime_capacity or 1
+            cap = self.per_replica_realtime_capacity
+            if cap is None:
+                cap = 1
+            if cap <= 0:
+                # 该后端单副本不满足实时; 仍按每路 1 副本规划, 避免排队叠加。
+                return max(1, self.concurrency)
             return max(1, math.ceil(self.concurrency / cap))
 
         # ASR
@@ -293,6 +302,9 @@ def plan(gpus: List[GPU], services: List[ServiceRequest],
       - cosyvoice 同卡 3 副本: 系统总吞吐 = 单副本 ×2.3
       - 即每增加 1 个同卡副本, 实际容量 +0.8-0.9 副本 (经验值)
 
+    qwen3-tts 只实测了同进程 GPU semaphore: sem=2 小幅提升系统吞吐但单请求
+    RTF 更差, sem=4 明显负优化; 不套用 cosyvoice 的同卡副本收益。
+
     排序策略:
       1. 优先放到没有同服务副本的"空"卡 (按剩余显存降序, worst-fit)
       2. 否则塞到已有同服务副本的卡 (按剩余显存降序)
@@ -302,6 +314,12 @@ def plan(gpus: List[GPU], services: List[ServiceRequest],
     返回 (placements, warnings)。
     """
     warnings: List[str] = []
+    for svc in services:
+        if svc.name == "qwen3-tts" and svc.concurrency > 0:
+            warnings.append(
+                "⚠️  qwen3-tts Base Clone 在 4090 实测单路 RTF≈1.7, "
+                "不满足实时播放; 生成的副本数只用于减少排队, 不能保证 RTF≤1。"
+            )
 
     # 把每个服务展开成 N 个副本
     replicas: List[Tuple[ServiceRequest, int]] = []
@@ -376,11 +394,23 @@ def plan(gpus: List[GPU], services: List[ServiceRequest],
         rank, _, _, gpu, need, extra = candidates[0]
         # 同卡多副本时给一次提示
         if rank == 1 and svc.name not in cohabit_warned_for:
-            warnings.append(
-                f"ℹ️  {svc.name} 出现同卡多副本 (卡 {gpu.idx}): "
-                f"系统总容量 ≈ 副本数 × 0.85, 单客户端 RTF 会略升 (实测 ~+5%); "
-                f"如有空闲卡是不会触发的, 这是兜底"
-            )
+            if svc.name == "cosyvoice":
+                warnings.append(
+                    f"ℹ️  {svc.name} 出现同卡多副本 (卡 {gpu.idx}): "
+                    f"系统总容量 ≈ 副本数 × 0.85, 单客户端 RTF 会略升 (实测 ~+5%); "
+                    f"如有空闲卡是不会触发的, 这是兜底"
+                )
+            elif svc.name == "qwen3-tts":
+                warnings.append(
+                    f"⚠️  {svc.name} 出现同卡多副本 (卡 {gpu.idx}): "
+                    f"目前只有单副本 sem=1/2/4 实测, 且单副本已慢于实时; "
+                    f"这里只表示显存放得下, 不代表实时容量线性提升。"
+                )
+            else:
+                warnings.append(
+                    f"ℹ️  {svc.name} 出现同卡多副本 (卡 {gpu.idx}); "
+                    f"如有空闲卡是不会触发的, 这是显存兜底放置。"
+                )
             cohabit_warned_for.add(svc.name)
         gpu_used[gpu.idx] += need
         gpu_services[gpu.idx].add(svc.name)
@@ -480,18 +510,31 @@ def render(gpus: List[GPU], services: List[ServiceRequest],
     for s in services:
         n = s.replicas_needed(max_queue_sec)
         if s.is_tts:
-            rt_cap = s.per_replica_realtime_capacity or 1
-            out.append(
-                f"  - {s.name:<10s}  实时路数 {s.concurrency:>3d}, "
-                f"单副本可保 {rt_cap} 路实时 (RTF≤1.1) → 需 {n} 副本 (mode={s.mode})"
-            )
-            if n > 0:
-                total_cap = n * rt_cap
+            rt_cap = s.per_replica_realtime_capacity
+            if rt_cap is not None and rt_cap <= 0:
                 out.append(
-                    f"      估算: {n} 副本最多保 {total_cap} 路实时, "
-                    f"实际跑 {s.concurrency} 路 → "
-                    f"{'刚好实时' if total_cap == s.concurrency else '富余' if total_cap > s.concurrency else 'RTF>1 会卡顿'}"
+                    f"  - {s.name:<10s}  请求路数 {s.concurrency:>3d}, "
+                    f"单副本实测不能保实时 (单路 RTF≈1.7) → "
+                    f"按 1 路/副本隔离排队, 需 {n} 副本 (mode={s.mode})"
                 )
+                if n > 0:
+                    out.append(
+                        f"      估算: {n} 副本可减少排队叠加, 但每路仍慢于实时; "
+                        f"如要求 RTF≤1, 当前更适合选择 cosyvoice。"
+                    )
+            else:
+                rt_cap = rt_cap or 1
+                out.append(
+                    f"  - {s.name:<10s}  实时路数 {s.concurrency:>3d}, "
+                    f"单副本可保 {rt_cap} 路实时 (RTF≤1.1) → 需 {n} 副本 (mode={s.mode})"
+                )
+                if n > 0:
+                    total_cap = n * rt_cap
+                    out.append(
+                        f"      估算: {n} 副本最多保 {total_cap} 路实时, "
+                        f"实际跑 {s.concurrency} 路 → "
+                        f"{'刚好实时' if total_cap == s.concurrency else '富余' if total_cap > s.concurrency else 'RTF>1 会卡顿'}"
+                    )
         else:
             cap = s.per_replica_parallel
             lat = s.per_replica_latency
@@ -782,6 +825,7 @@ def _render_subservice_env(svc_name: str, mode: str,
             "      QWEN3_TTS_DTYPE: ${QWEN3_TTS_DTYPE:-bfloat16}",
             "      QWEN3_TTS_ATTN_IMPLEMENTATION: ${QWEN3_TTS_ATTN_IMPLEMENTATION:-sdpa}",
             "      QWEN3_TTS_LANGUAGE: ${QWEN3_TTS_LANGUAGE:-Auto}",
+            "      QWEN3_TTS_GPU_CONCURRENCY: ${QWEN3_TTS_GPU_CONCURRENCY:-1}",
             "      QWEN3_TTS_VOICES_DIR: /app/qwen3_voices",
             "      QWEN3_TTS_X_VECTOR_ONLY_MODE: ${QWEN3_TTS_X_VECTOR_ONLY_MODE:-false}",
             "      HF_ENDPOINT: ${HF_ENDPOINT:-}",
@@ -1037,8 +1081,9 @@ def interactive() -> Tuple[List[GPU], List[ServiceRequest], str]:
 
     if tts_enabled and tts_engine == "qwen3-tts":
         print("  Qwen3-TTS 走开源本地 GPU 子服务, 默认模型为 0.6B Base Clone")
+        print("  实测: 单路标准 RTF≈1.7, 当前不按实时 TTS 容量规划")
         c = _ask_int(
-            "  想同时支持多少路实时 TTS (暂按单副本 = 1 路保守估算)",
+            "  想隔离多少路 Qwen3-TTS 请求 (按 1 路/副本减少排队)",
             default=1,
             min_val=0,
         )

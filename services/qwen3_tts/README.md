@@ -38,9 +38,22 @@ Environment variables:
 | `QWEN3_TTS_DTYPE` | `bfloat16` | `bfloat16` / `float16` / `float32` |
 | `QWEN3_TTS_ATTN_IMPLEMENTATION` | `sdpa` | Can be changed to `flash_attention_2` if installed |
 | `QWEN3_TTS_LANGUAGE` | `Auto` | `Auto` passes `None` to qwen-tts |
+| `QWEN3_TTS_GPU_CONCURRENCY` | `1` | Recommended on 4090; `2` only slightly improves system throughput, `4` regresses |
 | `QWEN3_TTS_VOICES_DIR` | `/app/qwen3_voices` | Stores uploaded refs, `prompts/*.pt`, and `voice_registry.json` |
 | `QWEN3_TTS_X_VECTOR_ONLY_MODE` | `false` | `false` requires accurate `prompt_text`; `true` uses speaker embedding only |
 | `INTERNAL_SERVICE_TOKEN` | empty | If set, all HTTP calls must include `X-Internal-Token` |
+
+Performance note from GPU 7 / RTX 4090 24GB benchmark. Standard RTF is
+`elapsed / generated_audio_seconds`; values below `1` are realtime.
+
+| Setting | Best observed throughput | Standard RTF |
+|---|---:|---:|
+| `QWEN3_TTS_GPU_CONCURRENCY=1` | ~0.106 req/s | ~1.7 for one client |
+| `QWEN3_TTS_GPU_CONCURRENCY=2` | ~0.126 req/s | ~1.7 for one client, worse tail latency |
+| `QWEN3_TTS_GPU_CONCURRENCY=4` | ~0.08-0.12 req/s | regresses at higher concurrency |
+
+So the default stays at `1`. Use more replicas for queue isolation; do not treat
+this backend as a realtime TTS capacity equivalent to CosyVoice3 yet.
 
 Add a Base clone voice:
 

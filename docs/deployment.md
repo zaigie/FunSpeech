@@ -298,7 +298,7 @@ CosyVoice 仅 `clone_loaded=true` 的副本(即 `TTS_MODEL_MODE` 包含 `clone`)
 
 `gpu_memory_utilization` 越大 KV cache 池越大,vLLM 能并行处理的请求越多;但子服务进程内的 vLLM 入口是**串行**调用 (Python LLM 接口非线程安全, 见 `services/qwen3_asr_vllm/server.py:156` 的 `_get_vllm_lock` 实现注释), batching 在 vLLM 引擎内部完成, 实际收益要看 KV pool 容量 + 请求长短。
 
-> 关于子服务的"GPU 并发" — 我们曾尝试在子服务 handler 层加 `asyncio.Semaphore(N)` 让多个推理同时进 GPU, 实测**完全负优化** (vLLM 死锁 / torch 模型上下文切换变慢)。现在每个子服务的 GPU 并发数都在代码里**硬编码**, 不通过环境变量暴露 — 想加并发请用多副本 (§5)。
+> 关于子服务的"GPU 并发" — FunASR / CosyVoice / Qwen3-ASR 的并发点按实测固化在代码里。Qwen3-TTS 暴露 `QWEN3_TTS_GPU_CONCURRENCY`, 但 4090 实测默认 `1` 最稳: `2` 只小幅提升系统吞吐且拉高单请求 RTF, `4` 明显负优化。想加并发优先用多副本 (§5), 不建议盲目调大单进程 semaphore。
 
 ### 6.4 cosyvoice-0 (端口 8004)
 
@@ -347,10 +347,13 @@ Qwen3-TTS 走开源本地 `qwen-tts` 包,网关侧通过 `TTS_ENGINE=qwen3-tts` 
 | `QWEN3_TTS_DTYPE` | `bfloat16` | `bfloat16` / `float16` / `float32` |
 | `QWEN3_TTS_ATTN_IMPLEMENTATION` | `sdpa` | 可按环境改成 `flash_attention_2` |
 | `QWEN3_TTS_LANGUAGE` | `Auto` | `Auto` 会传 `None`,由模型处理 |
+| `QWEN3_TTS_GPU_CONCURRENCY` | `1` | 4090 实测推荐默认; `2` 只小幅提系统吞吐, `4` 负优化 |
 | `QWEN3_TTS_VOICES_DIR` | `/app/qwen3_voices` | Qwen3 clone 音色目录; compose 默认挂载 `./qwen3_voices` |
 | `QWEN3_TTS_X_VECTOR_ONLY_MODE` | `false` | `false` 使用 ICL clone,添加音色必须提供准确参考文本;`true` 仅使用 speaker embedding |
 | `HF_ENDPOINT` | 空 | Hugging Face 镜像端点,国内可设 `https://hf-mirror.com` |
 | `HF_HUB_OFFLINE` / `TRANSFORMERS_OFFLINE` | 空 | 离线部署时设为 `1` |
+
+4090 24G `idx=7` 实测 (`benchmarks/results/tts/qwen3_tts_base_clone_sem1.json`): 单副本 Base Clone 吞吐约 `0.106 req/s`, 标准 RTF (`推理耗时 / 生成音频时长`) 单路约 `1.7`, 已慢于实时。对同一 clone voice, CosyVoice3 clone 单路标准 RTF 约 `0.56`, 2 路 mean 约 `0.84`, 但显存占用更高。这意味着 Qwen3-TTS 当前更适合作为开源本地 clone 功能验证/质量选项, 不应在部署规划里按"1 路实时 TTS"计算容量。
 
 Qwen3-TTS 使用独立的 `./qwen3_voices` 目录,不复用 CosyVoice 的 `./voices`。和 CosyVoice 一样,只有 clone 模型加载成功时才会接受 `/voices` 写入;非 Base 模型会拒绝音色 CRUD。
 

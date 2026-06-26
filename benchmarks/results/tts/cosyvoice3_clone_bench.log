@@ -1,0 +1,9 @@
+--- 测试 concurrency=1 ---
+  wall=3.60s  ok=1/1  req/s=0.28  rtf=1.80  p50=3.60s  p95=3.60s  max=3.60s
+--- 测试 concurrency=2 ---
+  wall=10.76s  ok=2/2  req/s=0.19  rtf=1.79  p50=5.46s  p95=10.76s  max=10.76s
+--- 测试 concurrency=4 ---
+  wall=17.98s  ok=4/4  req/s=0.22  rtf=1.78  p50=14.27s  p95=17.98s  max=17.98s
+--- 测试 concurrency=8 ---
+  wall=46.71s  ok=8/8  req/s=0.17  rtf=1.82  p50=33.30s  p95=46.71s  max=46.71s
+-> /tmp/cosyvoice3_clone_bench_c1_2_4_8.json
