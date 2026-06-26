@@ -36,6 +36,8 @@ branch:
                 value: qwen3-asr
               - name: cosyvoice (GPU, CosyVoice2/3)
                 value: cosyvoice
+              - name: qwen3-tts (GPU, Qwen3-TTS Base Clone)
+                value: qwen3-tts
 
           # 镜像 tag, 默认 latest
           TAG:
