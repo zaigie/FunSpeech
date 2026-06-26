@@ -616,3 +616,17 @@ def make_cosyvoice_http_engine() -> CosyVoiceHttpEngine:
         internal_token=settings.INTERNAL_SERVICE_TOKEN or "",
         timeout=settings.SERVICE_REQUEST_TIMEOUT,
     )
+
+
+def make_cosyvoice3_vllm_omni_http_engine() -> CosyVoiceHttpEngine:
+    urls = _split_urls(settings.COSYVOICE3_VLLM_OMNI_SERVICE_URLS)
+    if not urls:
+        raise DefaultServerErrorException(
+            "COSYVOICE3_VLLM_OMNI_SERVICE_URLS 未配置 — "
+            "TTS_ENGINE=cosyvoice3-vllm-omni 需要 services/cosyvoice3_vllm_omni 子服务"
+        )
+    return CosyVoiceHttpEngine(
+        urls=urls,
+        internal_token=settings.INTERNAL_SERVICE_TOKEN or "",
+        timeout=settings.SERVICE_REQUEST_TIMEOUT,
+    )

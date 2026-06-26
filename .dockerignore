@@ -65,10 +65,19 @@ node_modules
 
 # 子服务源码不属于网关镜像 (网关只跑 app/ + start.py)
 services/
+!services/vllm_omni_tts_common/
+!services/vllm_omni_tts_common/**
+!services/qwen3_tts_vllm_omni/
+!services/qwen3_tts_vllm_omni/**
+!services/cosyvoice3_vllm_omni/
+!services/cosyvoice3_vllm_omni/**
 
 # 运行期数据卷 (compose mount 进去, 镜像内不需要)
 data/
 voices/
+qwen3_voices/
+qwen3_omni_voices/
+cosyvoice3_omni_voices/
 
 # 计划/笔记目录
 .claude/

@@ -255,9 +255,9 @@ class Qwen3TTSHttpEngine:
     def get_voices(self) -> List[str]:
         listing = self._get_voices_listing()
         mode = settings.TTS_MODEL_MODE.lower()
-        if mode == "sft":
+        if mode in ("sft", "preset", "custom", "customvoice", "voicedesign"):
             return listing.get("preset", [])
-        if mode == "clone":
+        if mode in ("clone", "base"):
             return listing.get("clone", [])
         return listing.get("all", [])
 
@@ -521,6 +521,20 @@ def make_qwen3_tts_http_engine() -> Qwen3TTSHttpEngine:
         raise DefaultServerErrorException(
             "QWEN3_TTS_SERVICE_URLS 未配置 — TTS_ENGINE=qwen3-tts 需要 "
             "services/qwen3_tts 子服务"
+        )
+    return Qwen3TTSHttpEngine(
+        urls=urls,
+        internal_token=settings.INTERNAL_SERVICE_TOKEN or "",
+        timeout=settings.SERVICE_REQUEST_TIMEOUT,
+    )
+
+
+def make_qwen3_tts_vllm_omni_http_engine() -> Qwen3TTSHttpEngine:
+    urls = _split_urls(settings.QWEN3_TTS_VLLM_OMNI_SERVICE_URLS)
+    if not urls:
+        raise DefaultServerErrorException(
+            "QWEN3_TTS_VLLM_OMNI_SERVICE_URLS 未配置 — "
+            "TTS_ENGINE=qwen3-tts-vllm-omni 需要 services/qwen3_tts_vllm_omni 子服务"
         )
     return Qwen3TTSHttpEngine(
         urls=urls,

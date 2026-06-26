@@ -49,9 +49,16 @@ class Settings:
     ASR_NEARFIELD_RMS_THRESHOLD: float = 0.01
     ASR_NEARFIELD_FILTER_LOG_ENABLED: bool = True
 
-    # TTS — 网关需要知道的: 引擎选择 + 模式开关
-    TTS_ENGINE: str = "cosyvoice"  # cosyvoice / qwen3-tts
-    TTS_MODEL_MODE: str = "all"  # all / sft / clone, 影响 get_voices 等返回
+    # TTS — 网关只选择后端; 具体模型形态由对应子服务 env 控制。
+    # 可选:
+    #   cosyvoice                 legacy CosyVoice SFT/2/3 子服务
+    #   qwen3-tts                 legacy qwen-tts Python 包子服务
+    #   cosyvoice3-vllm-omni      CosyVoice3 via vLLM-Omni
+    #   qwen3-tts-vllm-omni       Qwen3-TTS via vLLM-Omni
+    TTS_ENGINE: str = "cosyvoice"
+    # legacy cosyvoice 用 all/sft/clone; qwen3 可用 all/base/custom/voicedesign
+    # 做 get_voices 过滤。模型加载模式不要再从网关推断, 以子服务 env 为准。
+    TTS_MODEL_MODE: str = "all"
 
     # 微服务 — 子服务 URL / 鉴权 / 超时
     INTERNAL_SERVICE_TOKEN: Optional[str] = None
@@ -62,6 +69,8 @@ class Settings:
     QWEN3_ASR_SERVICE_URLS: str = ""
     COSYVOICE_SERVICE_URLS: str = ""
     QWEN3_TTS_SERVICE_URLS: str = ""
+    COSYVOICE3_VLLM_OMNI_SERVICE_URLS: str = ""
+    QWEN3_TTS_VLLM_OMNI_SERVICE_URLS: str = ""
 
     # 音频处理
     MAX_AUDIO_SIZE: int = 100 * 1024 * 1024
@@ -151,6 +160,14 @@ class Settings:
         )
         self.QWEN3_TTS_SERVICE_URLS = os.getenv(
             "QWEN3_TTS_SERVICE_URLS", self.QWEN3_TTS_SERVICE_URLS
+        )
+        self.COSYVOICE3_VLLM_OMNI_SERVICE_URLS = os.getenv(
+            "COSYVOICE3_VLLM_OMNI_SERVICE_URLS",
+            self.COSYVOICE3_VLLM_OMNI_SERVICE_URLS,
+        )
+        self.QWEN3_TTS_VLLM_OMNI_SERVICE_URLS = os.getenv(
+            "QWEN3_TTS_VLLM_OMNI_SERVICE_URLS",
+            self.QWEN3_TTS_VLLM_OMNI_SERVICE_URLS,
         )
 
         # 远场过滤

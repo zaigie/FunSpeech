@@ -212,8 +212,11 @@ RTF (Real-Time Factor) = 推理耗时 / 生成音频时长。RTF ≤ 1 = 实时,
 | Qwen3-TTS Base Clone | `QWEN3_TTS_GPU_CONCURRENCY=2` | ~2.7 / ~3.0 GiB | 0.126 | 1.70 | N=8 mean 6.75 | 小幅提吞吐, 但尾延迟仍很差 |
 | Qwen3-TTS Base Clone | `QWEN3_TTS_GPU_CONCURRENCY=4` | ~2.7 / ~3.3 GiB | 0.121 | 1.76 | N=4 mean 8.01, N=8 mean 12.36 | 负优化 |
 | CosyVoice3 Clone | `TTS_MODEL_MODE=clone`, sem=2 | ~3.9 / ~4.3 GiB | 0.278 单路, 0.17-0.22 并发 | 0.56 | N=2 mean 0.84, N=4 mean 1.47 | 单路实时, 2 路仍接近实时 |
+| Qwen3-TTS vLLM-Omni Base Clone | `vllm serve ... --omni`, `qwen3_tts.yaml` | 压测约 19.2 GiB | 2.41 峰值, 2.06@N=8 | 0.19 | N=8 mean 0.81 | 相比本地 `qwen-tts` 大幅提升, 但 24G 卡基本独占 |
+| CosyVoice3 vLLM-Omni Clone | 默认 `onnxruntime` CPU provider | 压测约 10.8 GiB | 0.33 | 0.57 | N=2 mean 0.82, N=4 mean 1.53 | 吞吐接近现有 CosyVoice3, 显存更高 |
+| CosyVoice3 vLLM-Omni Clone | `INSTALL_ONNXRUNTIME_GPU=true` | 压测约 15.3 GiB | 0.28 | 0.51 | N=2 mean 0.68, N=4 mean 1.45, N=8 mean 2.34 | 单路略快, 峰值吞吐不升, 不作为默认 |
 
-**结论**: Qwen3-TTS 当前本地 Base Clone 的优势是显存更省、开源本地可跑; 4090 上不应按实时 TTS 容量规划。`scripts/plan_deployment.py` 因此把 Qwen3-TTS 的实时容量设为 0, 按 1 路/副本只做排队隔离, 并提示如要求 RTF≤1 应优先选择 CosyVoice3。
+**结论**: legacy Qwen3-TTS 本地 Base Clone 的优势是显存更省、开源本地可跑; 4090 上不应按实时 TTS 容量规划。Qwen3-TTS vLLM-Omni 是当前最值得接入的加速后端: 单副本能把 Base Clone 从约 0.106 req/s 提到 2 req/s 以上, N=8 仍满足实时, 代价是约 19-20 GiB 净显存。CosyVoice3 vLLM-Omni 目前不比现有 CosyVoice3 明显更强; GPU ORT 只改善单路, 没有提升并发吞吐。
 
 ### TTS event loop 测试 (N=2 并发)
 

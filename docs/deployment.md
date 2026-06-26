@@ -60,6 +60,9 @@ docker compose up -d              # 默认: gateway + qwen3-asr + cosyvoice
 docker compose --profile funasr up -d                              # 加 funasr (paraformer/sensevoice)
 docker compose --profile dolphin up -d                             # 加 dolphin
 docker compose --profile funasr --profile dolphin up -d            # 全部 ASR 引擎
+TTS_ENGINE=qwen3-tts docker compose up -d gateway qwen3-asr-0 qwen3-tts-0
+TTS_ENGINE=qwen3-tts-vllm-omni docker compose up -d gateway qwen3-asr-0 qwen3-tts-vllm-omni-0
+TTS_ENGINE=cosyvoice3-vllm-omni docker compose up -d gateway qwen3-asr-0 cosyvoice3-vllm-omni-0
 ```
 
 并行加速 build (子服务镜像之间互相独立):
@@ -82,6 +85,8 @@ docker compose build --parallel
 | `qwen3-asr-0` | 8003 | ✅ | ✅ | (默认, 默认 ASR 引擎) |
 | `cosyvoice-0` | 8004 | ✅ | ✅ | (默认) |
 | `qwen3-tts-0` | 8005 | ✅ | ❌ | `qwen3-tts` |
+| `qwen3-tts-vllm-omni-0` | 8006 | ✅ | ❌ | `qwen3-tts-vllm-omni` |
+| `cosyvoice3-vllm-omni-0` | 8007 | ✅ | ❌ | `cosyvoice3-vllm-omni` |
 
 每个 GPU 子服务通过 `deploy.resources.reservations.devices[].device_ids` 选择宿主机 GPU。Docker/NVIDIA runtime 只把对应卡透传进容器后,容器内 GPU 会从 `0` 重新编号,所以单卡容器里的 `CUDA_VISIBLE_DEVICES` 应保持 `"0"` 或不设置。
 
@@ -353,7 +358,7 @@ Qwen3-TTS 走开源本地 `qwen-tts` 包,网关侧通过 `TTS_ENGINE=qwen3-tts` 
 | `HF_ENDPOINT` | 空 | Hugging Face 镜像端点,国内可设 `https://hf-mirror.com` |
 | `HF_HUB_OFFLINE` / `TRANSFORMERS_OFFLINE` | 空 | 离线部署时设为 `1` |
 
-4090 24G `idx=7` 实测 (`benchmarks/results/tts/qwen3_tts_base_clone_sem1.json`): 单副本 Base Clone 吞吐约 `0.106 req/s`, 标准 RTF (`推理耗时 / 生成音频时长`) 单路约 `1.7`, 已慢于实时。对同一 clone voice, CosyVoice3 clone 单路标准 RTF 约 `0.56`, 2 路 mean 约 `0.84`, 但显存占用更高。这意味着 Qwen3-TTS 当前更适合作为开源本地 clone 功能验证/质量选项, 不应在部署规划里按"1 路实时 TTS"计算容量。
+4090 24G `idx=7` 实测 (`benchmarks/results/tts/qwen3_tts_base_clone_sem1.json`): legacy 本地 Base Clone 吞吐约 `0.106 req/s`, 标准 RTF (`推理耗时 / 生成音频时长`) 单路约 `1.7`, 已慢于实时。对同一 clone voice, CosyVoice3 clone 单路标准 RTF 约 `0.56`, 2 路 mean 约 `0.84`, 但显存占用更高。这意味着 legacy Qwen3-TTS 更适合作为开源本地 clone 功能验证/质量选项, 不应在部署规划里按"1 路实时 TTS"计算容量。需要 Qwen3-TTS 性能时,优先看 §6.6 的 `qwen3-tts-vllm-omni`。
 
 Qwen3-TTS 使用独立的 `./qwen3_voices` 目录,不复用 CosyVoice 的 `./voices`。和 CosyVoice 一样,只有 clone 模型加载成功时才会接受 `/voices` 写入;非 Base 模型会拒绝音色 CRUD。
 
@@ -398,6 +403,39 @@ curl -X POST "http://localhost:8000/stream/v1/tts" \
 
 请用 `python3 scripts/plan_deployment.py` 实算 (脚本会问你"想同时支持多少路实时 TTS")。
 
+### 6.6 vLLM-Omni TTS 后端 (端口 8006/8007)
+
+`qwen3-tts-vllm-omni-0` 和 `cosyvoice3-vllm-omni-0` 是独立子服务: 外层保持 FunSpeech 子服务协议(`/tts/file`、`/tts/stream`、`/voices`), 内层启动 `vllm serve ... --omni` 并调用 vLLM-Omni Speech API。网关侧用 `TTS_ENGINE=qwen3-tts-vllm-omni` 或 `TTS_ENGINE=cosyvoice3-vllm-omni` 单选切换。
+
+| 变量 | 默认 | 说明 |
+|---|---|---|
+| `QWEN3_TTS_OMNI_MODEL_ID` | `Qwen/Qwen3-TTS-12Hz-0.6B-Base` | 可换 Base / CustomVoice / VoiceDesign 模型 |
+| `QWEN3_TTS_OMNI_TASK_TYPE` | `Base` | `Base` / `CustomVoice` / `VoiceDesign` |
+| `QWEN3_TTS_OMNI_VOICES_DIR` | `/app/qwen3_omni_voices` | Qwen3 vLLM-Omni clone 音色目录 |
+| `COSYVOICE3_OMNI_MODEL_ID` | `FunAudioLLM/Fun-CosyVoice3-0.5B-2512` | CosyVoice3 vLLM-Omni 模型 |
+| `COSYVOICE3_OMNI_VOICES_DIR` | `/app/cosyvoice3_omni_voices` | CosyVoice3 vLLM-Omni clone 音色目录 |
+| `*_OMNI_SERVE_COMMAND` | `vllm` | 当前官方 CLI;只有镜像暴露其它命令时才改 |
+| `*_OMNI_GPU_MEM` | 空 | 透传给 `vllm serve --gpu-memory-utilization` |
+| `*_OMNI_STAGE_OVERRIDES` | 空 | 透传给 `vllm serve --stage-overrides` |
+| `*_OMNI_EXTRA_ARGS` | 空 | 额外 `vllm serve` 参数 |
+
+4090 24G `idx=7` 实测,直连子服务 `/tts/file`,同一个 `benchclone` 音色:
+
+| 后端 | 最好吞吐 | 单路标准 RTF | 并发标准 RTF | 压测显存(扣本机基线) | 结论 |
+|---|---:|---:|---:|---:|---|
+| Qwen3-TTS vLLM-Omni Base Clone | 2.41 req/s, N=8 时 2.06 req/s | 0.19 | N=8 mean 0.81 | ~19.2 GiB | 相比 legacy Qwen3-TTS 提升很大, 但建议独占 24G 卡 |
+| CosyVoice3 vLLM-Omni Clone | 0.33 req/s | 0.57 | N=2 mean 0.82, N=4 mean 1.53 | ~10.8 GiB | 吞吐接近现有 CosyVoice3, 显存更高 |
+| CosyVoice3 vLLM-Omni Clone + GPU ORT | 0.28 req/s | 0.51 | N=2 mean 0.68, N=4 mean 1.45 | ~15.3 GiB | 单路略快, 峰值吞吐不升 |
+
+CosyVoice3 镜像默认不安装 `onnxruntime-gpu`;如需复现实验可用 `--build-arg INSTALL_ONNXRUNTIME_GPU=true` 构建 `services/cosyvoice3_vllm_omni/Dockerfile`,或在 compose 构建时设置 `COSYVOICE3_OMNI_INSTALL_ONNXRUNTIME_GPU=true`。当前更明确的性能收益来自 Qwen3-TTS vLLM-Omni。
+
+手动切换时同样不要只加 profile,显式指定服务名:
+
+```bash
+TTS_ENGINE=qwen3-tts-vllm-omni docker compose up -d gateway qwen3-asr-0 qwen3-tts-vllm-omni-0
+TTS_ENGINE=cosyvoice3-vllm-omni docker compose up -d gateway qwen3-asr-0 cosyvoice3-vllm-omni-0
+```
+
 ## 七、网关环境变量参考
 
 | 变量 | 默认 | 说明 |
@@ -416,7 +454,9 @@ curl -X POST "http://localhost:8000/stream/v1/tts" \
 | `QWEN3_ASR_SERVICE_URLS` | `http://qwen3-asr-0:8003` | |
 | `COSYVOICE_SERVICE_URLS` | `http://cosyvoice-0:8004` | |
 | `QWEN3_TTS_SERVICE_URLS` | `http://qwen3-tts-0:8005` | |
-| `TTS_ENGINE` | `cosyvoice` | `cosyvoice` / `qwen3-tts`;选择 TTS 后端,同一网关只能选一个 |
+| `QWEN3_TTS_VLLM_OMNI_SERVICE_URLS` | `http://qwen3-tts-vllm-omni-0:8006` | |
+| `COSYVOICE3_VLLM_OMNI_SERVICE_URLS` | `http://cosyvoice3-vllm-omni-0:8007` | |
+| `TTS_ENGINE` | `cosyvoice` | `cosyvoice` / `qwen3-tts` / `qwen3-tts-vllm-omni` / `cosyvoice3-vllm-omni`;选择 TTS 后端,同一网关只能选一个 |
 | `ASR_MODEL_MODE` | `all` | 仅影响 `models.json` 兼容性校验,真正模式由 funasr 子服务决定 |
 | `TTS_MODEL_MODE` | `all` | 影响 `get_voices()` 返回过滤 |
 | `ASR_ENABLE_REALTIME_PUNC` | `false` | 流式中间结果是否带标点(转发给 funasr 子服务) |
@@ -437,9 +477,11 @@ curl -X POST "http://localhost:8000/stream/v1/tts" \
 | 主机路径 | 容器路径 | 用途 | 注意 |
 |---|---|---|---|
 | `${MODELSCOPE_CACHE}` (默认 `~/.cache/modelscope/hub/models`) | `/root/.cache/modelscope/hub` | 模型权重缓存,所有 GPU 子服务共享 | 见下方说明 |
-| `${HF_CACHE}` (默认 `~/.cache/huggingface`) | `/root/.cache/huggingface`(只在 qwen3-tts) | Hugging Face / hf-mirror 权重缓存 | Qwen3-TTS Base 权重主要在这里 |
+| `${HF_CACHE}` (默认 `~/.cache/huggingface`) | `/root/.cache/huggingface`(Qwen3-TTS/vLLM-Omni TTS) | Hugging Face / hf-mirror 权重缓存 | Qwen3-TTS 与 vLLM-Omni TTS 权重主要在这里 |
 | `./voices` | `/app/voices`(只在 cosyvoice) | 零样本克隆音色 + spk2info.pt | 持久化用户数据 |
 | `./qwen3_voices` | `/app/qwen3_voices`(只在 qwen3-tts) | Qwen3-TTS Base Clone 参考音频 + prompt tensors + registry | 持久化用户数据 |
+| `./qwen3_omni_voices` | `/app/qwen3_omni_voices`(只在 qwen3-tts-vllm-omni) | vLLM-Omni Qwen3-TTS clone 音色 + registry | 持久化用户数据 |
+| `./cosyvoice3_omni_voices` | `/app/cosyvoice3_omni_voices`(只在 cosyvoice3-vllm-omni) | vLLM-Omni CosyVoice3 clone 音色 + registry | 持久化用户数据 |
 | `./temp` | `/app/temp`(只在 gateway) | 网关临时音频文件 | gateway 返回 FileResponse 后会 BackgroundTask 自动删除 |
 | `./data` | `/app/data`(只在 gateway) | 异步 TTS 任务库 | |
 | `./logs` | `/app/logs`(只在 gateway) | 日志 | |
@@ -468,7 +510,8 @@ HF_ENDPOINT=https://hf-mirror.com huggingface-cli download Qwen/Qwen3-TTS-12Hz-0
 每个子服务都有 `/health`,docker-compose 配了 `healthcheck`:
 
 - funasr / dolphin: `start_period=180s`,等模型加载
-- qwen3-asr / cosyvoice: `start_period=300s`,vLLM 与 CosyVoice 加载更慢
+- qwen3-asr / cosyvoice / qwen3-tts: `start_period=300s`,vLLM 与 TTS 加载更慢
+- qwen3-tts-vllm-omni / cosyvoice3-vllm-omni: `start_period=600s`,内部还要拉起 `vllm serve --omni`
 
 `gateway.depends_on` 用 `condition: service_started`,即使子服务还没就绪网关也能起来对外报 503,避免一处异常全栈不可用。改 `service_healthy` 即可严格依赖。
 
