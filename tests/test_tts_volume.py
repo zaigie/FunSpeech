@@ -80,7 +80,7 @@ def example_openai_volume():
         "speed": 1.2,  # 语速：1.2倍
     }
 
-    response = requests.post(f"{BASE_URL}/openai/v1/audio/speech", json=request_data)
+    response = requests.post(f"{BASE_URL}/v1/audio/speech", json=request_data)
 
     if response.status_code == 200:
         print("OpenAI兼容接口合成成功")

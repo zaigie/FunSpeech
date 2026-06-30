@@ -4,7 +4,7 @@
 
   <h3>开箱即用的本地私有化部署语音服务 — 微服务架构</h3>
 
-ASR + TTS API 网关,兼容阿里云语音 API 与 OpenAI TTS API,支持 WebSocket 流式协议。
+ASR + TTS API 网关,兼容阿里云语音 API 与 OpenAI Audio API,支持 WebSocket 流式协议。
 模型推理由独立子服务承载(每个引擎独立 venv + 容器),通过 docker-compose 编排。
 
 ---
@@ -140,6 +140,7 @@ WebSocket 测试页:
 | 端点 | 方法 | 说明 |
 |---|---|---|
 | `/stream/v1/asr` | POST | 一句话语音识别 |
+| `/v1/audio/transcriptions` | POST | OpenAI 兼容 ASR |
 | `/stream/v1/asr/models` | GET | 模型列表 |
 | `/stream/v1/asr/health` | GET | 健康检查 |
 | `/ws/v1/asr` | WS | 流式识别(Aliyun 协议) |
@@ -151,7 +152,7 @@ WebSocket 测试页:
 | 端点 | 方法 | 说明 |
 |---|---|---|
 | `/stream/v1/tts` | POST | 语音合成 |
-| `/openai/v1/audio/speech` | POST | OpenAI 兼容 |
+| `/v1/audio/speech` | POST | OpenAI 兼容 TTS |
 | `/rest/v1/tts/async` | POST/GET | 异步长文本合成 |
 | `/stream/v1/tts/voices` | GET | 音色列表 |
 | `/stream/v1/tts/voices/info` | GET | 音色详细信息 |
