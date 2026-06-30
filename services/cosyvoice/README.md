@@ -56,7 +56,9 @@ uv run python server.py
 
 ## vLLM 兼容性注意
 
-vLLM 加速 CosyVoice2 LLM 需要 `transformers>=4.55`,与本子服务的 `transformers==4.51.3` 不兼容。如需启用 `TTS_LOAD_VLLM=true`,要么:
+这里的 `TTS_LOAD_VLLM` 只表示 legacy `services/cosyvoice` 进程内加载 vLLM 加速 CosyVoice2 LLM 组件,不是新增的 `services/cosyvoice3_vllm_omni`。
+
+进程内 vLLM 加速 CosyVoice2 LLM 需要 `transformers>=4.55`,与本子服务的 `transformers==4.51.3` 不兼容。如需启用 `TTS_LOAD_VLLM=true`,要么:
 
 1. 单独建一个 vLLM 子服务,本子服务 `TTS_LOAD_VLLM=false`;或
 2. 在本 venv 外手动 `pip install --no-deps vllm` 自担依赖冲突风险。

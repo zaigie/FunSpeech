@@ -33,13 +33,13 @@
 
 x-gateway-env: &gateway-env
   # 网关到子服务的 URL — 在 docker network 内通过 service name 互访
-  FUNASR_SERVICE_URLS: http://funasr-0:8001
-  DOLPHIN_SERVICE_URLS: http://dolphin-0:8002
-  QWEN3_ASR_SERVICE_URLS: http://qwen3-asr-0:8003
-  COSYVOICE_SERVICE_URLS: http://cosyvoice-0:8004
-  QWEN3_TTS_SERVICE_URLS: http://qwen3-tts-0:8005
-  QWEN3_TTS_VLLM_OMNI_SERVICE_URLS: http://qwen3-tts-vllm-omni-0:8006
-  COSYVOICE3_VLLM_OMNI_SERVICE_URLS: http://cosyvoice3-vllm-omni-0:8007
+  FUNASR_SERVICE_URLS: ${FUNASR_SERVICE_URLS:-http://funasr-0:8001}
+  DOLPHIN_SERVICE_URLS: ${DOLPHIN_SERVICE_URLS:-http://dolphin-0:8002}
+  QWEN3_ASR_SERVICE_URLS: ${QWEN3_ASR_SERVICE_URLS:-http://qwen3-asr-0:8003}
+  COSYVOICE_SERVICE_URLS: ${COSYVOICE_SERVICE_URLS:-http://cosyvoice-0:8004}
+  QWEN3_TTS_SERVICE_URLS: ${QWEN3_TTS_SERVICE_URLS:-http://qwen3-tts-0:8005}
+  QWEN3_TTS_VLLM_OMNI_SERVICE_URLS: ${QWEN3_TTS_VLLM_OMNI_SERVICE_URLS:-http://qwen3-tts-vllm-omni-0:8006}
+  COSYVOICE3_VLLM_OMNI_SERVICE_URLS: ${COSYVOICE3_VLLM_OMNI_SERVICE_URLS:-http://cosyvoice3-vllm-omni-0:8007}
   TTS_ENGINE: ${TTS_ENGINE:-cosyvoice}
   INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-funspeech-internal}
   SERVICE_REQUEST_TIMEOUT: "120"

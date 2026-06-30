@@ -7,7 +7,7 @@ FunSpeech 微服务子服务集合。每个子目录是一个**独立 Python 项
 | `funasr` | 8001 | Paraformer / SenseVoice + VAD/PUNC | 是 | 离线 + 实时 WS |
 | `dolphin` | 8002 | DataoceanAI Dolphin | 是 | 仅离线 |
 | `qwen3_asr_vllm` | 8003 | Qwen3-ASR-1.7B | 是 (vLLM) | 离线 + 实时 WS |
-| `cosyvoice` | 8004 | CosyVoice2 / CosyVoice3 | 是 (vLLM 加速 LLM) | TTS 离线 + 流式 + 音色管理 |
+| `cosyvoice` | 8004 | CosyVoice2 / CosyVoice3 | 是 (可选进程内 vLLM) | TTS 离线 + 流式 + 音色管理 |
 | `qwen3_tts` | 8005 | Qwen3-TTS Base | 是 | 开源本地 TTS 离线 + WS + 音色管理 |
 | `qwen3_tts_vllm_omni` | 8006 | Qwen3-TTS Base / CustomVoice / VoiceDesign | 是 (vLLM-Omni) | TTS Speech API facade + 音色管理 |
 | `cosyvoice3_vllm_omni` | 8007 | CosyVoice3 | 是 (vLLM-Omni) | TTS Speech API facade + 音色管理 |

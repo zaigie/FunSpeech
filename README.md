@@ -18,7 +18,7 @@ ASR + TTS API 网关,兼容阿里云语音 API 与 OpenAI TTS API,支持 WebSock
 > [!IMPORTANT]
 > **从单体版升级? 先读** [`docs/migration_to_latest.md`](./docs/migration_to_latest.md)
 >
-> 本分支已重构为微服务架构 (gateway + 4 个 GPU 子服务)。对外 HTTP/WS 协议**字节级兼容**, 客户端代码不用动; 但部署侧 docker-compose、模型缓存挂载路径、`.env` 变量都有变化。迁移文档覆盖:数据原地复用、必改的 mount 路径、`.env` 增删项、零停机切换、回滚步骤。
+> 本分支已重构为微服务架构 (gateway + 多个可选 GPU 子服务)。对外 HTTP/WS 协议**字节级兼容**, 客户端代码不用动; 但部署侧 docker-compose、模型缓存挂载路径、`.env` 变量都有变化。迁移文档覆盖:数据原地复用、必改的 mount 路径、`.env` 增删项、零停机切换、回滚步骤。
 
 ## 架构
 
@@ -30,16 +30,20 @@ ASR + TTS API 网关,兼容阿里云语音 API 与 OpenAI TTS API,支持 WebSock
                        │  - 采样率/格式转换      │
                        └────────┬────────────────┘
                                 │ HTTP / WS (X-Internal-Token)
-                ┌───────────────┼───────────────┬───────────────┬───────────────┐
-                ▼               ▼               ▼               ▼               ▼
-         funasr (GPU)   dolphin (GPU)   qwen3-asr (GPU)   cosyvoice (GPU)   qwen3-tts (GPU)
-         Paraformer/    DataoceanAI     Qwen3-ASR-1.7B    CosyVoice2/3     Qwen3-TTS
-         SenseVoice     Dolphin Small   (vLLM 加速)        (in-process)     local
+                 ┌──────────────┴──────────────┐
+                 │                             │
+        ASR 后端(可多选)                 TTS 后端(同一网关单选)
+                 │                             │
+       ┌─────────┼─────────┐        ┌──────────┼──────────┬──────────────┐
+       ▼         ▼         ▼        ▼          ▼          ▼              ▼
+   funasr    dolphin   qwen3-asr  cosyvoice  qwen3-tts  qwen3-tts      cosyvoice3
+ Paraformer/ Dataocean Qwen3-ASR  CosyVoice2/ Qwen3-TTS  vLLM-Omni      vLLM-Omni
+ SenseVoice  Dolphin   (vLLM)     CosyVoice3  local      Speech API     Speech API
 ```
 
 子服务各自一个 `pyproject.toml` + `uv.lock` + Dockerfile,依赖完全隔离。
 例如 funasr 用 transformers 4.51.3,qwen3-asr 用 transformers 4.57.1 + vLLM 0.11+,
-互不冲突。
+Qwen3-TTS / CosyVoice3 vLLM-Omni 用独立镜像启动 `vllm serve --omni`,互不冲突。
 
 ## 快速开始
 
@@ -83,6 +87,8 @@ TTS_ENGINE=qwen3-tts-vllm-omni docker compose up -d gateway qwen3-asr-0 qwen3-tt
 TTS_ENGINE=cosyvoice3-vllm-omni docker compose up -d gateway qwen3-asr-0 cosyvoice3-vllm-omni-0
 docker compose --profile funasr --profile dolphin up -d   # 全部 ASR 引擎
 ```
+
+非默认 TTS 后端请显式指定服务名,不要只加 profile;否则默认 `cosyvoice-0` 也会随默认服务启动。
 
 服务暴露在 `http://localhost:${GATEWAY_PORT:-8000}`。
 
@@ -164,7 +170,7 @@ WebSocket 测试页:
 | `INTERNAL_SERVICE_TOKEN` | `funspeech-internal` | 网关→子服务鉴权头(`X-Internal-Token`) |
 | `ASR_MODEL_MODE` | `all` | `all` / `offline` / `realtime` |
 | `TTS_ENGINE` | `cosyvoice` | `cosyvoice` / `qwen3-tts` / `qwen3-tts-vllm-omni` / `cosyvoice3-vllm-omni`;选择 TTS 后端,同一网关只能选一个 |
-| `TTS_MODEL_MODE` | `all` | `all` / `sft` / `clone` |
+| `TTS_MODEL_MODE` | `all` | 网关音色列表过滤;legacy CosyVoice 用 `all` / `sft` / `clone`,Qwen3 系后端可用 `base` / `clone` / `customvoice` / `voicedesign` 过滤 preset/clone 返回,实际模型加载以子服务 env 为准 |
 | `ASR_ENABLE_REALTIME_PUNC` | `false` | 流式中间结果是否带标点 |
 | `AUTO_LOAD_CUSTOM_ASR_MODELS` | - | 启动时预热的额外 ASR 模型 id |
 | `FUNASR_SERVICE_URLS` | `http://funasr-0:8001` | 子服务 URL,逗号分隔多副本 |
@@ -213,10 +219,13 @@ uv run python start.py
 | dolphin | ~12 req/s | ~80 ms | ~1 GiB |
 | qwen3-asr | **~5 req/s** (vLLM 内部 batch 可吃 64 并发) | ~190 ms | **0.85 × 卡显存** (vLLM KV pool) |
 | cosyvoice (clone) | **2 路实时 TTS** (RTF ≈ 1.05) | ~3.5 s / 句 | ~4 GiB |
+| qwen3-tts | 不按实时容量规划 | ~10.3 s / 句 | ~3 GiB |
+| qwen3-tts-vllm-omni | **8 路实时 TTS** (N=8 mean RTF ≈ 0.81) | ~0.9 s / 句 | ~19-20 GiB |
+| cosyvoice3-vllm-omni | **2 路实时 TTS** | ~6.1 s / 句 | ~10-12 GiB |
 
-> ASR 看 req/s, TTS 看"几路实时" (RTF ≤ 1) — 单副本 sem=2 时同时 2 路 RTF=1.05 刚好实时, 4 路就开始 RTF=1.75 卡顿。想 N 路实时 TTS 需 ceil(N/2) 张卡。
+> ASR 看 req/s, TTS 看"几路实时" (RTF ≤ 1)。legacy Qwen3-TTS 本地后端单路已慢于实时;需要 Qwen3-TTS 性能时优先用 `qwen3-tts-vllm-omni`。
 
-**横向扩展 = 多卡多副本**, 不是单卡多副本 (同一服务两副本绑同一张卡, 实测总容量不升反降)。
+扩容优先用多卡多副本。`qwen3-asr` 和 `qwen3-tts-vllm-omni` 这类 vLLM 后端通常独占 GPU;legacy CosyVoice 在显存足够时可以同卡多副本,但按约 0.85 折扣估算容量。具体用 `scripts/plan_deployment.py` 生成拓扑。
 
 用规划脚本一键算出应该开几副本 / 怎么绑卡, 并在当前目录生成完整 `docker-compose.generated.yml`:
 
@@ -235,7 +244,7 @@ GPU 子服务使用两类权重缓存:
 | 缓存 | 默认宿主机路径 | 容器路径 | 主要使用者 |
 |---|---|---|---|
 | `MODELSCOPE_CACHE` | `~/.cache/modelscope/hub/models` | `/root/.cache/modelscope/hub` | FunASR / CosyVoice / Qwen3-ASR |
-| `HF_CACHE` | `~/.cache/huggingface` | `/root/.cache/huggingface` | Qwen3-TTS |
+| `HF_CACHE` | `~/.cache/huggingface` | `/root/.cache/huggingface` | Qwen3-TTS / vLLM-Omni TTS |
 
 因此即便各子服务 transformers / qwen 包版本不同,权重文件也可以跨容器重用。
 
@@ -254,10 +263,12 @@ modelscope download --model DataoceanAI/dolphin-small
 modelscope download --model Qwen/Qwen3-ASR-1.7B
 ```
 
-Qwen3-TTS Base 预下载:
+Qwen3-TTS / vLLM-Omni TTS 预下载:
 
 ```bash
 HF_ENDPOINT=https://hf-mirror.com huggingface-cli download Qwen/Qwen3-TTS-12Hz-0.6B-Base
+HF_ENDPOINT=https://hf-mirror.com huggingface-cli download FunAudioLLM/Fun-CosyVoice3-0.5B-2512
+# 如果切到 Qwen3-TTS CustomVoice / VoiceDesign,按 QWEN3_TTS_OMNI_MODEL_ID 下载对应仓库
 ```
 
 ## 音色管理(克隆)
@@ -268,6 +279,8 @@ CosyVoice 和 Qwen3-TTS 使用不同的音色目录,不要混用:
 |---|---|---|---|
 | `cosyvoice` | `./voices` | 预设音色 + clone | `TTS_MODEL_MODE=all/clone` 时支持 clone |
 | `qwen3-tts` | `./qwen3_voices` | Base Clone only | 没有 `中文女` 这类预设音色,合成前必须先注册 clone voice |
+| `qwen3-tts-vllm-omni` | `./qwen3_omni_voices` | Base Clone / CustomVoice / VoiceDesign | Base 模型支持上传 clone;CustomVoice/VoiceDesign 走上游预置声线 |
+| `cosyvoice3-vllm-omni` | `./cosyvoice3_omni_voices` | Clone only | vLLM-Omni Speech API 模式没有内置 `中文女`,合成前必须先注册 clone voice |
 
 CosyVoice:把 `张三.wav` + `张三.txt` 放到 `./voices/` 卷,然后直接调用 cosyvoice 子服务扫描:
 
@@ -277,7 +290,7 @@ curl -X POST \
   http://localhost:8004/voices/refresh
 ```
 
-Qwen3-TTS Base Clone:直接上传参考音频和准确参考文本到 qwen3-tts 子服务:
+Qwen3-TTS Base Clone:直接上传参考音频和准确参考文本到对应子服务:
 
 ```bash
 curl -F name=zhangsan \
@@ -285,6 +298,7 @@ curl -F name=zhangsan \
   -F audio=@./ref.wav \
   -H "X-Internal-Token: ${INTERNAL_SERVICE_TOKEN:-funspeech-internal}" \
   http://localhost:8005/voices
+# vLLM-Omni Qwen3 Base 用 8006;CosyVoice3 vLLM-Omni 用 8007
 ```
 
 之后合成时使用注册名:
@@ -296,13 +310,13 @@ curl -X POST "http://localhost:8000/stream/v1/tts" \
   --output speech.wav
 ```
 
-所有音色状态会持久化到各自目录:CosyVoice 是 `spk2info.pt` + `voice_registry.json`,Qwen3-TTS 是参考音频、`prompts/*.pt` 和 `voice_registry.json`。
+所有音色状态会持久化到各自目录:CosyVoice 是 `spk2info.pt` + `voice_registry.json`,legacy Qwen3-TTS 是参考音频、`prompts/*.pt` 和 `voice_registry.json`,vLLM-Omni TTS 是参考音频、文本和 `voice_registry.json`。
 
 ## 已知设计取舍
 
-- **vLLM 加速 CosyVoice 默认关闭**:vLLM 0.11+ 要求 transformers ≥4.55,
+- **legacy CosyVoice 进程内 vLLM 默认关闭**:`TTS_LOAD_VLLM` 只控制 `services/cosyvoice` 里的 LLM 段加速。vLLM 0.11+ 要求 transformers ≥4.55,
   与 CosyVoice 主代码所需的 4.51.3 冲突。如果性能瓶颈明显,可拆出 `services/cosyvoice_vllm/`
-  独立 venv 启用,见 `services/cosyvoice/README.md` 的多副本注释。
+  独立 venv 启用,见 `services/cosyvoice/README.md` 的多副本注释。`qwen3-tts-vllm-omni` / `cosyvoice3-vllm-omni` 是独立 `vllm serve --omni` 子服务,不受 `TTS_LOAD_VLLM` 影响。
 - **Qwen3-ASR 流式不走 vLLM 通用 `/v1/realtime`**:vLLM 通用 realtime 端点对
   Qwen3-ASR 质量明显劣化(无跨段上下文、无 token 修订,见 vllm Issue #35767)。
   我们用官方 `qwen_asr.Qwen3ASRModel.streaming_transcribe` + `init_streaming_state`,
@@ -329,7 +343,11 @@ curl -X POST "http://localhost:8000/stream/v1/tts" \
 │   ├── funasr/
 │   ├── dolphin/
 │   ├── qwen3_asr_vllm/
-│   └── cosyvoice/             # third_party/CosyVoice 是官方 submodule
+│   ├── cosyvoice/             # third_party/CosyVoice 是官方 submodule
+│   ├── qwen3_tts/
+│   ├── qwen3_tts_vllm_omni/
+│   ├── cosyvoice3_vllm_omni/
+│   └── vllm_omni_tts_common/
 ├── scripts/
 │   ├── plan_deployment.py     # 副本规划 (零依赖)
 │   └── analyze_audio_rms.py   # 远场过滤阈值分析

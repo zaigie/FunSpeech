@@ -1,6 +1,6 @@
 # 升级指南: 单体版 → 微服务版
 
-如果你已经在生产跑老版本 (单 `funspeech` 容器, 进程内加载 funasr + cosyvoice), 现在想升到本分支 (`gateway` + 4 个 GPU 子服务), 这份文档帮你**快速完成迁移, 不丢生产数据, 不改对外接口**。
+如果你已经在生产跑老版本 (单 `funspeech` 容器, 进程内加载 funasr + cosyvoice), 现在想升到本分支 (`gateway` + 多个可选 GPU 子服务), 这份文档帮你**快速完成迁移, 不丢生产数据, 不改对外接口**。
 
 读完先记三件事:
 
@@ -16,7 +16,7 @@
 
 | 维度 | 旧版 (单体) | 新版 (微服务) |
 |---|---|---|
-| 部署形态 | 1 个容器, 进程内 import funasr / cosyvoice | gateway (CPU) + funasr/cosyvoice/qwen3-asr/dolphin 各自容器 (GPU) |
+| 部署形态 | 1 个容器, 进程内 import funasr / cosyvoice | gateway (CPU) + ASR/TTS GPU 子服务;TTS 可在 cosyvoice / qwen3-tts / vLLM-Omni 后端中单选 |
 | 依赖冲突 | funasr 与 cosyvoice 的 transformers/torch 版本互掐, 经常需要手动 pin | 每个子服务独立 venv (`uv.lock`), 不互相干扰 |
 | 多 GPU 扩展 | 单进程, 多 GPU 也只能轮转 | 多副本横向扩展, 真正能吃满 N 张卡 |
 | 新模型 (Qwen3-ASR) | ❌ 无法集成 (vLLM 0.11 与旧版 transformers 冲突) | ✅ 独立子服务, vLLM 加速 |
@@ -42,7 +42,7 @@ git pull + git submodule update --init --recursive
   ↓
 .env 加几个新变量 (见 §5)
   ↓
-docker compose build (新的 4 + 1 镜像)
+docker compose build (gateway + GPU 子服务镜像)
   ↓
 docker compose up -d
   ↓
@@ -145,6 +145,9 @@ QWEN3_ASR_SERVICE_URLS=http://qwen3-asr-0:8003   # 默认 ASR 引擎
 COSYVOICE_SERVICE_URLS=http://cosyvoice-0:8004
 FUNASR_SERVICE_URLS=http://funasr-0:8001         # 用 --profile funasr 才生效
 DOLPHIN_SERVICE_URLS=http://dolphin-0:8002       # 用 --profile dolphin 才生效
+QWEN3_TTS_SERVICE_URLS=http://qwen3-tts-0:8005
+QWEN3_TTS_VLLM_OMNI_SERVICE_URLS=http://qwen3-tts-vllm-omni-0:8006
+COSYVOICE3_VLLM_OMNI_SERVICE_URLS=http://cosyvoice3-vllm-omni-0:8007
 
 # qwen3-asr 离线场景务必加 (有外网就不用)
 HF_HUB_OFFLINE=1
@@ -190,6 +193,14 @@ docker compose ps    # 等所有都 (healthy)
 docker compose --profile funasr --profile dolphin up -d
 ```
 
+切换非默认 TTS 后端时显式指定服务名,避免默认 `cosyvoice-0` 一起启动:
+
+```bash
+TTS_ENGINE=qwen3-tts docker compose up -d gateway qwen3-asr-0 qwen3-tts-0
+TTS_ENGINE=qwen3-tts-vllm-omni docker compose up -d gateway qwen3-asr-0 qwen3-tts-vllm-omni-0
+TTS_ENGINE=cosyvoice3-vllm-omni docker compose up -d gateway qwen3-asr-0 cosyvoice3-vllm-omni-0
+```
+
 ### 6.2 Smoke 验证
 
 ```bash
@@ -229,10 +240,12 @@ docker compose logs -f cosyvoice-0
 | funasr (all) | ~12 req/s (单条 ~80ms) | ~3 GiB |
 | qwen3-asr | ~5 req/s (单连接), vLLM 内部 batch 可吃 64 并发 | ~20 GiB (vLLM KV pool 0.85) |
 | cosyvoice (clone) | **2 路实时 TTS** (RTF ≈ 1.05); 第 3 路开始 RTF > 1 卡顿 | ~4 GiB |
+| qwen3-tts-vllm-omni | **8 路实时 TTS** (N=8 mean RTF ≈ 0.81) | ~19-20 GiB |
+| cosyvoice3-vllm-omni | **2 路实时 TTS** | ~10-12 GiB |
 
 > **TTS 容量看 RTF 而不是 req/s**: TTS 单条要跑 3-4 秒, 用户真正关心的是"能同时开几路 TTS 让客户端听起来不卡"。实测单副本 (sem=2) 同时跑 2 路时 RTF=1.05 (刚好实时), 4 路时 RTF=1.75 (开始卡顿)。**1 张卡 = 2 路实时 TTS**, 想 10 路就要 5 张卡, 没有捷径。
 
-想要更高容量: **横向扩多副本** (多卡)。不要在同一张卡上塞同服务的多副本 — 实测会因 GPU SM 抢占, 总吞吐 / RTF 反而恶化。
+想要更高容量: **横向扩多副本**。qwen3-asr 不要同卡多副本;Qwen3-TTS vLLM-Omni 通常按独占 24G 卡规划;legacy CosyVoice 在显存够时可以同卡多副本,但按约 `0.85 ×` 折扣估算。
 
 具体几副本几卡, 用规划脚本一键算 (零依赖):
 
