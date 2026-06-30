@@ -1,0 +1,9 @@
+--- 测试 concurrency=1 ---
+  wall=0.89s  ok=1/1  req/s=1.12  rtf=5.30  p50=0.89s  p95=0.89s  max=0.89s
+--- 测试 concurrency=2 ---
+  wall=1.10s  ok=2/2  req/s=1.81  rtf=8.19  p50=1.05s  p95=1.10s  max=1.10s
+--- 测试 concurrency=4 ---
+  wall=1.66s  ok=4/4  req/s=2.41  rtf=11.78  p50=1.65s  p95=1.66s  max=1.66s
+--- 测试 concurrency=8 ---
+  wall=3.89s  ok=8/8  req/s=2.06  rtf=9.83  p50=3.89s  p95=3.89s  max=3.89s
+-> benchmarks/results/tts/qwen3_tts_vllm_omni_base_clone.json

@@ -1,0 +1,9 @@
+--- 测试 concurrency=1 ---
+  wall=6.08s  ok=1/1  req/s=0.16  rtf=1.76  p50=6.08s  p95=6.08s  max=6.08s
+--- 测试 concurrency=2 ---
+  wall=8.17s  ok=2/2  req/s=0.24  rtf=1.82  p50=3.96s  p95=8.17s  max=8.17s
+--- 测试 concurrency=4 ---
+  wall=14.62s  ok=4/4  req/s=0.27  rtf=1.93  p50=12.20s  p95=14.62s  max=14.62s
+--- 测试 concurrency=8 ---
+  wall=24.21s  ok=8/8  req/s=0.33  rtf=2.10  p50=15.19s  p95=24.21s  max=24.21s
+-> benchmarks/results/tts/cosyvoice3_vllm_omni_clone.json

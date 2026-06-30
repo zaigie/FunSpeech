@@ -4,7 +4,8 @@
 
 根据你的:
   - GPU 资源 (卡数、单卡显存)
-  - 要启用的子服务 (funasr / dolphin / qwen3-asr / cosyvoice / qwen3-tts)
+  - 要启用的子服务 (funasr / dolphin / qwen3-asr / cosyvoice / qwen3-tts /
+    qwen3-tts-vllm-omni / cosyvoice3-vllm-omni)
   - 每个服务的目标并发数 (同时活跃的客户端请求数, 不是 QPS)
 
 输出:
@@ -51,6 +52,10 @@ THROUGHPUT_PER_REPLICA = {
     "qwen3-asr":  5.0,   # 实测 qwen3_patched_high N=64: 5.26 req/s
     "cosyvoice":  0.34,  # 实测 tts_patched_sem2 N=8: 0.34 req/s
     "qwen3-tts":  0.11,  # 实测 qwen3_tts_base_clone_sem1 N=4/8: ~0.106 req/s
+    # 实测 qwen3_tts_vllm_omni_base_clone N=8: 2.06 req/s, N=4 峰值 2.41 req/s
+    "qwen3-tts-vllm-omni": 2.00,
+    # 实测 cosyvoice3_vllm_omni_clone N=8: 0.33 req/s
+    "cosyvoice3-vllm-omni": 0.33,
 }
 
 # 单条请求平均延迟 (秒) — 实测值, 用来从"并发数"反推副本数
@@ -60,6 +65,8 @@ LATENCY_SEC_PER_REPLICA = {
     "qwen3-asr":  0.20,  # 实测 ~190 ms (含 vLLM continuous batching)
     "cosyvoice":  3.50,  # 实测 ~3.5 s (autoregressive TTS, 慢)
     "qwen3-tts": 10.30,  # 实测 Base Clone 单请求 ~10.2-10.4 s
+    "qwen3-tts-vllm-omni": 0.90,   # 实测单路 0.89s; N=8 mean 3.87s
+    "cosyvoice3-vllm-omni": 6.10,  # 实测单路 6.08s; GPU ORT 单路 4.86s 但吞吐不升
 }
 
 # 单副本能"同时"处理的活跃请求数 (= GPU_INFERENCE_CONCURRENCY 或 vLLM batch)
@@ -70,6 +77,8 @@ PARALLEL_PER_REPLICA = {
     "qwen3-asr": 64,      # vLLM continuous batching, 实测 N=64 仍稳
     "cosyvoice":  2,      # sem=2, 实测最佳点 (sem=8 反而慢)
     "qwen3-tts":  1,      # 默认 sem=1; sem=2 仅小幅提吞吐且会拉高单请求延迟
+    "qwen3-tts-vllm-omni": 10,
+    "cosyvoice3-vllm-omni": 8,
 }
 
 # cosyvoice (TTS) 的"实时容量" — 单副本能同时支持多少路 RTF ≤ 1 的客户端。
@@ -88,6 +97,10 @@ TTS_REALTIME_CAPACITY_PER_REPLICA = 2  # cosyvoice 单副本 sem=2 时
 # Qwen3-TTS Base Clone 在同卡 4090 实测标准 RTF≈1.7。
 # 也就是单副本连 1 路实时都保不住; 规划时按 1 路/副本隔离排队, 但输出警告。
 QWEN3_TTS_REALTIME_CAPACITY_PER_REPLICA = 0
+# Qwen3-TTS vLLM-Omni Base Clone: N=8 mean 标准 RTF≈0.81, N=8 仍满足实时。
+QWEN3_TTS_OMNI_REALTIME_CAPACITY_PER_REPLICA = 8
+# CosyVoice3 vLLM-Omni: N=2 仍实时, N=4 mean 标准 RTF≈1.5。
+COSYVOICE3_OMNI_REALTIME_CAPACITY_PER_REPLICA = 2
 
 # 单副本的显存 (GiB), 不含 vLLM KV cache 池
 # 注意 qwen3-asr 的总显存 = WEIGHTS + KV_pool, KV_pool 见下面 qwen3_mem_util_for_card
@@ -99,6 +112,9 @@ MODEL_MEM_GIB = {
     "cosyvoice": {"all": 5.0, "clone": 3.5, "sft": 1.5},
     # 实测 idle 约 +2.65 GiB, benchmark 约 +3.0 GiB; 另加 CUDA context。
     "qwen3-tts": {"base": 3.0},
+    # vLLM-Omni 两阶段服务会预留 stage KV/cache。这里按 4090 实测净增显存取整。
+    "qwen3-tts-vllm-omni": {"base": 20.0, "custom": 20.0, "voicedesign": 20.0},
+    "cosyvoice3-vllm-omni": {"clone": 12.0},
 }
 
 # 每个 CUDA context 在 GPU 上的额外开销 (经验值 ~300-500 MiB)
@@ -112,6 +128,8 @@ SERVICE_TO_BASE_PORT = {
     "qwen3-asr": 8003,
     "cosyvoice": 8004,
     "qwen3-tts": 8005,
+    "qwen3-tts-vllm-omni": 8006,
+    "cosyvoice3-vllm-omni": 8007,
 }
 
 SERVICE_TO_SVC_NAME = {
@@ -120,6 +138,8 @@ SERVICE_TO_SVC_NAME = {
     "qwen3-asr": "qwen3-asr",
     "cosyvoice": "cosyvoice",
     "qwen3-tts": "qwen3-tts",
+    "qwen3-tts-vllm-omni": "qwen3-tts-vllm-omni",
+    "cosyvoice3-vllm-omni": "cosyvoice3-vllm-omni",
 }
 
 SERVICE_TO_IMAGE = {
@@ -128,6 +148,8 @@ SERVICE_TO_IMAGE = {
     "qwen3-asr": "docker.cnb.cool/nexa/funspeech/qwen3-asr:latest",
     "cosyvoice": "docker.cnb.cool/nexa/funspeech/cosyvoice:latest",
     "qwen3-tts": "docker.cnb.cool/nexa/funspeech/qwen3-tts:latest",
+    "qwen3-tts-vllm-omni": "docker.cnb.cool/nexa/funspeech/qwen3-tts-vllm-omni:latest",
+    "cosyvoice3-vllm-omni": "docker.cnb.cool/nexa/funspeech/cosyvoice3-vllm-omni:latest",
 }
 
 SERVICE_TO_BUILD_CONTEXT = {
@@ -136,6 +158,18 @@ SERVICE_TO_BUILD_CONTEXT = {
     "qwen3-asr": "./services/qwen3_asr_vllm",
     "cosyvoice": "./services/cosyvoice",
     "qwen3-tts": "./services/qwen3_tts",
+    "qwen3-tts-vllm-omni": ".",
+    "cosyvoice3-vllm-omni": ".",
+}
+
+SERVICE_TO_DOCKERFILE = {
+    "funasr": "Dockerfile",
+    "dolphin": "Dockerfile",
+    "qwen3-asr": "Dockerfile",
+    "cosyvoice": "Dockerfile",
+    "qwen3-tts": "Dockerfile",
+    "qwen3-tts-vllm-omni": "services/qwen3_tts_vllm_omni/Dockerfile",
+    "cosyvoice3-vllm-omni": "services/cosyvoice3_vllm_omni/Dockerfile",
 }
 
 
@@ -163,13 +197,18 @@ class ServiceRequest:
       cosyvoice 副本 = ceil(路数 / 实时容量), 实时容量是工程实测点。
     """
 
-    name: str               # funasr / dolphin / qwen3-asr / cosyvoice / qwen3-tts
+    name: str               # funasr / dolphin / qwen3-asr / cosyvoice / qwen3-tts / *-vllm-omni
     concurrency: int        # ASR: 并发请求数; TTS: 路数/隔离请求数
     mode: str               # all / offline / realtime / clone / sft / default
 
     @property
     def is_tts(self) -> bool:
-        return self.name in ("cosyvoice", "qwen3-tts")
+        return self.name in (
+            "cosyvoice",
+            "qwen3-tts",
+            "qwen3-tts-vllm-omni",
+            "cosyvoice3-vllm-omni",
+        )
 
     @property
     def per_replica_qps(self) -> float:
@@ -190,6 +229,10 @@ class ServiceRequest:
             return TTS_REALTIME_CAPACITY_PER_REPLICA
         if self.name == "qwen3-tts":
             return QWEN3_TTS_REALTIME_CAPACITY_PER_REPLICA
+        if self.name == "qwen3-tts-vllm-omni":
+            return QWEN3_TTS_OMNI_REALTIME_CAPACITY_PER_REPLICA
+        if self.name == "cosyvoice3-vllm-omni":
+            return COSYVOICE3_OMNI_REALTIME_CAPACITY_PER_REPLICA
         return None
 
     @property
@@ -320,6 +363,11 @@ def plan(gpus: List[GPU], services: List[ServiceRequest],
                 "⚠️  qwen3-tts Base Clone 在 4090 实测单路 RTF≈1.7, "
                 "不满足实时播放; 生成的副本数只用于减少排队, 不能保证 RTF≤1。"
             )
+        if svc.name == "qwen3-tts-vllm-omni" and svc.concurrency > 0:
+            warnings.append(
+                "⚠️  qwen3-tts-vllm-omni 在 4090 实测吞吐明显提升, "
+                "但单副本压测显存约 19-20GiB, 建议按独占 24G 卡规划。"
+            )
 
     # 把每个服务展开成 N 个副本
     replicas: List[Tuple[ServiceRequest, int]] = []
@@ -431,10 +479,14 @@ def infer_tts_engine(services: List[ServiceRequest],
                      explicit: Optional[str] = None) -> str:
     """部署级 TTS 后端选择。
 
-    网关一次只选择一个 TTS 后端: cosyvoice 或 qwen3-tts。
+    网关一次只选择一个 TTS 后端。
     """
     if explicit:
         engine = explicit.strip().lower()
+    elif any(s.name == "qwen3-tts-vllm-omni" for s in services):
+        engine = "qwen3-tts-vllm-omni"
+    elif any(s.name == "cosyvoice3-vllm-omni" for s in services):
+        engine = "cosyvoice3-vllm-omni"
     elif any(s.name == "qwen3-tts" for s in services):
         engine = "qwen3-tts"
     elif any(s.name == "cosyvoice" for s in services):
@@ -450,6 +502,11 @@ def infer_tts_engine(services: List[ServiceRequest],
         "qwentts": "qwen3-tts",
         "qwen3": "qwen3-tts",
         "qwen3-tts": "qwen3-tts",
+        "qwen3-tts-vllm": "qwen3-tts-vllm-omni",
+        "qwen3-tts-vllm-omni": "qwen3-tts-vllm-omni",
+        "qwen3-vllm": "qwen3-tts-vllm-omni",
+        "cosyvoice3-vllm": "cosyvoice3-vllm-omni",
+        "cosyvoice3-vllm-omni": "cosyvoice3-vllm-omni",
     }
     if engine not in aliases:
         raise ValueError(f"unsupported tts_engine: {explicit}")
@@ -467,6 +524,14 @@ def validate_tts_selection(services: List[ServiceRequest],
             raise ValueError(
                 "qwen3-tts currently supports only mode=base "
                 "(Qwen3-TTS Base Clone)"
+            )
+        if (
+            service.name == "qwen3-tts-vllm-omni"
+            and service.concurrency > 0
+            and service.mode not in ("base", "custom", "voicedesign")
+        ):
+            raise ValueError(
+                "qwen3-tts-vllm-omni mode must be base/custom/voicedesign"
             )
     requested = {
         service.name
@@ -507,20 +572,24 @@ def render(gpus: List[GPU], services: List[ServiceRequest],
     out.append(f"  - TTS 后端: {selected_tts_engine}")
     if selected_tts_engine == "qwen3-tts":
         out.append("      Qwen3-TTS 为开源本地 GPU 子服务, 不生成 cosyvoice 子服务")
+    if selected_tts_engine.endswith("vllm-omni"):
+        out.append("      vLLM-Omni TTS 为独立 GPU 子服务, 不生成 legacy TTS 子服务")
     for s in services:
         n = s.replicas_needed(max_queue_sec)
         if s.is_tts:
             rt_cap = s.per_replica_realtime_capacity
             if rt_cap is not None and rt_cap <= 0:
+                reason = "单路 RTF≈1.7" if s.name == "qwen3-tts" else "尚未完成本机 RTF 回填"
                 out.append(
                     f"  - {s.name:<10s}  请求路数 {s.concurrency:>3d}, "
-                    f"单副本实测不能保实时 (单路 RTF≈1.7) → "
+                    f"单副本不能按实时容量承诺 ({reason}) → "
                     f"按 1 路/副本隔离排队, 需 {n} 副本 (mode={s.mode})"
                 )
                 if n > 0:
+                    suggestion = "当前更适合选择 cosyvoice" if s.name == "qwen3-tts" else "先跑 benchmark 再调整容量常量"
                     out.append(
                         f"      估算: {n} 副本可减少排队叠加, 但每路仍慢于实时; "
-                        f"如要求 RTF≤1, 当前更适合选择 cosyvoice。"
+                        f"如要求 RTF≤1, {suggestion}。"
                     )
             else:
                 rt_cap = rt_cap or 1
@@ -667,7 +736,15 @@ def render_full_compose(gpus: List[GPU], services: List[ServiceRequest],
     ])
     lines.extend(_render_gateway_service(gateway_env))
 
-    for svc_name in ("funasr", "dolphin", "qwen3-asr", "cosyvoice", "qwen3-tts"):
+    for svc_name in (
+        "funasr",
+        "dolphin",
+        "qwen3-asr",
+        "cosyvoice",
+        "qwen3-tts",
+        "qwen3-tts-vllm-omni",
+        "cosyvoice3-vllm-omni",
+    ):
         for placement in by_svc.get(svc_name, []):
             lines.extend(
                 _render_subservice(
@@ -691,7 +768,15 @@ def _render_gateway_env(by_svc: Dict[str, List[ReplicaPlacement]],
                         service_modes: Dict[str, str],
                         tts_engine: str) -> List[str]:
     lines = []
-    for svc_name in ("funasr", "dolphin", "qwen3-asr", "cosyvoice", "qwen3-tts"):
+    for svc_name in (
+        "funasr",
+        "dolphin",
+        "qwen3-asr",
+        "cosyvoice",
+        "qwen3-tts",
+        "qwen3-tts-vllm-omni",
+        "cosyvoice3-vllm-omni",
+    ):
         placements = by_svc.get(svc_name)
         if not placements:
             continue
@@ -751,16 +836,27 @@ def _render_subservice(svc_name: str, mode: str,
         f"  {compose_name}:",
         "    build:",
         f"      context: {SERVICE_TO_BUILD_CONTEXT[svc_name]}",
-        "      dockerfile: Dockerfile",
-        "      args: *build-args",
+        f"      dockerfile: {SERVICE_TO_DOCKERFILE[svc_name]}",
+    ]
+    if svc_name == "cosyvoice3-vllm-omni":
+        lines.extend([
+            "      args:",
+            "        <<: *build-args",
+            "        INSTALL_ONNXRUNTIME_GPU: ${COSYVOICE3_OMNI_INSTALL_ONNXRUNTIME_GPU:-false}",
+        ])
+    else:
+        lines.append("      args: *build-args")
+    lines.extend([
         f"    image: {SERVICE_TO_IMAGE[svc_name]}",
         f"    container_name: funspeech-{compose_name}",
         "    environment:",
         "      <<: *subservice-env",
-    ]
+    ])
     lines.extend(_render_subservice_env(svc_name, mode, placement))
     lines.extend(_render_subservice_volumes(svc_name))
     lines.extend(_render_healthcheck(svc_name))
+    if svc_name in ("qwen3-tts-vllm-omni", "cosyvoice3-vllm-omni"):
+        lines.append("    shm_size: \"2g\"")
     lines.extend(_render_gpu_deploy(placement.gpu_idx))
     lines.extend([
         "    ulimits:",
@@ -834,6 +930,48 @@ def _render_subservice_env(svc_name: str, mode: str,
             f"      NVIDIA_VISIBLE_DEVICES: \"{placement.gpu_idx}\"",
             "      CUDA_VISIBLE_DEVICES: \"0\"",
         ]
+    if svc_name == "qwen3-tts-vllm-omni":
+        model_default = {
+            "base": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+            "custom": "Qwen/Qwen3-TTS-12Hz-0.6B-CustomVoice",
+            "voicedesign": "Qwen/Qwen3-TTS-12Hz-0.6B-VoiceDesign",
+        }.get(mode, "Qwen/Qwen3-TTS-12Hz-0.6B-Base")
+        task_default = {
+            "base": "Base",
+            "custom": "CustomVoice",
+            "voicedesign": "VoiceDesign",
+        }.get(mode, "Base")
+        return [
+            "      PORT: \"8006\"",
+            f"      QWEN3_TTS_OMNI_MODEL_ID: ${{QWEN3_TTS_OMNI_MODEL_ID:-{model_default}}}",
+            f"      QWEN3_TTS_OMNI_TASK_TYPE: ${{QWEN3_TTS_OMNI_TASK_TYPE:-{task_default}}}",
+            "      QWEN3_TTS_OMNI_VOICES_DIR: /app/qwen3_omni_voices",
+            "      QWEN3_TTS_OMNI_SERVE_COMMAND: ${QWEN3_TTS_OMNI_SERVE_COMMAND:-vllm}",
+            "      QWEN3_TTS_OMNI_GPU_MEM: ${QWEN3_TTS_OMNI_GPU_MEM:-}",
+            "      QWEN3_TTS_OMNI_STAGE_OVERRIDES: ${QWEN3_TTS_OMNI_STAGE_OVERRIDES:-}",
+            "      QWEN3_TTS_OMNI_EXTRA_ARGS: ${QWEN3_TTS_OMNI_EXTRA_ARGS:-}",
+            "      HF_ENDPOINT: ${HF_ENDPOINT:-}",
+            "      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-}",
+            "      TRANSFORMERS_OFFLINE: ${TRANSFORMERS_OFFLINE:-}",
+            f"      NVIDIA_VISIBLE_DEVICES: \"{placement.gpu_idx}\"",
+            "      CUDA_VISIBLE_DEVICES: \"0\"",
+        ]
+    if svc_name == "cosyvoice3-vllm-omni":
+        return [
+            "      PORT: \"8007\"",
+            "      COSYVOICE3_OMNI_MODEL_ID: ${COSYVOICE3_OMNI_MODEL_ID:-FunAudioLLM/Fun-CosyVoice3-0.5B-2512}",
+            "      COSYVOICE3_OMNI_VOICES_DIR: /app/cosyvoice3_omni_voices",
+            "      COSYVOICE3_OMNI_SERVE_COMMAND: ${COSYVOICE3_OMNI_SERVE_COMMAND:-vllm}",
+            "      COSYVOICE3_OMNI_GPU_MEM: ${COSYVOICE3_OMNI_GPU_MEM:-}",
+            "      COSYVOICE3_OMNI_STAGE_OVERRIDES: ${COSYVOICE3_OMNI_STAGE_OVERRIDES:-}",
+            "      COSYVOICE3_OMNI_EXTRA_ARGS: ${COSYVOICE3_OMNI_EXTRA_ARGS:-}",
+            "      COSYVOICE3_OMNI_FORCE_REF_PER_REQUEST: ${COSYVOICE3_OMNI_FORCE_REF_PER_REQUEST:-true}",
+            "      HF_ENDPOINT: ${HF_ENDPOINT:-}",
+            "      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-}",
+            "      TRANSFORMERS_OFFLINE: ${TRANSFORMERS_OFFLINE:-}",
+            f"      NVIDIA_VISIBLE_DEVICES: \"{placement.gpu_idx}\"",
+            "      CUDA_VISIBLE_DEVICES: \"0\"",
+        ]
     raise ValueError(f"unknown service: {svc_name}")
 
 
@@ -847,13 +985,21 @@ def _render_subservice_volumes(svc_name: str) -> List[str]:
     if svc_name == "qwen3-tts":
         lines.append("      - *huggingface-cache")
         lines.append("      - ./qwen3_voices:/app/qwen3_voices")
+    if svc_name == "qwen3-tts-vllm-omni":
+        lines.append("      - *huggingface-cache")
+        lines.append("      - ./qwen3_omni_voices:/app/qwen3_omni_voices")
+    if svc_name == "cosyvoice3-vllm-omni":
+        lines.append("      - *huggingface-cache")
+        lines.append("      - ./cosyvoice3_omni_voices:/app/cosyvoice3_omni_voices")
     return lines
 
 
 def _render_healthcheck(svc_name: str) -> List[str]:
     port = SERVICE_TO_BASE_PORT[svc_name]
-    retries = 12 if svc_name in ("qwen3-asr", "cosyvoice", "qwen3-tts") else 8
-    start_period = "300s" if svc_name in ("qwen3-asr", "cosyvoice", "qwen3-tts") else "180s"
+    slow_services = ("qwen3-asr", "cosyvoice", "qwen3-tts")
+    omni_services = ("qwen3-tts-vllm-omni", "cosyvoice3-vllm-omni")
+    retries = 20 if svc_name in omni_services else 12 if svc_name in slow_services else 8
+    start_period = "600s" if svc_name in omni_services else "300s" if svc_name in slow_services else "180s"
     return [
         "    healthcheck:",
         f"      test: [\"CMD\", \"curl\", \"-fsS\", \"http://localhost:{port}/health\"]",
@@ -1072,8 +1218,13 @@ def interactive() -> Tuple[List[GPU], List[ServiceRequest], str]:
     if _ask_yn("启用 TTS?", default=True):
         tts_enabled = True
         tts_engine = _ask_choice(
-            "  TTS 后端 (cosyvoice/qwen3-tts)",
-            ["cosyvoice", "qwen3-tts"],
+            "  TTS 后端 (cosyvoice/qwen3-tts/qwen3-tts-vllm-omni/cosyvoice3-vllm-omni)",
+            [
+                "cosyvoice",
+                "qwen3-tts",
+                "qwen3-tts-vllm-omni",
+                "cosyvoice3-vllm-omni",
+            ],
             "cosyvoice",
         )
     else:
@@ -1088,6 +1239,30 @@ def interactive() -> Tuple[List[GPU], List[ServiceRequest], str]:
             min_val=0,
         )
         services.append(ServiceRequest("qwen3-tts", c, "base"))
+
+    if tts_enabled and tts_engine == "qwen3-tts-vllm-omni":
+        print("  Qwen3-TTS vLLM-Omni 走 vllm serve Speech API, 默认模型为 0.6B Base")
+        print("  Base 支持上传参考音频克隆; CustomVoice/VoiceDesign 使用官方预设/描述式能力")
+        c = _ask_int(
+            "  想隔离多少路 Qwen3-TTS vLLM-Omni 请求",
+            default=1,
+            min_val=0,
+        )
+        mode = _ask_choice(
+            "  Qwen3-TTS Omni 模式 (base/custom/voicedesign)",
+            ["base", "custom", "voicedesign"],
+            "base",
+        )
+        services.append(ServiceRequest("qwen3-tts-vllm-omni", c, mode))
+
+    if tts_enabled and tts_engine == "cosyvoice3-vllm-omni":
+        print("  CosyVoice3 vLLM-Omni 走 vllm serve Speech API, 当前按克隆音色接入")
+        c = _ask_int(
+            "  想同时支持多少路 CosyVoice3 vLLM-Omni TTS",
+            default=2,
+            min_val=0,
+        )
+        services.append(ServiceRequest("cosyvoice3-vllm-omni", c, "clone"))
 
     if tts_enabled and tts_engine == "cosyvoice":
         print("  TTS 按 RTF (推理耗时/音频时长) ≤ 1 的实时路数算容量")

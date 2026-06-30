@@ -5,8 +5,10 @@
 #   funasr-0      (GPU)  -> 8001 -> Paraformer / SenseVoice + VAD/PUNC
 #   dolphin-0     (GPU)  -> 8002 -> Dolphin 离线
 #   qwen3-asr-0   (GPU)  -> 8003 -> Qwen3-ASR (vLLM 内嵌加速)
-#   cosyvoice-0   (GPU)  -> 8004 -> CosyVoice2/3 + 音色管理
-#   qwen3-tts-0   (GPU)  -> 8005 -> Qwen3-TTS 开源本地推理
+#   cosyvoice-0                (GPU)  -> 8004 -> CosyVoice2/3 + 音色管理
+#   qwen3-tts-0                (GPU)  -> 8005 -> Qwen3-TTS 开源本地推理
+#   qwen3-tts-vllm-omni-0      (GPU)  -> 8006 -> Qwen3-TTS via vLLM-Omni
+#   cosyvoice3-vllm-omni-0     (GPU)  -> 8007 -> CosyVoice3 via vLLM-Omni
 #
 # 启动 (本地有 http://127.0.0.1:7890 代理时):
 #   HTTP_PROXY=http://host.docker.internal:7890 \
@@ -22,6 +24,8 @@
 # 切换 TTS 后端:
 #   docker compose up -d                                         # 默认 cosyvoice
 #   TTS_ENGINE=qwen3-tts docker compose up -d gateway qwen3-asr-0 qwen3-tts-0
+#   TTS_ENGINE=qwen3-tts-vllm-omni docker compose up -d gateway qwen3-asr-0 qwen3-tts-vllm-omni-0
+#   TTS_ENGINE=cosyvoice3-vllm-omni docker compose up -d gateway qwen3-asr-0 cosyvoice3-vllm-omni-0
 #
 # 多副本 / 多卡:
 #   用 scripts/plan_deployment.py 算出配置, 生成完整 docker-compose.generated.yml
@@ -34,6 +38,8 @@ x-gateway-env: &gateway-env
   QWEN3_ASR_SERVICE_URLS: http://qwen3-asr-0:8003
   COSYVOICE_SERVICE_URLS: http://cosyvoice-0:8004
   QWEN3_TTS_SERVICE_URLS: http://qwen3-tts-0:8005
+  QWEN3_TTS_VLLM_OMNI_SERVICE_URLS: http://qwen3-tts-vllm-omni-0:8006
+  COSYVOICE3_VLLM_OMNI_SERVICE_URLS: http://cosyvoice3-vllm-omni-0:8007
   TTS_ENGINE: ${TTS_ENGINE:-cosyvoice}
   INTERNAL_SERVICE_TOKEN: ${INTERNAL_SERVICE_TOKEN:-funspeech-internal}
   SERVICE_REQUEST_TIMEOUT: "120"
@@ -265,6 +271,80 @@ services:
     <<: *gpu-deploy
     restart: unless-stopped
     profiles: ["qwen3-tts"]
+
+  qwen3-tts-vllm-omni-0:
+    build:
+      context: .
+      dockerfile: services/qwen3_tts_vllm_omni/Dockerfile
+      args: *build-args
+    image: docker.cnb.cool/nexa/funspeech/qwen3-tts-vllm-omni:latest
+    container_name: funspeech-qwen3-tts-vllm-omni-0
+    environment:
+      <<: *subservice-env
+      PORT: "8006"
+      QWEN3_TTS_OMNI_MODEL_ID: ${QWEN3_TTS_OMNI_MODEL_ID:-Qwen/Qwen3-TTS-12Hz-0.6B-Base}
+      QWEN3_TTS_OMNI_TASK_TYPE: ${QWEN3_TTS_OMNI_TASK_TYPE:-Base}
+      QWEN3_TTS_OMNI_VOICES_DIR: /app/qwen3_omni_voices
+      QWEN3_TTS_OMNI_SERVE_COMMAND: ${QWEN3_TTS_OMNI_SERVE_COMMAND:-vllm}
+      QWEN3_TTS_OMNI_GPU_MEM: ${QWEN3_TTS_OMNI_GPU_MEM:-}
+      QWEN3_TTS_OMNI_STAGE_OVERRIDES: ${QWEN3_TTS_OMNI_STAGE_OVERRIDES:-}
+      QWEN3_TTS_OMNI_EXTRA_ARGS: ${QWEN3_TTS_OMNI_EXTRA_ARGS:-}
+      HF_ENDPOINT: ${HF_ENDPOINT:-}
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-}
+      TRANSFORMERS_OFFLINE: ${TRANSFORMERS_OFFLINE:-}
+      NVIDIA_VISIBLE_DEVICES: "0"
+      CUDA_VISIBLE_DEVICES: "0"
+    volumes:
+      - *huggingface-cache
+      - ./qwen3_omni_voices:/app/qwen3_omni_voices
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8006/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 600s
+    shm_size: "2g"
+    <<: *gpu-deploy
+    restart: unless-stopped
+    profiles: ["qwen3-tts-vllm-omni"]
+
+  cosyvoice3-vllm-omni-0:
+    build:
+      context: .
+      dockerfile: services/cosyvoice3_vllm_omni/Dockerfile
+      args:
+        <<: *build-args
+        INSTALL_ONNXRUNTIME_GPU: ${COSYVOICE3_OMNI_INSTALL_ONNXRUNTIME_GPU:-false}
+    image: docker.cnb.cool/nexa/funspeech/cosyvoice3-vllm-omni:latest
+    container_name: funspeech-cosyvoice3-vllm-omni-0
+    environment:
+      <<: *subservice-env
+      PORT: "8007"
+      COSYVOICE3_OMNI_MODEL_ID: ${COSYVOICE3_OMNI_MODEL_ID:-FunAudioLLM/Fun-CosyVoice3-0.5B-2512}
+      COSYVOICE3_OMNI_VOICES_DIR: /app/cosyvoice3_omni_voices
+      COSYVOICE3_OMNI_SERVE_COMMAND: ${COSYVOICE3_OMNI_SERVE_COMMAND:-vllm}
+      COSYVOICE3_OMNI_GPU_MEM: ${COSYVOICE3_OMNI_GPU_MEM:-}
+      COSYVOICE3_OMNI_STAGE_OVERRIDES: ${COSYVOICE3_OMNI_STAGE_OVERRIDES:-}
+      COSYVOICE3_OMNI_EXTRA_ARGS: ${COSYVOICE3_OMNI_EXTRA_ARGS:-}
+      COSYVOICE3_OMNI_FORCE_REF_PER_REQUEST: ${COSYVOICE3_OMNI_FORCE_REF_PER_REQUEST:-true}
+      HF_ENDPOINT: ${HF_ENDPOINT:-}
+      HF_HUB_OFFLINE: ${HF_HUB_OFFLINE:-}
+      TRANSFORMERS_OFFLINE: ${TRANSFORMERS_OFFLINE:-}
+      NVIDIA_VISIBLE_DEVICES: "0"
+      CUDA_VISIBLE_DEVICES: "0"
+    volumes:
+      - *huggingface-cache
+      - ./cosyvoice3_omni_voices:/app/cosyvoice3_omni_voices
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8007/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 20
+      start_period: 600s
+    shm_size: "2g"
+    <<: *gpu-deploy
+    restart: unless-stopped
+    profiles: ["cosyvoice3-vllm-omni"]
 
 
 networks:

@@ -1,0 +1,24 @@
+[project]
+name = "funspeech-qwen3-tts-vllm-omni-service"
+version = "0.1.0"
+description = "Qwen3-TTS vLLM-Omni facade service"
+requires-python = ">=3.10,<3.14"
+
+dependencies = [
+    "fastapi==0.115.6",
+    "uvicorn[standard]==0.30.0",
+    "python-multipart==0.0.6",
+    "httpx>=0.28.1",
+    "numpy>=1.26",
+    "soundfile>=0.12.1",
+    "websockets>=11.0",
+]
+
+[tool.uv]
+package = false
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+]
+

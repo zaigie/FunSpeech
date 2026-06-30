@@ -38,6 +38,10 @@ branch:
                 value: cosyvoice
               - name: qwen3-tts (GPU, Qwen3-TTS Base Clone)
                 value: qwen3-tts
+              - name: qwen3-tts-vllm-omni (GPU, Qwen3-TTS + vLLM-Omni)
+                value: qwen3-tts-vllm-omni
+              - name: cosyvoice3-vllm-omni (GPU, CosyVoice3 + vLLM-Omni)
+                value: cosyvoice3-vllm-omni
 
           # 镜像 tag, 默认 latest
           TAG:
@@ -63,3 +67,8 @@ branch:
             type: input
             placeholder: NO_PROXY 列表
             default: "localhost,127.0.0.1,*.local"
+
+          # 仅 cosyvoice3-vllm-omni 使用: 可复现实验用 GPU ONNX Runtime。
+          COSYVOICE3_OMNI_INSTALL_ONNXRUNTIME_GPU:
+            type: switch
+            default: "false"
