@@ -4,7 +4,7 @@ TTS数据模型
 定义语音合成相关的请求和响应模型
 """
 
-from typing import Optional, List, Any, Union, Dict
+from typing import Optional, List, Union, Dict
 from pydantic import BaseModel, Field, field_validator
 from enum import Enum
 
@@ -119,8 +119,8 @@ class TTSRequest(BaseModel):
 class OpenAITTSRequest(BaseModel):
     """OpenAI兼容TTS请求模型"""
 
-    model: TTSModelType = Field(
-        TTSModelType.TTS_1,
+    model: str = Field(
+        "tts-1",
         description="使用的模型",
         example="tts-1",
     )
@@ -130,29 +130,27 @@ class OpenAITTSRequest(BaseModel):
         description="待合成的文本",
         example="Hello, this is a test of the speech synthesis system.",
         min_length=1,
-        max_length=1000,
+        max_length=4096,
     )
 
-    voice: str = Field(
+    voice: Union[str, Dict[str, str]] = Field(
         ...,
-        description="音色名称或参考音频文件路径",
+        description="音色名称，或 OpenAI custom voice object: {\"id\":\"voice_1234\"}",
         example="中文女",
-        min_length=1,
-        max_length=256,
     )
 
-    response_format: AudioFormat = Field(
-        AudioFormat.WAV,
+    response_format: str = Field(
+        "mp3",
         description="响应音频格式",
-        example="wav",
+        example="mp3",
     )
 
     speed: float = Field(
         1.0,
         description="语速倍率",
         example=1.0,
-        ge=0.5,
-        le=2.0,
+        ge=0.25,
+        le=4.0,
     )
 
     instructions: Optional[str] = Field(
@@ -160,6 +158,12 @@ class OpenAITTSRequest(BaseModel):
         description="音色指导文本，用于指导TTS模型的音色生成风格（等同于prompt参数）",
         example="说话温柔一些，语气轻松",
         max_length=500,
+    )
+
+    stream_format: Optional[str] = Field(
+        None,
+        description="流式响应格式，支持 audio 或 sse",
+        example="audio",
     )
 
 

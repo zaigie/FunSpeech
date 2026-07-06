@@ -61,7 +61,8 @@ docker compose up -d
 |---|---|---|
 | `POST /stream/v1/asr` | ✅ 完全一致 | 请求体、响应字段、HTTP code 全部不变 |
 | `POST /stream/v1/tts` | ✅ 完全一致 | |
-| `POST /openai/v1/audio/speech` | ✅ 完全一致 | OpenAI 兼容协议 |
+| `POST /v1/audio/speech` | ⚠️ 路径变更 | OpenAI 兼容 TTS；旧 `/openai/v1/audio/speech` 已移除 |
+| `POST /v1/audio/transcriptions` | ✅ 新增 | OpenAI 兼容 ASR |
 | `POST/GET /rest/v1/tts/async` | ✅ 完全一致 | 异步长文本合成 |
 | `WS /ws/v1/asr` | ✅ 完全一致 | 所有阿里云 ASR 消息 envelope 不变 |
 | `WS /ws/v1/tts` | ✅ 完全一致 | 但每个 chunk 之间的 50ms sleep 删了, 客户端会更早收到首帧 |
